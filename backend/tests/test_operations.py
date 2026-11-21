@@ -1,3 +1,6 @@
+from tests.runtime_factories import make_database_services
+from app.services.production_lines import ProductionLineRuntime
+from tests.runtime_factories import make_device_runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import json
@@ -231,7 +234,7 @@ def test_log_query_keeps_failure_and_recovery_for_the_same_resource(tmp_path):
                   source_id=source, resource_id=resource, related_kind='database-monitor')
     logs = OperationsLogQuery(tmp_path, 14)
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(logs=logs))
+    web.state.runtime.operations = SimpleNamespace(logs=logs)
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin-1'}
     web.include_router(router)
 
@@ -258,7 +261,7 @@ def test_incident_pagination_preserves_three_thousand_record_range_at_ten_rows()
         return dict(items=[], page=filters.page, page_size=filters.page_size, total=2993)
 
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=SimpleNamespace(list=list_incidents)))
+    web.state.runtime.operations = SimpleNamespace(repository=SimpleNamespace(list=list_incidents))
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin'}
     web.include_router(router)
 
@@ -294,7 +297,7 @@ def test_admin_exports_filtered_logs_across_pages(tmp_path, monkeypatch):
     segment.write_text(''.join(json.dumps(row) + '\n' for row in rows))
 
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(logs=OperationsLogQuery(tmp_path, 14)))
+    web.state.runtime.operations = SimpleNamespace(logs=OperationsLogQuery(tmp_path, 14))
     web.include_router(router)
 
     @web.middleware('http')
@@ -373,7 +376,7 @@ def test_web_repeated_transient_failures_become_incidents(tmp_path, monkeypatch)
     operations = operations_service.OperationsService(
         SimpleNamespace(logs_dir=tmp_path, operations_log_retention_days=14), None, None, None, None, None, 'web',
     )
-    web.state.runtime = SimpleNamespace(operations=operations)
+    web.state.runtime.operations = operations
     web.middleware('http')(request_id_middleware)
     status = 503
     now = 100.0
@@ -432,7 +435,7 @@ def test_workshop_conflicts_stay_expected_and_server_failures_are_correlated(tmp
     def state(request):
         if request.headers.get('X-Production-Line'):
             raise OperationalError(secret)
-        return SimpleNamespace(lines={'cut-a': SimpleNamespace(config=config)})
+        return make_database_services(lines={'cut-a': ProductionLineRuntime(config, make_device_runtime())})
 
     monkeypatch.setattr(main, 'runtime_state', state)
     monkeypatch.setattr(workshop, '_service', lambda request: SimpleNamespace(confirm_task=confirm))
@@ -470,7 +473,7 @@ def test_incident_minimum_error_level_filters_counts_and_pages(postgres_state):
                             role='worker', resource_id=level, message='测试异常')
                        for level in ('WARNING', 'ERROR', 'CRITICAL')])
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=repository))
+    web.state.runtime.operations = SimpleNamespace(repository=repository)
     web.include_router(router)
     @web.middleware('http')
     async def request_id(request: Request, call_next):
@@ -505,7 +508,7 @@ def test_incident_concurrency_confirmation_recovery_and_admin_routes(postgres_st
 
     service = SimpleNamespace(repository=repository, logs=OperationsLogQuery(cfg.logs_dir, 14))
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=service)
+    web.state.runtime.operations = service
     web.include_router(router)
     @web.middleware('http')
     async def context(request: Request, call_next):
@@ -948,7 +951,7 @@ def test_pool_wait_queue_rejection_is_a_service_unavailable_response():
         raise TooManyRequests('private pool details')
 
     web = embedded_app()
-    web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=SimpleNamespace(get=busy)))
+    web.state.runtime.operations = SimpleNamespace(repository=SimpleNamespace(get=busy))
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin-1'}
     web.include_router(router)
     with TestClient(web) as client:

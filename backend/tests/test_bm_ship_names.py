@@ -18,7 +18,9 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.database.bm_projects import BmProjectRepository
 from app.database.source_registry import SourceConflict
 from app.database.sqlserver import SqlServerClient
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.database_sources import DatabaseSourceRequest
 from app.models.domain import ReportFilter, WorkshopRecord
 from app.services.application_runtime import build_runtime
@@ -115,30 +117,31 @@ def test_ship_options_follow_date_and_project_and_use_shared_mapping_cache():
 
 @pytest.fixture
 def workshop(state_database, tmp_path):
-    repo = WorkshopRepository(state_database,scope_machine_no='Cutter01')
+    repo = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
     now = '2026-11-01T08:00:00+08:00'
-    admin = repo.bootstrap_admin(username='admin', display_name='管理员',password='test-password',now=now)
-    return repo, admin, now
+    admin = UserRepository(state_database).bootstrap_admin(username='admin', display_name='管理员',password='test-password',now=now)
+    return repo, confirmations, admin, now
 
 
 def test_snapshot_stores_separate_ship_name_and_backfills_without_revision_or_audit_changes(workshop):
-    repo, admin, now = workshop
+    repo, confirmations, admin, now = workshop
     report = repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record()],user=admin,now=now)
-    confirmation = repo.confirm_task(task_id='1',report_id=report['report_id'],user=admin,now=now)
+    confirmation = confirmations.confirm_task(task_id='1',report_id=report['report_id'],user=admin,now=now)
     before = repo.get_daily_report_records('2026-11-01')[1][0]
-    before_confirmation = repo.get_confirmations(['1'])['1']
+    before_confirmation = confirmations.get_confirmations(['1'])['1']
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[replace(record(),ship_no='18600DWT-02')],user=admin,now=now)
     after = repo.get_daily_report_records('2026-11-01')[1][0]
     assert after.project_code == 'CMYZ0170' and after.ship_no == '18600DWT-02'
     assert after.snapshot_revision == before.snapshot_revision
     assert after.confirmed_by == before.confirmed_by == '管理员'
-    assert repo.get_confirmations(['1'])['1'] == before_confirmation
+    assert confirmations.get_confirmations(['1'])['1'] == before_confirmation
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',
         records=[replace(record(),work_time=Decimal('99'))],user=admin,now=now)
     changed = repo.get_daily_report_records('2026-11-01')[1][0]
     assert changed.ship_no == '18600DWT-02' and changed.work_time == Decimal('99')
     assert changed.snapshot_revision == after.snapshot_revision + 1
-    assert repo.get_confirmations(['1'])['1'] == before_confirmation
+    assert confirmations.get_confirmations(['1'])['1'] == before_confirmation
     # All snapshot insert paths: initial, append, and fill a previously empty report.
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record(),replace(record('2'),ship_no='Second ship')],user=admin,now=now)
     assert repo.get_daily_report_records('2026-11-01')[1][1].ship_no == 'Second ship'
@@ -148,11 +151,11 @@ def test_snapshot_stores_separate_ship_name_and_backfills_without_revision_or_au
 
 
 def test_historical_snapshot_page_enriches_but_confirm_does_not_query_bm(workshop):
-    repo, admin, now = workshop
+    repo, confirmations, admin, now = workshop
     repo.sync_daily_report(report_date='2026-11-01',source_mode='sqlserver',records=[record()],user=admin,now=now)
     query = QueryService(cutting_settings(data_source_mode='sqlserver'),ship_names=ShipNameService(
         SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600), client=source_client(cutting_settings(data_source_mode='sqlserver')))
-    service = WorkshopService(repo,repo,cutting_settings(),query_service=query)
+    service = WorkshopService(repo,confirmations,cutting_settings(),query_service=query)
     payload = service.list_tasks(date(2026,11,1),None,'all','manager',1,20,False,admin)
     assert payload['items'][0]['ship_no'] == '18600DWT-02' and payload['total'] == 1
     from app.models.workshop_requests import ConfirmSnapshotTaskRequest

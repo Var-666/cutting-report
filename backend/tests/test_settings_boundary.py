@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.api.auth import router
 from tests.line_fixtures import configuration
 from tests.web_fixtures import embedded_app
+from tests.runtime_factories import install_runtime, make_application_runtime, make_database_services
 
 
 APP = Path(__file__).resolve().parents[1] / 'app'
@@ -70,7 +71,7 @@ def test_login_uses_same_snapshot_for_hr_and_session_settings(tmp_path):
         hr_calls.append((username, password))
         return identity
 
-    current = SimpleNamespace(settings=settings, worker_auth=SimpleNamespace(authenticate=authenticate_hr))
+    current = make_database_services(settings=settings, worker_auth=SimpleNamespace(authenticate=authenticate_hr))
     original = current
 
     def authenticate_local(*_args):
@@ -83,13 +84,13 @@ def test_login_uses_same_snapshot_for_hr_and_session_settings(tmp_path):
         session_hours.append(hours)
         return 'session', 'expires'
 
-    replace_context = SimpleNamespace(settings=updated, worker_auth=None)
+    replace_context = make_database_services(settings=updated)
     app = embedded_app(settings)
-    app.state.runtime = SimpleNamespace(
+    install_runtime(app, make_application_runtime(
         database_runtime=SimpleNamespace(snapshot=lambda: current),
         users=SimpleNamespace(authenticate=authenticate_local, upsert_external_worker=lambda **_: identity),
         sessions=SimpleNamespace(create_session=create_session),
-    )
+    ))
 
     @app.middleware('http')
     async def request_id(request, call_next):

@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import request_for, embedded_app, database_services, replace_database_services
 from pathlib import Path
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
@@ -27,7 +28,10 @@ from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.database.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
-from app.database.workshop import ConfirmationConflictError, ConfirmationNotFoundError, WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_errors import ConfirmationNotFoundError
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import LeadershipPeriodRecord, WorkshopRecord
 from app.services.automation_service import AutomationService
 from app.services.device_runtime import build_device_runtime
@@ -51,7 +55,7 @@ def workshop_record(task_id):
 @pytest.fixture
 def database(state_database):
     db = state_database
-    users = WorkshopRepository(db)
+    users = UserRepository(db)
     admin = users.create_user(username='admin', display_name='管理员', password='admin-password', role='admin', now=STAMP)
     return db, admin
 
@@ -74,37 +78,39 @@ def test_cutter02_uses_shared_connection_but_cannot_inherit_any_cutter01_meter(t
 
 def test_two_devices_can_keep_same_day_snapshots_confirmations_and_corrections_separate(database):
     db, admin = database
-    one = WorkshopRepository(db, scope_machine_no='Cutter01')
-    two = WorkshopRepository(db, scope_machine_no='Cutter02')
+    one = WorkshopReportRepository(db, scope_machine_no='Cutter01')
+    two = WorkshopReportRepository(db, scope_machine_no='Cutter02')
+    one_confirmations = ConfirmationRepository(db, scope_machine_no='Cutter01')
+    two_confirmations = ConfirmationRepository(db, scope_machine_no='Cutter02')
     saved = []
-    for repository, task in [(one, 'task-1'), (two, 'task-2')]:
+    for repository, confirmations, task in ((one, one_confirmations, 'task-1'), (two, two_confirmations, 'task-2')):
         report = repository.sync_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record(task)],
                                               user=admin, now=STAMP, scope_machine_no=repository.scope_machine_no)
-        repository.confirm_task(task_id=task, user=admin, report_id=report['report_id'], now=STAMP)
+        confirmations.confirm_task(task_id=task, user=admin, report_id=report['report_id'], now=STAMP)
         saved.append(report)
     assert saved[0]['report_id'] != saved[1]['report_id']
     assert [row.task_id for row in one.get_daily_report_records(DAY)[1]] == ['task-1']
     assert [row.task_id for row in two.get_daily_report_records(DAY)[1]] == ['task-2']
-    assert two.get_confirmations(['task-1', 'task-2']).keys() == {'task-2'}
-    assert [row['task_id'] for row in two.list_confirmation_audits()] == ['task-2']
+    assert two_confirmations.get_confirmations(['task-1', 'task-2']).keys() == {'task-2'}
+    assert [row['task_id'] for row in two_confirmations.list_confirmation_audits()] == ['task-2']
     with pytest.raises(ConfirmationNotFoundError):
-        one.correct_confirmation(task_id='task-2', admin=admin, reason='不能跨设备更正', now=STAMP)
+        one_confirmations.correct_confirmation(task_id='task-2', admin=admin, reason='不能跨设备更正', now=STAMP)
     with pytest.raises(ConfirmationNotFoundError):
-        one.revoke_confirmation(task_id='task-2', user=admin, reason='不能跨设备撤销', now=STAMP)
-    one.confirm_task(task_id='task-2', user=admin, now=STAMP)
-    assert one.get_confirmations(['task-2'])['task-2']['scope_machine_no'] == 'Cutter01'
-    two.revoke_confirmation(task_id='task-2', user=admin, reason='本人撤销', now=STAMP)
-    assert one.get_confirmations(['task-1'])['task-1']['worker_id'] == admin['user_id']
+        one_confirmations.revoke_confirmation(task_id='task-2', user=admin, reason='不能跨设备撤销', now=STAMP)
+    one_confirmations.confirm_task(task_id='task-2', user=admin, now=STAMP)
+    assert one_confirmations.get_confirmations(['task-2'])['task-2']['scope_machine_no'] == 'Cutter01'
+    two_confirmations.revoke_confirmation(task_id='task-2', user=admin, reason='本人撤销', now=STAMP)
+    assert one_confirmations.get_confirmations(['task-1'])['task-1']['worker_id'] == admin['user_id']
 
 
 def test_upgrade_preserves_legacy_snapshot_children_and_confirmations(database):
     db, admin = database
-    legacy = WorkshopRepository(db, scope_machine_no='Cutter01')
+    legacy = WorkshopReportRepository(db, scope_machine_no='Cutter01')
     report = legacy.create_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('old')],
                                         user=admin, now=STAMP, scope_machine_no=None)
-    legacy.confirm_task(task_id='old', report_id=report['report_id'], user=admin, now=STAMP)
-    one = WorkshopRepository(db, scope_machine_no='Cutter01')
-    two = WorkshopRepository(db, scope_machine_no='Cutter02')
+    ConfirmationRepository(db, scope_machine_no='Cutter01').confirm_task(task_id='old', report_id=report['report_id'], user=admin, now=STAMP)
+    one = WorkshopReportRepository(db, scope_machine_no='Cutter01')
+    two = WorkshopReportRepository(db, scope_machine_no='Cutter02')
     assert one.get_daily_report(DAY)['report_id'] == report['report_id']
     assert one.get_daily_report_records(DAY)[1][0].confirmed_by_id == admin['user_id']
     two.sync_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('new')],
@@ -242,12 +248,12 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
     run = automation.reserve_run(schedule, scheduled_for=STAMP, report_date=DAY, trigger_type='manual', now=STAMP)
     automation.update_schedule(schedule['schedule_id'], {**data, 'device_id': 'Cutter01'}, now=STAMP)
     metadata = MetadataRepository(db)
-    service = AutomationService(cutting_settings(), automation, metadata, SimpleNamespace(), line_services={key: runtime_line(SimpleNamespace(settings=line_settings(cutting_settings(), key), pipeline=object()), key) for key in ('Cutter01', 'Cutter02')})
+    service = AutomationService(cutting_settings(), automation, metadata, SimpleNamespace(), line_services={key: runtime_line(make_device_runtime(settings=line_settings(cutting_settings(), key), pipeline=object()), key) for key in ('Cutter01', 'Cutter02')})
     assert service._create_report_job(run, NOW)
     job = metadata.get_job(automation.get_run(run['run_id'])['report_id'])
     assert job['device_id'] == 'Cutter02'
     executed = []
-    pipelines = {key: SimpleNamespace(run=lambda job, key=key: executed.append(key)) for key in ('Cutter01', 'Cutter02')}
+    pipelines = {key: SimpleNamespace(run=lambda job, *, cancellation_check=None, key=key: executed.append(key)) for key in ('Cutter01', 'Cutter02')}
     worker = ReportWorker(cutting_settings(), metadata, pipelines['Cutter01'], pipelines=pipelines)
     worker._process_report(job, ZoneInfo('Asia/Shanghai'))
     assert executed == ['Cutter02']
@@ -260,16 +266,17 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
     db, admin = database
     cfg = configuration(tmp_path)
     app = embedded_app(cfg)
-    app.state.catalog = load_line_catalog(cfg.production_lines_json).model_copy(update={"default_line_id": default_device_id})
+    replace_database_services(app, catalog=load_line_catalog(cfg.production_lines_json).model_copy(update={"default_line_id": default_device_id}))
     for router in (devices_router, options_router, reports_router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
-    app.state.lines = as_line_services({
-        key: SimpleNamespace(settings=line_settings(cutting_settings(), key), metadata=MetadataRepository(db, device_id=key),
-                             query_service=SimpleNamespace(list_projects=lambda filters, key=key: [key]))
+    replace_database_services(app, lines=as_line_services({
+        key: make_device_runtime(settings=line_settings(cutting_settings(), key),
+                 metadata=MetadataRepository(db, device_id=key),
+                 pipeline=make_pipeline_stub(query_service=SimpleNamespace(list_projects=lambda filters, key=key: [key])))
         for key in ('Cutter01', 'Cutter02')
-    })
+    }))
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'multi-device'
@@ -290,7 +297,7 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         assert client.get(f'/api/v1/reports/{report_id}/status?device_id={other}').status_code == 404
         assert client.get(f'/api/v1/reports?device_id={other}').json()['data']['total'] == 0
         assert client.get(f'/api/v1/reports?device_id={device_id}').json()['data']['total'] == 1
-        metadata = app.state.lines[device_id].service.metadata
+        metadata = database_services(app).lines[device_id].service.metadata
         path = cfg.reports_dir / f'{report_id}.html'
         path.parent.mkdir(parents=True)
         content = device_id.encode()
@@ -300,7 +307,7 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
                              generated_at=STAMP, system_version='test')
         metadata.update_status(report_id, 'completed', '报告生成成功')
         serialized = client.get(created.json()['data']['status_url']).json()['data']
-        alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}, state=SimpleNamespace(), headers={}), '/api/v1/alarms/reports/a1/view')
+        alarm_url = alarms_api._device_url(request_for(app, params={'device_id': device_id}), '/api/v1/alarms/reports/a1/view')
         for url in (serialized['view_url'], serialized['download_url'], alarm_url):
             resolved_device = parse_qs(urlsplit(url).query)['device_id'][0]
             assert resolved_device == device_id, 'report links must resolve to their owner under either default'
@@ -333,27 +340,28 @@ def test_device_runtime_has_independent_caches_and_disables_only_cutter02_energy
 
 def test_identical_task_numbers_isolate_confirm_reassign_revoke_counts_and_audits(database):
     db, admin = database
-    one, two = [WorkshopRepository(db, scope_machine_no=key) for key in ('Cutter01', 'Cutter02')]
-    users = WorkshopRepository(db)
+    one, two = [WorkshopReportRepository(db, scope_machine_no=key) for key in ('Cutter01', 'Cutter02')]
+    one_confirmations, two_confirmations = [ConfirmationRepository(db, scope_machine_no=key) for key in ('Cutter01', 'Cutter02')]
+    users = UserRepository(db)
     workers = [users.create_user(username=f'worker{i}', display_name=f'工人{i}', password='worker-password', role='worker', now=STAMP) for i in range(3)]
     reports = []
-    for repo, worker in zip((one, two), workers):
+    for repo, confirmations, worker in zip((one, two), (one_confirmations, two_confirmations), workers):
         report = repo.sync_daily_report(report_date=DAY, source_mode='sqlserver', records=[workshop_record('same')], user=admin, now=STAMP)
         reports.append(report)
-        repo.confirm_task(task_id='same', report_id=report['report_id'], user=worker, now=STAMP)
+        confirmations.confirm_task(task_id='same', report_id=report['report_id'], user=worker, now=STAMP)
         assert repo.get_daily_report(DAY)['confirmed_count'] == 1
     with pytest.raises(ValueError, match='不属于当前设备'):
-        one.confirm_task(task_id='same', report_id=reports[1]['report_id'], user=workers[0], now=STAMP)
-    two.correct_confirmation(task_id='same', admin=admin, reason='管理员更正', new_worker_id=workers[2]['user_id'], now=STAMP)
-    assert one.get_confirmations(['same'])['same']['worker_id'] == workers[0]['user_id']
-    one.revoke_confirmation(task_id='same', user=workers[0], reason='本人撤销', now=STAMP)
+        one_confirmations.confirm_task(task_id='same', report_id=reports[1]['report_id'], user=workers[0], now=STAMP)
+    two_confirmations.correct_confirmation(task_id='same', admin=admin, reason='管理员更正', new_worker_id=workers[2]['user_id'], now=STAMP)
+    assert one_confirmations.get_confirmations(['same'])['same']['worker_id'] == workers[0]['user_id']
+    one_confirmations.revoke_confirmation(task_id='same', user=workers[0], reason='本人撤销', now=STAMP)
     assert one.get_daily_report(DAY)['confirmed_count'] == 0
     assert two.get_daily_report(DAY)['confirmed_count'] == 1
     assert two.get_daily_report_records(DAY)[1][0].confirmed_by_id == workers[2]['user_id']
-    assert [row['action'] for row in one.list_confirmation_audits()].count('worker_revoke') == 1
-    assert {row['action'] for row in two.list_confirmation_audits()} == {'confirm', 'admin_reassign'}
-    two.correct_confirmation(task_id='same', admin=admin, reason='管理员撤销', now=STAMP)
-    assert not two.get_confirmations(['same'])
+    assert [row['action'] for row in one_confirmations.list_confirmation_audits()].count('worker_revoke') == 1
+    assert {row['action'] for row in two_confirmations.list_confirmation_audits()} == {'confirm', 'admin_reassign'}
+    two_confirmations.correct_confirmation(task_id='same', admin=admin, reason='管理员撤销', now=STAMP)
+    assert not two_confirmations.get_confirmations(['same'])
 
 
 def test_global_repositories_cannot_implicitly_create_device_data(database):
@@ -361,20 +369,20 @@ def test_global_repositories_cannot_implicitly_create_device_data(database):
     with pytest.raises(ValueError, match='设备上下文'):
         MetadataRepository(db).create_job(report_id='missing', report_date=DAY, project_code=None, ship_no=None, request_id='r', created_at=STAMP)
     with pytest.raises(ValueError, match='设备生产数据范围'):
-        WorkshopRepository(db).confirm_task(task_id='missing', user=admin, now=STAMP)
+        ConfirmationRepository(db).confirm_task(task_id='missing', user=admin, now=STAMP)
 
 
 def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
     from app.api import alarms, analysis, conditions, database as database_api, designer, energy, equipment, leadership, workshop
     db, admin = database
     app = embedded_app()
-    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
+    replace_database_services(app, catalog=load_line_catalog(cutting_settings().production_lines_json))
     for router in (devices_router, options_router, reports_router, alarms.router, analysis.router, conditions.router,
                    database_api.router, designer.router, energy.router, equipment.router, leadership.router, workshop.router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
-    app.state.lines = as_line_services({key: SimpleNamespace(settings=line_settings(cutting_settings(), key)) for key in ('Cutter01','Cutter02')})
+    replace_database_services(app, lines=as_line_services({key: make_device_runtime(settings=line_settings(cutting_settings(), key)) for key in ('Cutter01','Cutter02')}))
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'boundary'
@@ -398,20 +406,20 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
     db, admin = database
     base = cutting_settings(project_root=tmp_path)
     app = embedded_app(base)
-    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
+    replace_database_services(app, catalog=load_line_catalog(cutting_settings().production_lines_json))
     app.include_router(database_api.router)
     app.include_router(reports_router)
     app.include_router(reports.view_router)
     app.dependency_overrides[require_admin] = lambda: admin
     base.ensure_runtime_dirs()
-    app.state.lines = as_line_services({})
+    replace_database_services(app, lines=as_line_services({}))
     render_calls = []
     def render(path):
         render_calls.append(path)
         pdf = path.with_suffix('.pdf')
         pdf.write_bytes(b'%PDF-1.7 test')
         return pdf
-    app.state.pdf_service = SimpleNamespace(render=render)
+    app.state.runtime.pdf_service = SimpleNamespace(render=render)
     for key in ('Cutter01','Cutter02'):
         metadata = MetadataRepository(db,device_id=key)
         metadata.create_job(report_id=key,report_date=DAY,project_code=None,ship_no=None,request_id=key,created_at=STAMP)
@@ -420,8 +428,11 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
         path.write_bytes(content)
         metadata.save_report(report_id=key,filename=path.name,relative_path=path.name,file_size=len(content),sha256=sha256(content).hexdigest(),task_count=1,generated_at=STAMP,system_version='test')
         metadata.update_status(key, 'completed', '报告生成成功')
-        app.state.lines[key] = runtime_line(SimpleNamespace(settings=line_settings(base,key),metadata=metadata,
-            query_service=SimpleNamespace(fetch_summary_data=lambda _,key=key: SimpleNamespace(summary_records=[{'device':key}]))), key)
+        query_service = SimpleNamespace(
+            fetch_summary_data=lambda _, key=key: SimpleNamespace(summary_records=[{'device': key}]))
+        device = make_device_runtime(settings=line_settings(base, key), metadata=metadata,
+            pipeline=make_pipeline_stub(query_service=query_service))
+        database_services(app).lines[key] = runtime_line(device, key)
     @app.middleware('http')
     async def request_id(request,call_next):
         request.state.request_id='preview'

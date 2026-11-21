@@ -1,3 +1,5 @@
+from tests.web_fixtures import embedded_app, replace_database_services, request_for
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
 from tests.postgres_fixtures import state_settings
 """Offline SQL boundary/load checks: real lock files, blocking driver substitutes."""
 import asyncio
@@ -557,9 +559,8 @@ def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monk
     from tests.line_fixtures import as_line_services, cutting_settings
     def fail(*args, **kwargs): raise error
     settings = cutting_settings()
-    device = SimpleNamespace(settings=settings, query_service=SimpleNamespace(fetch_equipment_data=fail),
-        energy_period_service=SimpleNamespace(get_monthly_range=fail),
-        range_report_service=SimpleNamespace(leadership=fail, equipment=fail))
+    device = make_device_runtime(settings=settings, report_provider=SimpleNamespace(snapshot_service=None),
+                 pipeline=make_pipeline_stub(query_service=SimpleNamespace(fetch_equipment_data=fail), energy_period_service=SimpleNamespace(get_monthly_range=fail), range_service=SimpleNamespace(leadership=fail, equipment=fail)))
     day = date(2026, 11, 3)
     module, handler, args = {
         'equipment': (equipment, equipment.get_equipment_report, dict(report_date=day, refresh=False)),
@@ -569,8 +570,9 @@ def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monk
         'energy_monthly_range': (energy, energy.get_energy_monthly_range, dict(start_date=day, end_date=day)),
     }[boundary]
     monkeypatch.setattr(module, 'device_state', lambda request: device)
-    request = SimpleNamespace(state=SimpleNamespace(), query_params={'device_id': 'Cutter01'}, headers={},
-        app=SimpleNamespace(state=SimpleNamespace(settings=settings, lines=as_line_services({'Cutter01': device}))))
+    app = embedded_app(settings)
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
+    request = request_for(app, params={'device_id': 'Cutter01'})
     with pytest.raises(type(error)) as caught:
         handler(request, **args)
     assert caught.value is error

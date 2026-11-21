@@ -1,13 +1,13 @@
+from tests.runtime_factories import install_runtime
 from tests.postgres_fixtures import state_settings
 from dataclasses import FrozenInstanceError, replace
 from datetime import date
-from types import SimpleNamespace
 import gc
 import weakref
 
 import pytest
-from fastapi import Depends, HTTPException, Request
-from tests.web_fixtures import embedded_app
+from fastapi import Depends, FastAPI, HTTPException, Request
+from tests.web_fixtures import embedded_app, request_for
 from fastapi.testclient import TestClient
 
 from app.api import database
@@ -27,8 +27,9 @@ def environment(postgres_state, tmp_path):
 
 
 def request(state, line_id='Cutter01'):
-    return SimpleNamespace(app=SimpleNamespace(state=state), state=SimpleNamespace(request_id='test-hot-database'),
-                           headers={'X-Production-Line': line_id})
+    app = FastAPI()
+    install_runtime(app, state)
+    return request_for(app, headers={'X-Production-Line': line_id}, request_id='test-hot-database')
 
 
 def payload(cfg):

@@ -47,3 +47,10 @@ def make_device_runtime(**overrides) -> DeviceRuntime:
 
 def install_runtime(app: FastAPI, application_runtime: ApplicationRuntime) -> None:
     app.state.runtime = application_runtime
+
+
+def make_pipeline_stub(**services):
+    from types import SimpleNamespace
+
+    known = ("query_service", "range_service", "energy_service", "energy_period_service")
+    return SimpleNamespace(**({name: _MissingDependency(f"pipeline.{name}") for name in known} | services))

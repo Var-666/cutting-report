@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from concurrent.futures import ThreadPoolExecutor
@@ -6,7 +7,6 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 import json
 from threading import Event
-from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import httpx
@@ -71,8 +71,8 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
     app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    runtime = SimpleNamespace(report_analysis_service=service)
-    app.state.lines = as_line_services({device_id: runtime})
+    runtime = make_device_runtime(report_analysis_service=service)
+    replace_database_services(app, lines=as_line_services({device_id: runtime}))
 
     @app.middleware('http')
     async def request_id(request, call_next):

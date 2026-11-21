@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, request_for
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -40,16 +41,11 @@ def _runtime_settings(tmp_path, **changes):
 
 def _request(runtime, settings=None):
     settings = settings or runtime.inspect()['settings']
-    return SimpleNamespace(
-        state=SimpleNamespace(request_id="test-request"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                automation_runtime=runtime, settings=settings,
-                email_service=EmailService(settings, runtime=runtime),
-                automation=SimpleNamespace(summary=lambda: {}),
-            )
-        ),
-    )
+    app = embedded_app(settings)
+    app.state.runtime.automation_runtime = runtime
+    app.state.runtime.email_service = EmailService(settings, runtime=runtime)
+    app.state.runtime.automation = SimpleNamespace(summary=lambda: {})
+    return request_for(app, request_id="test-request")
 
 
 def test_configuration_response_never_contains_smtp_password(

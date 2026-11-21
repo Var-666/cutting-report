@@ -116,7 +116,7 @@ def test_api_requires_admin_and_rejects_stale_verification(workflow):
     delivery = unknown_delivery(workflow)
     app = embedded_app()
     app.include_router(router)
-    app.state.automation = repository
+    app.state.runtime.automation = repository
 
     @app.middleware("http")
     async def request_id(request, call_next):

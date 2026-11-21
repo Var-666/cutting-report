@@ -5,7 +5,7 @@ from tests.line_fixtures import cutting_settings
 from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository
-from app.database.workshop import WorkshopRepository
+from app.database.users import UserRepository
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
 from app.services.file_source import DisabledFileSource, MockFileSource
@@ -15,7 +15,7 @@ from app.services.magic_box_service import MagicBoxConfig, MagicBoxError
 def dispatch_service(state_database, tmp_path: Path, file_source=None):
     configured = cutting_settings(project_root=tmp_path)
     database = state_database
-    workshop = WorkshopRepository(database)
+    workshop = UserRepository(database)
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     admin = workshop.create_user(
@@ -89,7 +89,7 @@ class TestHttpFileSource(MockFileSource):
 def push_service(state_database, tmp_path: Path, client: RecordingMagicClient):
     cfg = cutting_settings(project_root=tmp_path, magic_box_enabled=True)
     database = state_database
-    workshop = WorkshopRepository(database)
+    workshop = UserRepository(database)
     dispatches = DispatchRepository(database)
     dispatches.initialize()
     download_repository = DownloadRepository(database)

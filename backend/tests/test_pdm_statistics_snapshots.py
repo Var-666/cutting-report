@@ -1,7 +1,7 @@
+from tests.runtime_factories import make_database_services
 from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 
@@ -120,7 +120,7 @@ def test_pdm_expired_snapshot_keeps_real_timestamp_and_queues_one_refresh(config
 
 def test_shared_provider_lookup_does_not_require_a_production_line(configured):
     _, _, _, _, service = configured
-    context = SimpleNamespace(lines={}, shared_reports={PDM_STATISTICS_SCOPE: service})
+    context = make_database_services(lines={}, shared_reports={PDM_STATISTICS_SCOPE: service})
     assert report_provider(context, PDM_STATISTICS_SCOPE) is service
     assert list(report_providers(context)) == [(PDM_STATISTICS_SCOPE, service)]
     plan = service.refresh_plan()

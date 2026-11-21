@@ -1,9 +1,9 @@
+from tests.web_fixtures import embedded_app, request_for
 from tests.postgres_fixtures import state_settings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date
 from threading import Event
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -27,8 +27,9 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
     configured = replace(settings, project_root=tmp_path)
     runtime = AutomationRuntime(configured)
     assert runtime.update_lock is runtime_settings_lock
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(automation_runtime=runtime)),
-                              state=SimpleNamespace(request_id="test"))
+    app = embedded_app(configured)
+    app.state.runtime.automation_runtime = runtime
+    request = request_for(app)
     entered, release, database_done = Event(), Event(), Event()
     from app.services import runtime_settings_store as store
     original_replace = store.os.replace
@@ -132,7 +133,7 @@ def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkey
 ])
 def test_removing_local_workbench_keeps_production_execution_guards(monkeypatch, mode, enabled, token, provided, expected):
     cfg = replace(settings, data_source_mode=mode, sql_workbench_enabled=enabled, sql_workbench_admin_token=token)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=cfg)), state=SimpleNamespace())
+    request = request_for(embedded_app(cfg))
     with pytest.raises(HTTPException) as error:
         database.execute_sql(database.SqlExecuteRequest(sql="SELECT 1"), request, provided)
     assert error.value.status_code == expected
@@ -140,7 +141,7 @@ def test_removing_local_workbench_keeps_production_execution_guards(monkeypatch,
 
 def test_demo_status_does_not_advertise_sql_execution_even_when_flag_is_set(monkeypatch):
     cfg = configuration(__import__('pathlib').Path('/tmp/status-test'), sql_workbench_enabled=True)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=cfg)), state=SimpleNamespace(request_id="test"))
+    request = request_for(embedded_app(cfg))
     status = database.database_status(request)["data"]
     assert status["sql_workbench_enabled"] is False
     assert status["arbitrary_sql_enabled"] is False

@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.energy_period_fixtures import DAY, START, NOW, samples, service
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
@@ -562,20 +563,22 @@ def test_snapshots_do_not_contain_credentials(tmp_path, state_database):
 
 def test_day_month_routes_and_bad_month(tmp_path, state_database):
     energy, meter = service(tmp_path, state_database)
-    app = embedded_app()
-    app.state.energy_period_service = energy
-    app.state.lines = as_line_services({"Cutter01": app.state})
+    app = embedded_app(energy.settings)
     start = START + timedelta(hours=8)
-    app.state.query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
+    query_service = SimpleNamespace(fetch_equipment_data=lambda *_args, **_kwargs: SimpleNamespace(
         records=[record(production_time=start, production_end_time=start + timedelta(minutes=30),
                         work_time=Decimal("1800"), equipment_id="Cutter01")],
         data_updated_at=start + timedelta(minutes=30),
     ))
     scheduled_ranges = []
-    app.state.energy_history_worker = SimpleNamespace(
+    history = SimpleNamespace(
         schedule_range=lambda start, end: scheduled_ranges.append((start, end)),
         is_syncing_range=lambda _start, _end: True,
     )
+    device = make_device_runtime(settings=energy.settings, energy_history_worker=history,
+        report_provider=SimpleNamespace(snapshot_service=None),
+        pipeline=make_pipeline_stub(query_service=query_service, energy_period_service=energy))
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.include_router(router)
 

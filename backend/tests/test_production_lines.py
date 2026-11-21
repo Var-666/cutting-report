@@ -1,6 +1,6 @@
+from tests.runtime_factories import make_database_services
 from tests.postgres_fixtures import state_settings
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 from fastapi import Request
@@ -18,7 +18,7 @@ from tests.line_fixtures import configuration
 
 def test_public_line_homes_are_distinct_from_the_shared_home(tmp_path):
     catalog = load_line_catalog(configuration(tmp_path, welding=True).production_lines_json)
-    items = registered_lines(SimpleNamespace(catalog=catalog))
+    items = registered_lines(make_database_services(catalog=catalog))
     assert {item['home_path'] for item in items if item['type'] == 'cutting'} == {'/admin/cutting/home'}
     assert {item['home_path'] for item in items if item['type'] == 'welding'} == {'/admin/welding/home'}
     assert all(item['home_path'] != '/admin/home' for item in items)
@@ -31,7 +31,7 @@ def test_public_line_homes_are_distinct_from_the_shared_home(tmp_path):
     ('welding', '/api/v1/reportsettings', True), ('welding', '/api/v1/database/configuration', True),
 ])
 def test_capability_scope_matches_registered_instance_and_whole_modules(tmp_path, line, path, allowed):
-    context = SimpleNamespace(catalog=load_line_catalog(configuration(tmp_path, welding=True).production_lines_json))
+    context = make_database_services(catalog=load_line_catalog(configuration(tmp_path, welding=True).production_lines_json))
     assert supports_path(context, line, path) is allowed
 
 

@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, request_for
 from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
@@ -16,8 +17,9 @@ settings = Settings()
 
 
 def health_request(worker):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=settings, worker_status_reader=worker)),
-                           state=SimpleNamespace(request_id="health-test"))
+    app = embedded_app(settings)
+    app.state.runtime.worker_status_reader = worker
+    return request_for(app, request_id="health-test")
 
 
 @pytest.mark.parametrize("blocked_worker", ["report", "automation", "email"])
@@ -41,7 +43,7 @@ def test_live_but_blocked_consumer_degrades_health_and_recovers(monkeypatch, blo
             return None
 
     class Pipeline:
-        def run(self, job):
+        def run(self, job, *, cancellation_check=None):
             block()
 
     class Automation:

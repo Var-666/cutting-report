@@ -1,3 +1,5 @@
+from tests.runtime_factories import make_device_runtime
+from tests.web_fixtures import embedded_app, replace_database_services, request_for
 from tests.energy_fixtures import GAS, ELECTRIC, START, END, configured, record, readings, MeterStub, sparse_november_readings
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
@@ -477,13 +479,12 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
             }
         },
     )
-    request = SimpleNamespace(headers={}, state=SimpleNamespace(request_id="test"), app=SimpleNamespace(state=SimpleNamespace(
-        query_service=pipeline.query_service,
-        energy_period_service=pipeline.energy_period_service,
-        report_analysis_service=pipeline.analysis_service,
-    )))
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    app = embedded_app(cfg)
+    device = make_device_runtime(settings=cfg, pipeline=pipeline, report_analysis_service=pipeline.analysis_service,
+        report_provider=SimpleNamespace(snapshot_service=None))
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
+    request = request_for(app, params={'device_id': 'Cutter01'})
+
     page = get_task_energy_day(request=request, report_date=START.date(), refresh=True)["data"]
     assert page["summary"]["energy_data_mode"] == "metered"
     assert page["summary"]["total_gas_consumption"] == 2

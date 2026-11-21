@@ -11,7 +11,9 @@ import pytest
 from app.api.workshop import _workshop_trend
 from tests.line_fixtures import cutting_settings, source_client
 settings = cutting_settings()
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord, to_primitive
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService
@@ -132,16 +134,18 @@ def test_workshop_export_retains_completion_day_alongside_actual_start_time():
 
 
 def test_daily_snapshot_restart_and_legacy_migration_preserve_business_date_and_confirmation(state_database, tmp_path):
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
-    user = repository.bootstrap_admin(username="admin", display_name="admin", password="test-password", now=END.isoformat())
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
+    user = users.bootstrap_admin(username="admin", display_name="admin", password="test-password", now=END.isoformat())
     report = repository.create_daily_report(report_date=DAY.isoformat(), source_mode="sqlserver",
         records=[workshop_record()], user=user, now=END.isoformat())
-    repository.confirm_task(task_id="night-shift", report_id=report["report_id"], user=user, now=END.isoformat())
+    confirmations.confirm_task(task_id="night-shift", report_id=report["report_id"], user=user, now=END.isoformat())
     # Older snapshots have no date column value. The parent report's selected
     # business day is authoritative, even when the task started the night before.
     with repository.connect() as connection:
         connection.execute("UPDATE workshop_report_items SET production_date = NULL")
-    restarted = WorkshopRepository(repository.database, scope_machine_no='Cutter01')
+    restarted = WorkshopReportRepository(repository.database, scope_machine_no='Cutter01')
     state, records = restarted.get_daily_report_records(DAY.isoformat())
     assert records[0].production_date == DAY
     assert records[0].production_time == START

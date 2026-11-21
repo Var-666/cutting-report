@@ -183,12 +183,17 @@ def test_download_conditions_snapshots_energy_and_llm(state):
 
 def test_workshop_confirmation_serializes_and_audits(state):
     from decimal import Decimal
-    from app.database.workshop import WorkshopRepository, ConfirmationConflictError
+    from app.database.confirmations import ConfirmationRepository
+    from app.database.users import UserRepository
+    from app.database.workshop_errors import ConfirmationConflictError
+    from app.database.workshop_reports import WorkshopReportRepository
     from app.models.domain import WorkshopRecord
     database, _, _ = state
-    repo = WorkshopRepository(database, scope_machine_no='Cutter01')
+    repo = WorkshopReportRepository(database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(database, scope_machine_no='Cutter01')
     now = '2026-11-04T08:00:00+08:00'
-    users = [new_user(repo, 'worker-'+str(index)) for index in range(2)]
+    accounts = UserRepository(database)
+    users = [new_user(accounts, 'worker-'+str(index)) for index in range(2)]
     record = WorkshopRecord(task_id='task-1', project_code='P1', ship_no='船名', segment_name='301C',
         program_no='1.gen', cut_length=Decimal('5.1'), groove_length=Decimal('0'), work_time=Decimal('90'))
     report = repo.create_daily_report(report_date='2026-11-04',source_mode='demo',records=[record],user=users[0],now=now)
@@ -197,7 +202,7 @@ def test_workshop_confirmation_serializes_and_audits(state):
     def confirm(user):
         barrier.wait(5)
         try:
-            return repo.confirm_tasks(task_ids=['task-1'],user=user,now=now,report_id=report['report_id'])
+            return confirmations.confirm_tasks(task_ids=['task-1'],user=user,now=now,report_id=report['report_id'])
         except ConfirmationConflictError:
             return None
     with ThreadPoolExecutor(2) as executor:
@@ -207,7 +212,7 @@ def test_workshop_confirmation_serializes_and_audits(state):
         winner = connection.execute('SELECT worker_id FROM workshop_confirmations').fetchone()['worker_id']
         assert connection.execute('SELECT COUNT(*) AS n FROM workshop_confirmation_audits').fetchone()['n'] == 1
     selected = next(user for user in users if user['user_id']==winner)
-    repo.revoke_confirmation(task_id='task-1',report_id=report['report_id'],user=selected,reason='误认',now=now)
+    confirmations.revoke_confirmation(task_id='task-1',report_id=report['report_id'],user=selected,reason='误认',now=now)
     assert repo.get_daily_report('2026-11-04')['confirmed_count'] == 0
     assert repo.get_daily_report_records('2026-11-04')[1][0].ship_no == '船名'
 
@@ -376,8 +381,9 @@ def test_database_unavailable_is_explicit_and_recovery_keeps_state(state, monkey
     try:
         with TestClient(app) as client, psycopg.connect(**admin_options,autocommit=True) as admin:
             admin.execute(sql.SQL('ALTER DATABASE {} CONNECTION LIMIT 0').format(sql.Identifier(cfg.postgres_database)))
-            admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s",(cfg.postgres_database,))
             try:
+                admin.execute('SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname=%s',
+                              (cfg.postgres_database,)).fetchall()
                 app.state.runtime.worker_status_reader._next_read = 0
                 response = client.get('/api/v1/health')
                 assert response.status_code == 503

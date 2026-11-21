@@ -1,4 +1,4 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, replace_database_services
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -7,7 +7,8 @@ from fastapi import Depends
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
-from app.database.workshop import WorkshopRepository
+from app.database.sessions import SessionRepository
+from app.database.users import UserRepository
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.worker_auth_service import WorkerAuthService
 from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enabled_settings, valid_row as _valid_row
@@ -17,17 +18,19 @@ from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enable
 def hr_sessions(state_database, tmp_path, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr("app.services.worker_auth_service.monotonic", lambda: clock[0])
-    repository = WorkshopRepository(state_database)
+    repository = UserRepository(state_database)
+    sessions = SessionRepository(state_database)
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     user = repository.upsert_external_worker(external_id="9123", company_no="C0007",
                                              group_no="G0021", display_name="张三", now=now.isoformat())
-    first, _ = repository.create_session(user["user_id"], now=now, hours=1)
-    second, _ = repository.create_session(user["user_id"], now=now, hours=1)
+    first, _ = sessions.create_session(user["user_id"], now=now, hours=1)
+    second, _ = sessions.create_session(user["user_id"], now=now, hours=1)
     source = FakeSqlServerClient([_valid_row()])
     auth = WorkerAuthService(_enabled_settings(), source)
     app = embedded_app()
-    app.state.workshop = repository
-    app.state.worker_auth = auth
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = sessions
+    replace_database_services(app, worker_auth=auth)
     writes = []
 
     @app.get("/protected")
@@ -41,11 +44,11 @@ def hr_sessions(state_database, tmp_path, monkeypatch):
 
     client = TestClient(app)
     client.cookies.set("cutting_session", first)
-    return client, repository, source, auth, clock, first, second, writes
+    return client, sessions, source, auth, clock, first, second, writes
 
 
 def test_disabled_hr_identity_revokes_every_existing_session_after_read_ttl(hr_sessions):
-    client, repository, source, auth, clock, first, second, _ = hr_sessions
+    client, sessions, source, auth, clock, first, second, _ = hr_sessions
     assert client.get("/protected").status_code == 200
     source.rows = [_valid_row(available_value=0)]
     assert client.get("/protected").status_code == 200  # The bounded read-cache window is explicit.
@@ -55,8 +58,8 @@ def test_disabled_hr_identity_revokes_every_existing_session_after_read_ttl(hr_s
     assert response.status_code == 401
     assert response.headers["X-Session-Expired"] == "1"
     stamp = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()
-    assert repository.user_for_session(first, now=stamp) is None
-    assert repository.user_for_session(second, now=stamp) is None
+    assert sessions.user_for_session(first, now=stamp) is None
+    assert sessions.user_for_session(second, now=stamp) is None
 
 
 def test_write_rechecks_even_fresh_positive_cache_and_cannot_mutate_when_disabled(hr_sessions):
@@ -69,14 +72,14 @@ def test_write_rechecks_even_fresh_positive_cache_and_cannot_mutate_when_disable
 
 
 def test_hr_outage_denies_request_but_preserves_session_for_recovery(hr_sessions):
-    client, repository, source, auth, clock, first, _, writes = hr_sessions
+    client, sessions, source, auth, clock, first, _, writes = hr_sessions
     assert client.get("/protected").status_code == 200
     source.error = RuntimeError("HR unavailable")
     response = client.post("/protected")
     assert response.status_code == 503
     assert "X-Session-Expired" not in response.headers
     assert writes == []
-    assert repository.user_for_session(first, now=datetime.now(ZoneInfo("Asia/Shanghai")).isoformat())
+    assert sessions.user_for_session(first, now=datetime.now(ZoneInfo("Asia/Shanghai")).isoformat())
     calls = len(source.calls)
     assert client.post("/protected").status_code == 503
     assert len(source.calls) == calls, "failure cooldown must bound repeat write checks"
@@ -86,11 +89,11 @@ def test_hr_outage_denies_request_but_preserves_session_for_recovery(hr_sessions
 
 
 def test_local_admin_session_does_not_depend_on_hr_availability(hr_sessions):
-    client, repository, source, _, _, _, _, _ = hr_sessions
+    client, sessions, source, _, _, _, _, _ = hr_sessions
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    user = repository.create_user(username="localadmin", display_name="本地管理员",
+    user = client.app.state.runtime.users.create_user(username="localadmin", display_name="本地管理员",
                                   password="test-password", role="admin", now=now.isoformat())
-    token, _ = repository.create_session(user["user_id"], now=now, hours=1)
+    token, _ = sessions.create_session(user["user_id"], now=now, hours=1)
     client.cookies.set("cutting_session", token)
     source.error = RuntimeError("HR unavailable")
     assert client.post("/protected").status_code == 200
@@ -131,7 +134,7 @@ def test_successful_login_replaces_previous_disabled_cache():
 
 @pytest.mark.parametrize(("cached", "expected"), [(True, 200), (False, 401), (None, 503)])
 def test_cached_hr_decisions_bypass_full_authentication_capacity(hr_sessions, cached, expected):
-    client, repository, source, service, _, first, second, _ = hr_sessions
+    client, sessions, source, service, _, first, second, _ = hr_sessions
     service._cache_session_check("9123", cached, 60 if cached is not None else 15)
     pool = client.app.state.workloads['authentication']
     for _ in range(8):
@@ -145,8 +148,8 @@ def test_cached_hr_decisions_bypass_full_authentication_capacity(hr_sessions, ca
             assert "X-Session-Expired" not in response.headers
         if cached is False:
             stamp = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()
-            assert repository.user_for_session(first, now=stamp) is None
-            assert repository.user_for_session(second, now=stamp) is None
+            assert sessions.user_for_session(first, now=stamp) is None
+            assert sessions.user_for_session(second, now=stamp) is None
     finally:
         for _ in range(8):
             pool._slots.release()

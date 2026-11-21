@@ -1,4 +1,6 @@
 from __future__ import annotations
+from tests.web_fixtures import embedded_app, replace_database_services, request_for
+from tests.runtime_factories import make_device_runtime
 from tests.line_fixtures import as_line_services, cutting_settings
 
 import json
@@ -894,8 +896,11 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
             incident_ids=[f"other-{index}"], now=f"2026-10-07T08:{index:02d}:00+08:00",
         )
     assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
-    runtime = SimpleNamespace(alarm_repository=repository, settings=SimpleNamespace(device_id="Cutter01", alarm_monitor_start_at=cutoff))
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(lines=as_line_services({"Cutter01": runtime}))), query_params={"device_id": "Cutter01"}, state=SimpleNamespace(request_id="test"), headers={})
+    settings = cutting_settings(alarm_monitor_start_at=cutoff)
+    app = embedded_app(settings)
+    runtime = make_device_runtime(alarm_repository=repository, settings=settings)
+    replace_database_services(app, lines=as_line_services({"Cutter01": runtime}))
+    request = request_for(app, params={"device_id": "Cutter01"})
     result = alarm_api.page_alarm_incidents(request, page=1, page_size=15)["data"]
     by_code = {item["alarm_code"]: item for item in result["items"]}
     assert result["total"] == result["all_total"] == result["open_count"] == 6

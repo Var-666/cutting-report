@@ -1,3 +1,6 @@
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import cutting_request
+from tests.line_fixtures import cutting_settings
 import logging
 from types import SimpleNamespace
 
@@ -101,9 +104,8 @@ def test_timing_log_accounts_for_waits_on_success_and_failure(tmp_path, clock, c
 
 
 def test_analysis_api_includes_data_preparation_in_deadline_and_reports_timeout(tmp_path, clock, monkeypatch):
-    settings = Settings(project_root=tmp_path, llm_queue_timeout_seconds=120, llm_timeout=90)
-    state = SimpleNamespace(report_analysis_service=SimpleNamespace(settings=settings))
-    monkeypatch.setattr(analysis_api, "device_state", lambda request: state)
+    settings = cutting_settings(project_root=tmp_path, llm_queue_timeout_seconds=120, llm_timeout=90)
+    device = make_device_runtime(settings=settings, report_analysis_service=SimpleNamespace(settings=settings))
 
     def prepare_data(payload, request):
         assert report_deadline.remaining_seconds() == 210
@@ -113,7 +115,7 @@ def test_analysis_api_includes_data_preparation_in_deadline_and_reports_timeout(
     monkeypatch.setattr(analysis_api, "_analyze_report", prepare_data)
     payload = analysis_api.AnalysisRequest(report_type="leadership", report_date="2026-10-01")
     with pytest.raises(HTTPException) as error:
-        analysis_api.analyze_report(payload, SimpleNamespace(state=SimpleNamespace(request_id="api-request")))
+        analysis_api.analyze_report(payload, cutting_request(device, request_id="api-request"))
     assert error.value.status_code == 503
     assert "智能分析处理超时" in error.value.detail
     assert "数据准备、排队和模型调用" in error.value.detail
@@ -131,15 +133,14 @@ def test_analysis_api_preserves_failure_reason_and_retry_header(monkeypatch, kin
     def fail(*args, **kwargs):
         raise AnalysisUnavailableError(message)
 
-    state = SimpleNamespace(report_analysis_service=SimpleNamespace(
+    device = make_device_runtime(settings=cutting_settings(), report_analysis_service=SimpleNamespace(
         analyze_leadership=fail, analyze_workshop=fail, analyze_equipment=fail),
         leadership_report_service=SimpleNamespace(fetch=fail),
         workshop=SimpleNamespace(get_daily_report_records=fail),
-        query_service=SimpleNamespace(fetch_equipment_data=fail))
-    monkeypatch.setattr(analysis_api, 'device_state', lambda request: state)
+        pipeline=make_pipeline_stub(query_service=SimpleNamespace(fetch_equipment_data=fail)))
     payload = analysis_api.AnalysisRequest(report_type=kind, report_date='2026-11-12')
     with pytest.raises(HTTPException) as error:
-        analysis_api._analyze_report(payload, SimpleNamespace())
+        analysis_api._analyze_report(payload, cutting_request(device))
     assert error.value.status_code == 503
     assert error.value.detail == message
     assert error.value.headers['Retry-After'] == '60'
@@ -158,11 +159,11 @@ def test_workshop_analysis_filters_each_period_and_does_not_publish_filtered_res
         assert options['publish_latest'] is False
         return AnalysisResult(status='success', overview='已确认任务', features='', alerts='', suggestions='')
 
-    state = SimpleNamespace(report_analysis_service=SimpleNamespace(analyze_workshop=analyze),
-                            range_report_service=SimpleNamespace(workshop_records=lambda *_: (None, rows)))
-    monkeypatch.setattr(analysis_api, 'device_state', lambda request: state)
+    device = make_device_runtime(settings=cutting_settings(),
+        report_analysis_service=SimpleNamespace(analyze_workshop=analyze),
+        pipeline=make_pipeline_stub(range_service=SimpleNamespace(workshop_records=lambda *_: (None, rows))))
     payload = analysis_api.AnalysisRequest(report_type='workshop', report_date='2026-11-12',
         period_start='2026-11-12', period_end='2026-11-12',
         workshop_scope={'project_code': 'P1', 'task_id': 'T-8', 'confirmation_status': 'confirmed'})
-    request = SimpleNamespace(state=SimpleNamespace(request_id='scoped-workshop'))
+    request = cutting_request(device, request_id='scoped-workshop')
     assert analysis_api._analyze_report(payload, request)['data']['overview'] == '已确认任务'

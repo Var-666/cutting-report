@@ -1,3 +1,5 @@
+from tests.runtime_factories import make_application_runtime, make_database_services
+from tests.web_fixtures import FixedDatabaseRuntime, request_for
 from tests.web_fixtures import embedded_app
 import json
 import os
@@ -179,9 +181,9 @@ def test_sensitive_values_urls_and_digests_never_leave_api(configured):
     app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_user] = lambda: {'role': 'admin'}
-    app.state.workshop = SimpleNamespace(user_for_session=lambda *_, **__: None)
-    app.state.configuration_diagnostics = web
-    app.state.worker_status_reader = SimpleNamespace(status=lambda: worker(web))
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=lambda *_, **__: None)
+    app.state.runtime.configuration_diagnostics = web
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: worker(web))
 
     @app.middleware('http')
     async def request_id(request, call_next):
@@ -206,8 +208,10 @@ def test_sensitive_values_urls_and_digests_never_leave_api(configured):
 def test_diagnostic_failure_is_sanitized(configured):
     from app.api.configuration import configuration_diagnostics
     from fastapi import HTTPException
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
-        worker_status_reader=SimpleNamespace(status=lambda: (_ for _ in ()).throw(ValueError('secret'))))))
+    app = embedded_app()
+    app.state.runtime.worker_status_reader = SimpleNamespace(
+        status=lambda: (_ for _ in ()).throw(ValueError('secret')))
+    request = request_for(app)
     with pytest.raises(HTTPException) as error:
         configuration_diagnostics(request)
     assert error.value.status_code == 503 and 'secret' not in error.value.detail
@@ -227,8 +231,9 @@ def test_health_never_exposes_internal_configuration_fingerprints(configured):
     import anyio
     from app.main import health
     web = configured()
-    state = SimpleNamespace(settings=web.settings, worker_status_reader=SimpleNamespace(status=lambda: worker(web)))
-    request = SimpleNamespace(app=SimpleNamespace(state=state), state=SimpleNamespace(request_id='health'))
+    app = embedded_app(web.settings)
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: worker(web))
+    request = request_for(app, request_id='health')
     response = anyio.run(health, request)
     assert 'configuration' not in response['data']['workers']
     assert 'digest' not in json.dumps(response)
@@ -239,10 +244,11 @@ def test_worker_heartbeat_uses_its_own_snapshot_and_diagnostic_failure_is_isolat
     from app.worker import WorkerProcess
     web, background = configured(), configured()
     saved = []
-    runtime = SimpleNamespace(coordination=SimpleNamespace(
+    context = make_database_services(settings=background.settings, lines={},
+        database_sources=DatabaseSourceRegistry(capacity=SqlCapacity(background.settings)))
+    runtime = make_application_runtime(coordination=SimpleNamespace(
         task_counts=lambda: {}, renew=lambda *args, **kwargs: saved.append(kwargs['status']) or True),
-        lines={}, database_sources=DatabaseSourceRegistry(capacity=SqlCapacity(background.settings)),
-        configuration_diagnostics=background)
+        database_runtime=FixedDatabaseRuntime(context), configuration_diagnostics=background)
     process = WorkerProcess(replace(background.settings, consumer_instance_id='diagnostic-test'), runtime=runtime)
     process.owner = 'test-worker'
     process._heartbeat()

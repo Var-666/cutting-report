@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, request_for
 import logging
 import smtplib
 from concurrent.futures import ThreadPoolExecutor
@@ -322,8 +323,9 @@ def test_retry_api_reports_conflict_for_unknown_or_active_mail(workflow):
 
     repository, _, report_id = ready(workflow)
     record = repository.delivery_for_report(report_id)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(automation=repository, settings=settings)),
-                              state=SimpleNamespace(request_id="test"))
+    app = embedded_app(settings)
+    app.state.runtime.automation = repository
+    request = request_for(app)
     with pytest.raises(HTTPException) as captured:
         retry_delivery(record["delivery_id"], request)
     assert captured.value.status_code == 409

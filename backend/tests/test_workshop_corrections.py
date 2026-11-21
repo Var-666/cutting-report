@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.line_fixtures import as_line_services, runtime_line
 from tests.line_fixtures import cutting_settings
 from types import SimpleNamespace
@@ -9,22 +10,27 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user, require_worker
 from app.api.workshop import router
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
+from app.database.sessions import SessionRepository
 from app.models.domain import WorkshopRecord
 
 
 def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_database,
     tmp_path,
 ) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
     confirmed_at = "2026-09-09T16:15:00+08:00"
-    admin = repository.bootstrap_admin(
+    admin = users.bootstrap_admin(
         username="admin",
         display_name="管理员",
         password="admin-password",
         now=confirmed_at,
     )
-    worker = repository.create_user(
+    worker = users.create_user(
         username="worker01",
         display_name="汪磊",
         password="worker-password",
@@ -51,7 +57,7 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_
         now=confirmed_at,
         scope_machine_no=None,
     )
-    repository.confirm_task(
+    confirmations.confirm_task(
         task_id="legacy-task",
         report_id=legacy_report["report_id"],
         user=worker,
@@ -60,10 +66,11 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_
 
     app = embedded_app()
     app.include_router(router)
-    app.state.workshop = repository
-    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
-        settings=cutting_settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
-        query_service=getattr(app.state, 'query_service', None))})
+    app.state.runtime.sessions = SessionRepository(state_database)
+    device = make_device_runtime(settings=cutting_settings(data_source_mode='sqlserver'),
+        workshop=repository, confirmations=confirmations, pipeline=make_pipeline_stub(),
+        report_provider=SimpleNamespace(snapshot_service=None))
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
     app.dependency_overrides[require_user] = lambda: worker
     app.dependency_overrides[require_worker] = lambda: worker
     app.dependency_overrides[require_admin] = lambda: admin
@@ -82,7 +89,7 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_
         assert response.json()["data"]["action"] == "worker_revoke"
         assert response.json()["data"]["report_id"] == legacy_report["report_id"]
 
-        repository.confirm_task(
+        confirmations.confirm_task(
             task_id="legacy-task",
             report_id=legacy_report["report_id"],
             user=worker,
@@ -100,5 +107,5 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_
         assert response.json()["data"]["action"] == "admin_revoke"
         assert response.json()["data"]["report_id"] == legacy_report["report_id"]
 
-    assert repository.get_confirmations(["legacy-task"]) == {}
+    assert confirmations.get_confirmations(["legacy-task"]) == {}
 

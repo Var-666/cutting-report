@@ -1,6 +1,7 @@
 """Exercise the new response models through real services and PostgreSQL repositories."""
 
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,7 +14,9 @@ from fastapi.testclient import TestClient
 from app.api import alarms, cutting, workshop
 from app.api.auth import require_admin, require_user, require_worker
 from app.database.alarms import AlarmRepository
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.llm_service import AnalysisOutputValidationError
@@ -25,10 +28,12 @@ from tests.dispatch_fixtures import RecordingMagicClient, push_service as _push_
 def api(tmp_path, state_database):
     remote = RecordingMagicClient()
     service, dispatches, admin = _push_service(state_database, tmp_path, remote)
-    repository = WorkshopRepository(dispatches.database, scope_machine_no='Cutter01')
-    worker = repository.create_user(username='worker', display_name='工人', password='worker-password',
+    repository = WorkshopReportRepository(dispatches.database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(dispatches.database, scope_machine_no='Cutter01')
+    users = UserRepository(dispatches.database)
+    worker = users.create_user(username='worker', display_name='工人', password='worker-password',
                                     role='worker', now='2026-10-01T08:00:00')
-    other = repository.create_user(username='other', display_name='另一工人', password='worker-password',
+    other = users.create_user(username='other', display_name='另一工人', password='worker-password',
                                    role='worker', now='2026-10-01T08:00:00')
     records = [WorkshopRecord(
         task_id='task1', project_code='SHIP', ship_no='SHIP', segment_name='P1', program_no='p.gen',
@@ -43,27 +48,26 @@ def api(tmp_path, state_database):
                             prepare_workshop_data=lambda _: bundle)
     alarm_repository = AlarmRepository(dispatches.database, source_name='production')
     alarm_repository.initialize()
-    runtime = SimpleNamespace(settings=service.settings, workshop=repository, query_service=query,
-                              range_report_service=SimpleNamespace(workshop_records=lambda *_: (
-                                  bundle, repository.get_daily_report_records('2026-10-01')[1])),
-                              alarm_repository=alarm_repository,
-                              alarm_worker=SimpleNamespace(enabled=True, thread=None))
+    runtime = make_device_runtime(settings=service.settings,
+                  workshop=repository, confirmations=confirmations,
+                  report_provider=SimpleNamespace(snapshot_service=None),
+                  alarm_repository=alarm_repository,
+                  alarm_worker=SimpleNamespace(enabled=True, thread=None),
+                  pipeline=make_pipeline_stub(query_service=query, range_service=SimpleNamespace(workshop_records=lambda *_: (
+                                  bundle, repository.get_daily_report_records('2026-10-01')[1]))))
     app = embedded_app()
     for router in (cutting.router, workshop.router, alarms.router):
         app.include_router(router)
-    app.state.lines = as_line_services({'Cutter01': runtime})
-    app.state.worker_status_reader = SimpleNamespace(status=lambda: {'state': 'running'})
+    replace_database_services(app, lines=as_line_services({'Cutter01': runtime}))
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: {'state': 'running'})
     app.dependency_overrides[require_admin] = lambda: admin
     app.dependency_overrides[require_user] = lambda: admin
+    replace_database_services(app, settings=service.settings, cutting_dispatch=service)
     app.dependency_overrides[require_worker] = lambda: worker
 
     @app.middleware('http')
     async def context(request, call_next):
         request.state.request_id = 'response-model-paths'
-        request.state.database_context = SimpleNamespace(
-            settings=service.settings, cutting_dispatch=service, lines=app.state.lines,
-            database_sources=app.state.database_sources,
-        )
         return await call_next(request)
 
     with TestClient(app) as client:
@@ -134,7 +138,7 @@ def test_cutting_response_models_cover_catalogs_machines_and_dispatch_lifecycle(
 
 
 def test_workshop_response_models_cover_legacy_confirmations_and_all_mutations(api):
-    client, repository = api.client, api.repository
+    client, confirmations = api.client, api.runtime.confirmations
     query = '?device_id=Cutter01'
     report_date = {'report_date': '2026-10-01'}
     assert data(client.get('/api/v1/workshop/tasks' + query + '&report_date=2026-10-01'))['report'] is None
@@ -144,7 +148,7 @@ def test_workshop_response_models_cover_legacy_confirmations_and_all_mutations(a
     assert data(client.get('/api/v1/workshop/latest-date' + query + '&on_or_before=2026-10-01'))['report_date'] is None
     report = data(client.post('/api/v1/workshop/reports' + query, json=report_date))
     assert report['item_count'] == 2 and report['source_mode']
-    repository.confirm_task(task_id='task1', user=api.worker, now='2026-10-01T09:00:00+08:00')
+    confirmations.confirm_task(task_id='task1', user=api.worker, now='2026-10-01T09:00:00+08:00')
     confirmed = data(client.post('/api/v1/workshop/tasks/task1/confirm' + query, json=report_date))
     assert confirmed['report_id'] is None
     batch = data(client.post('/api/v1/workshop/tasks/confirm' + query, json={

@@ -186,7 +186,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
     (tmp_path / "vendor").mkdir()
     (tmp_path / "vendor/echarts.min.js").write_text("window.echarts={};")
     runtime = build_runtime(configuration(tmp_path, postgres_state), role="worker")
-    runtime.workshop.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
+    runtime.users.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
                                     now="2026-10-24T10:00:00+08:00")
     runtime.database_runtime.snapshot().lines["Cutter01"].service.metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
         project_code=None, ship_no=None, request_id="test", created_at="2026-10-24T10:00:00+08:00")

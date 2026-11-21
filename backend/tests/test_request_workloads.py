@@ -1,3 +1,5 @@
+from tests.web_fixtures import replace_database_services
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
 import asyncio
 from contextvars import ContextVar
 from threading import BoundedSemaphore, Event
@@ -11,7 +13,7 @@ from fastapi import HTTPException
 from app.api import analysis, reports, workloads
 from app.api.auth import require_admin, require_user
 from tests.line_fixtures import cutting_settings, as_line_services
-from app.device_config import load_line_catalog, ProductionLineCatalog
+from app.device_config import ProductionLineCatalog
 from app.main import app
 from app.core.request_cancellation import SqlRequestCancelled
 
@@ -35,24 +37,16 @@ def test_busy_analysis_pdf_and_queries_leave_default_threads_and_fast_routes_fre
     pdf.write_bytes(b"%PDF-1.7\nreport")
     monkeypatch.setattr(analysis, "_analyze_report", lambda *_: block("analysis", {"success": True}))
     monkeypatch.setattr(reports, "_resolve_report_file", lambda *_: ({"filename": "report.html"}, pdf))
-    state = {
-        "settings": cutting_settings(project_root=tmp_path),
-        "report_analysis_service": SimpleNamespace(settings=cutting_settings(project_root=tmp_path)),
-        "pdf_service": SimpleNamespace(render=lambda _: block("pdf", pdf)),
-        "energy_period_service": SimpleNamespace(get_day=lambda *_, **__: block("query", {})),
-        "worker": SimpleNamespace(status=lambda: {"report_alive": True}),
-        "workshop": SimpleNamespace(
-            authenticate=lambda *_: {"role": "admin", "user_id": "admin"},
-            create_session=lambda *_, **__: ("session", "2026-10-24T23:00:00+08:00"),
-        ),
-        "lines": {},
-        "catalog": load_line_catalog(cutting_settings().production_lines_json),
-    }
-    for key, value in state.items():
-        monkeypatch.setattr(app.state, key, value, raising=False)
-    monkeypatch.setattr(analysis, "device_state", lambda _: app.state)
-    # The real device dependency also runs before the isolated endpoint.
-    state["lines"].update(as_line_services({"Cutter01": app.state}))
+    settings = cutting_settings(project_root=tmp_path)
+    device = make_device_runtime(settings=settings, report_analysis_service=SimpleNamespace(settings=settings),
+        pipeline=make_pipeline_stub(energy_period_service=SimpleNamespace(get_day=lambda *_, **__: block("query", {}))),
+        report_provider=SimpleNamespace(snapshot_service=None))
+    replace_database_services(app, settings=settings, lines=as_line_services({"Cutter01": device}))
+    app.state.runtime.pdf_service = SimpleNamespace(render=lambda _: block("pdf", pdf))
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: {"report_alive": True})
+    app.state.runtime.users = SimpleNamespace(authenticate=lambda *_: {"role": "admin", "user_id": "admin"})
+    app.state.runtime.sessions = SimpleNamespace(
+        create_session=lambda *_, **__: ("session", "2026-10-24T23:00:00+08:00"))
     monkeypatch.setitem(app.dependency_overrides, require_admin, lambda: {"role": "admin"})
     monkeypatch.setitem(app.dependency_overrides, require_user, lambda: {"role": "admin"})
 
@@ -130,14 +124,14 @@ def test_slow_hr_dependency_does_not_borrow_default_thread_tokens(monkeypatch):
         assert release.wait(5)
         return True
 
-    monkeypatch.setattr(app.state, "workshop", SimpleNamespace(user_for_session=lambda *_, **__: user), raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", SimpleNamespace(
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=lambda *_, **__: user)
+    replace_database_services(app, worker_auth=SimpleNamespace(
         cached_session_identity_available=lambda *_, **__: None,
         session_identity_available=revalidate,
-    ), raising=False)
-    monkeypatch.setattr(app.state, "worker", SimpleNamespace(status=lambda: {"report_alive": True}), raising=False)
-    monkeypatch.setattr(app.state, "lines", {}, raising=False)
-    monkeypatch.setattr(app.state, "catalog", ProductionLineCatalog(lines=()), raising=False)
+    ))
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: {"report_alive": True})
+    replace_database_services(app, lines={})
+    replace_database_services(app, catalog=ProductionLineCatalog(lines=()))
 
     async def exercise():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

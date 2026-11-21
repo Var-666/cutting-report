@@ -1,4 +1,4 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, replace_database_services
 from dataclasses import replace
 from datetime import date
 import json
@@ -210,9 +210,9 @@ def test_latest_endpoint_is_read_only_and_returns_original_analysis_after_restar
     app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    app.state.lines = {'welding': runtime_line(restarted, 'welding')}
+    replace_database_services(app, lines={'welding': runtime_line(restarted, 'welding')})
     from app.device_config import load_line_catalog
-    app.state.catalog = load_line_catalog(restarted.settings.production_lines_json)
+    replace_database_services(app, catalog=load_line_catalog(restarted.settings.production_lines_json))
     with TestClient(app, headers={'X-Production-Line': 'welding'}) as client:
         params = dict(start='2026-11-12', end='2026-11-12', report_type='daily', data_version='b' * 64)
         response = client.get('/api/v1/welding/analysis/latest', params=params)

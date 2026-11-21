@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import replace_database_services
 from types import SimpleNamespace
 
 import pytest
@@ -124,9 +126,9 @@ def test_http_request_id_reaches_sync_query_thread(monkeypatch, tmp_path) -> Non
             return SimpleNamespace(records=[])
 
     query_service = _QueryService()
-    device = SimpleNamespace(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
-                             query_service=query_service)
-    monkeypatch.setattr(app.state, "lines", as_line_services({"Cutter01": device}), raising=False)
+    device = make_device_runtime(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
+                 pipeline=make_pipeline_stub(query_service=query_service))
+    replace_database_services(app, lines=as_line_services({"Cutter01": device}))
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     try:
         response = TestClient(app).post(
@@ -227,10 +229,10 @@ def test_real_http_auth_binds_cancel_to_user_and_session(monkeypatch, tmp_path, 
                 assert release.wait(3)
                 return SimpleNamespace(records=[])
 
-    monkeypatch.setattr(app.state, "workshop", Workshop(), raising=False)
-    device = SimpleNamespace(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
-                             query_service=Query())
-    monkeypatch.setattr(app.state, "lines", as_line_services({"Cutter01": device}), raising=False)
+    app.state.runtime.sessions = Workshop()
+    device = make_device_runtime(settings=cutting_settings(project_root=tmp_path, data_source_mode="demo"),
+                 pipeline=make_pipeline_stub(query_service=Query()))
+    replace_database_services(app, lines=as_line_services({"Cutter01": device}))
     own = TestClient(app)
     own.cookies.set("cutting_session", "user1-session")
     foreign = TestClient(app)

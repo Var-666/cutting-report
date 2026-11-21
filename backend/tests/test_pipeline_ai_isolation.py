@@ -7,6 +7,7 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
+from app.database.users import UserRepository
 from app.models.domain import ReportFilter
 from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
@@ -43,7 +44,7 @@ def pipeline_job(state_database, tmp_path, report_type, interval, *, llm_enabled
     pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
     now = datetime.now(ZoneInfo(settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop" and not interval:
-        user = pipeline.workshop_repository.bootstrap_admin(
+        user = UserRepository(state_database).bootstrap_admin(
             username="tester", display_name="测试工人", password="safe-password", now=now,
         )
         records = pipeline.query_service.fetch_report_data(ReportFilter(report_date=REPORT_DATE))

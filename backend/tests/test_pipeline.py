@@ -10,7 +10,9 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import ReportFilter
 from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
@@ -69,8 +71,10 @@ def test_demo_pipeline_generates_offline_report(state_database,
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
-        workshop = WorkshopRepository(state_database, scope_machine_no='Cutter01')
-        user = workshop.bootstrap_admin(
+        workshop = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+        confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+        users = UserRepository(state_database)
+        user = users.bootstrap_admin(
             username="tester",
             display_name="测试工人",
             password="safe-password",
@@ -86,7 +90,7 @@ def test_demo_pipeline_generates_offline_report(state_database,
             user=user,
             now=now,
         )
-        workshop.confirm_task(
+        confirmations.confirm_task(
             task_id="20260818-001",
             report_id=daily_report["report_id"],
             user=user,

@@ -13,7 +13,9 @@ from app.database.dispatch import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.metadata import MetadataRepository
 from app.database.retention import RetentionRepository
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.services.retention_service import RetentionService
 from app.workers.retention_worker import RetentionWorker
 
@@ -29,7 +31,7 @@ NOW = datetime(2026, 9, 21, 8, 0, tzinfo=TZ)
 
 def _repositories(state_database, tmp_path):
     database = state_database
-    workshop = WorkshopRepository(database, scope_machine_no='Cutter01')
+    workshop = WorkshopReportRepository(database, scope_machine_no='Cutter01')
     metadata = MetadataRepository(database, device_id='Cutter01')
     automation = AutomationRepository(database)
     alarms = AlarmRepository(database, source_name="production")
@@ -38,7 +40,7 @@ def _repositories(state_database, tmp_path):
     retention = RetentionRepository(database)
     alarms.initialize()
     dispatches.initialize()
-    admin = workshop.create_user(
+    admin = UserRepository(database).create_user(
         username="retention-admin",
         display_name="保留策略管理员",
         password="correct-horse-battery-staple",
@@ -660,13 +662,13 @@ def test_retention_worker_runs_immediately_and_stops_cleanly() -> None:
 def test_retention_removes_only_expired_device_confirmation_when_task_numbers_match(state_database, tmp_path):
     from test_workshop_snapshot_sync import record
     database, one, metadata, automation, alarms, dispatches, downloads, retention, admin = _repositories(state_database, tmp_path)
-    two = WorkshopRepository(database, scope_machine_no='Cutter02')
+    two = WorkshopReportRepository(database, scope_machine_no='Cutter02')
     for repo, generated in ((one, OLD), (two, RECENT)):
         report = repo.create_daily_report(report_date='2026-09-20', source_mode='sqlserver', records=[record('same')], user=admin, now=generated)
-        repo.confirm_task(task_id='same', report_id=report['report_id'], user=admin, now=OLD)
+        ConfirmationRepository(database, scope_machine_no=repo.scope_machine_no).confirm_task(task_id='same', report_id=report['report_id'], user=admin, now=OLD)
     result = retention.cleanup_expired_records(report_cutoff='2026-01-01', analysis_cutoff=None, alarm_cutoff=None,
         dispatch_cutoff=None, audit_cutoff=None, queued_at=RECENT, batch_size=100)
     assert result['workshop_confirmations'] == 1
-    assert one.get_confirmations(['same']) == {}
+    assert ConfirmationRepository(database, scope_machine_no='Cutter01').get_confirmations(['same']) == {}
     assert two.get_daily_report('2026-09-20')['confirmed_count'] == 1
-    assert len(two.list_confirmation_audits(task_id='same')) == 1
+    assert len(ConfirmationRepository(database, scope_machine_no='Cutter02').list_confirmation_audits(task_id='same')) == 1

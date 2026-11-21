@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, replace_database_services, request_for
 from tests.dispatch_fixtures import dispatch_service as _service, push_service as _push_service, RecordingMagicClient
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -726,10 +727,9 @@ def test_standard_name_parameter_mismatch_requires_explicit_confirmation(state_d
 def test_single_dispatch_api_enforces_name_confirmation_and_exposes_current_status(state_database, tmp_path: Path) -> None:
     service, _dispatches, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
-    request = SimpleNamespace(
-        state=SimpleNamespace(request_id="dispatch-test"),
-        app=SimpleNamespace(state=SimpleNamespace(cutting_dispatch=service)),
-    )
+    app = embedded_app(service.settings)
+    replace_database_services(app, cutting_dispatch=service)
+    request = request_for(app, request_id="dispatch-test")
     payload = DispatchCreateRequest(
         document_id=raw["document_id"],
         machine_ip="10.1.133.197",
@@ -1279,8 +1279,9 @@ def test_execute_request_rejects_invalid_manual_segments(value):
 def test_execute_api_forwards_manual_segment_and_keeps_body_optional():
     calls = []
     service = SimpleNamespace(execute_dispatch=lambda dispatch_id, **kwargs: calls.append((dispatch_id, kwargs)) or {})
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(cutting_dispatch=service)),
-                              state=SimpleNamespace(request_id="segment-test"))
+    app = embedded_app()
+    replace_database_services(app, cutting_dispatch=service)
+    request = request_for(app, request_id="segment-test")
     user = {"role": "admin"}
     execute_dispatch_api("task-1", request, DispatchExecuteRequest(segment_name=" 806C "), user=user)
     execute_dispatch_api("task-2", request, user=user)

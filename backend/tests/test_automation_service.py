@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
-from app.database.workshop import WorkshopRepository
+from app.database.users import UserRepository
 from app.services.automation_service import next_run_at, report_date_for
 
 
@@ -43,7 +43,7 @@ def test_schedule_rollover_and_leap_day_keep_existing_calendar_rules():
 def test_schedule_and_email_retry_history_are_persisted(state_database, tmp_path) -> None:
     database_path = tmp_path / "metadata.db"
     metadata = MetadataRepository(state_database, device_id='Cutter01')
-    workshop = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    workshop = UserRepository(state_database)
     repository = AutomationRepository(state_database)
     now = "2026-08-24T18:00:00+08:00"
     admin = workshop.create_user(
