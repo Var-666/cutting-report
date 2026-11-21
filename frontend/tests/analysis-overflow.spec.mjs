@@ -1,61 +1,45 @@
-import { scriptFunction } from './typescript-helpers.mjs'
+// @vitest-environment jsdom
+
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, expect, test } from 'vitest'
+import ReportAnalysis from '../src/components/ReportAnalysis.vue'
 import { compactAnalysisFactLabel, compactAnalysisFactValue } from '../src/utils/analysisFactDisplay.ts'
-import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
 
-const controllerSource = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
-const source = readFileSync(new URL('../src/components/ReportAnalysis.vue', import.meta.url), 'utf8')
+enableAutoUnmount(afterEach)
 
-test('report model text uses the same device alias without changing numeric formatting or evidence', () => {
-  const formatter = source.slice(source.indexOf('function formatAnalysisText('), source.indexOf('function plainAnalysisText('))
-  const createFormatter = scriptFunction('formatDeviceDisplay', 'props', `${formatter}; return formatAnalysisText`)
-  const format = createFormatter(formatDeviceDisplay, {})
-  assert.equal(format('Cutter01电耗 1,234.567 kWh [F001]'), '20KW切割机电耗 1,234.6 kWh [F001]')
-  assert.equal(format('Cutter02电耗 12.345 kWh'), '30KW切割机电耗 12.3 kWh')
-  const welding = createFormatter(formatDeviceDisplay, { weldingReport: {} })
-  assert.equal(welding('区间焊接长度 12.345 m [F002]'), '区间焊接长度 12.345 m [F002]')
+test('model text uses readable device names and keeps valid evidence while rounding cutting values', async () => {
+  const wrapper = mount(ReportAnalysis, {
+    props: {
+      ready: true, loading: false,
+      analysis: { mode: 'model', status: 'success', overview: 'Cutter01电耗 1,234.567 kWh [F001]。Cutter02电耗 12.345 kWh [F899]',
+        facts: [{ id: 'F001', label: '实测电耗', value: '1,234.567', unit: 'kWh', source: '电表' }] },
+    },
+  })
+  expect(wrapper.get('h2').text()).toBe('智能分析')
+  expect(wrapper.text()).toContain('AI 生成')
+  expect(wrapper.text()).toContain('20KW切割机电耗 1,234.6 kWh [F001]')
+  expect(wrapper.text()).toContain('30KW切割机电耗 12.3 kWh')
+  expect(wrapper.text()).not.toContain('[F899]')
+  expect(wrapper.find('sup').exists()).toBe(false)
+  const evidence = wrapper.findAll('span').find(item => item.text().startsWith('· 查看模型输入数据'))
+  expect(evidence).toBeDefined()
+  await evidence.trigger('click')
+  expect(wrapper.text()).toContain('F001 · 实测电耗')
+  expect(wrapper.text()).toContain('来源：电表')
 })
 
-test('model-only analysis hides reference codes but keeps evidence available', () => {
-  assert.doesNotMatch(source, /<sup v-for="citation in sectionCitations/)
-  assert.match(source, /查看模型输入数据/)
-  assert.match(source, /智能分析/)
-  assert.match(source, /AI 生成/)
-  assert.doesNotMatch(source, /根据报表生成|报表数据分析|降级分析/)
-})
-
-test('analysis checks for newer report data and asks the current report to sync automatically', () => {
-  const api = ['client', 'cutting'].map(name => readFileSync(new URL(`../src/api/${name}.ts`, import.meta.url), 'utf8')).join('\n')
-  assert.match(api, /error\.status = response\.status/)
-  assert.match(api, /export function getAnalysisVersion[\s\S]*\/api\/v1\/analysis\/version/)
-  assert.match(controllerSource, /SOURCE_CHECK_INTERVAL_MS = 300_000/)
-  assert.match(controllerSource, /async function revalidateSource\(\)/)
-  const revalidateSource = controllerSource.match(/async function revalidateSource\(\)[\s\S]*?\n}\n\nasync function loadAnalysis/)[0]
-  assert.match(revalidateSource, /getAnalysisVersion\(/)
-  assert.doesNotMatch(revalidateSource, /analyzeReport\(/)
-  assert.match(revalidateSource, /!props\.versionCheckEnabled/)
-  assert.match(revalidateSource, /refreshed\?\.data_version[\s\S]*refreshed\.data_version !== analysisDataVersion\.value/)
-  assert.match(controllerSource, /exception\.status === 409\) requestReportRefresh\(targetKey\)/)
-  assert.match(controllerSource, /emit\('refresh-report'\)/)
-  assert.match(controllerSource, /sourceCheckController\?\.abort\(\)/)
-  assert.match(controllerSource, /window\.clearInterval\(sourceCheckTimer\)/)
-  assert.match(controllerSource, /if \(!analysis\.value\) \{[\s\S]*refreshRequestedKey = ''[\s\S]*requestReportRefresh\(targetKey\)/)
-  for (const name of ['LeadershipReportView', 'EnergyPeriodReportView', 'WorkshopView']) {
-    const view = readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8')
-    assert.match(view, /@refresh-report="refreshAnalysisReport"/)
-    assert.match(view, /:version-check-enabled=/)
-    if (name === 'LeadershipReportView') {
-      const query = readFileSync(new URL('../src/composables/useLeadershipReportQuery.ts', import.meta.url), 'utf8')
-      assert.match(query, /function refreshAnalysisReport\(\)[\s\S]*return defaultMonthlyView\.value \? loadDefaultReport\(true\) : refreshRangeAnalysisReport\(\)/)
-      assert.match(query, /getLeadershipRange\(appliedPeriodStart\.value, appliedPeriodEnd\.value, \{ force: true, signal \}\)/)
-    } else {
-      assert.match(view, /force: true|loadReport\(true\)|loadRange\(true\)/)
-    }
-  }
-  const workshop = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
-  assert.match(workshop, /const analysisReady = computed\([\s\S]*&& !loading\.value/)
+test('welding model text preserves thousandths and source evidence', () => {
+  const wrapper = mount(ReportAnalysis, {
+    props: {
+      ready: true, loading: false, showMetrics: false,
+      weldingReport: { data_version: 'weld-v2' },
+      analysis: { mode: 'model', status: 'success', overview: '区间焊接长度 12.345 m [F002]', data_version: 'weld-v1',
+        facts: [{ id: 'F002', label: '焊接长度', value: '12.345', unit: 'm' }] },
+    },
+  })
+  expect(wrapper.text()).toContain('区间焊接长度 12.345 m [F002]')
+  expect(wrapper.text()).not.toMatch(/报表数据分析|降级分析|分析边界/)
 })
 
 test('compound fact values stay compact in metric cards while the detail remains available', () => {

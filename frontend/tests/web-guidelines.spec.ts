@@ -16,6 +16,7 @@ import { useAppStore } from '../src/state/app'
 import AppSelect from '../src/components/AppSelect.vue'
 import { setupSoybeanComponents } from '../src/vendor/soybean-admin/components'
 import LoginView from '../src/views/LoginView.vue'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
 vi.mock('../src/api/auth', async importOriginal => ({
   ...await importOriginal<typeof import('../src/api/auth')>(),
@@ -108,7 +109,7 @@ test('KPI text and accessible labels distinguish measured values, zero, missing 
 })
 
 test('the workshop confirmation announces a failure and prevents dismissal while submitting', async () => {
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  stubTableLayout()
   const wrapper = mount(WorkshopBatchConfirmationDialog, {
     attachTo: document.body,
     props: {
@@ -134,7 +135,7 @@ test('the workshop confirmation announces a failure and prevents dismissal while
 })
 
 test('dispatch names editable fields by file and blocks confirmation during a send', async () => {
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  stubTableLayout()
   const item = {
     referenceKey: 'file-1', documentId: '1', versionId: 'v1', filePath: 'files/one.gen',
     filename: 'one.gen', version: 'V1', parsed: null, segmentName: '806C',

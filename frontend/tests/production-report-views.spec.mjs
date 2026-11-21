@@ -8,6 +8,7 @@ import { KeepAlive, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { getLeadershipRange, getLeadershipReport } from '../src/api/cutting'
 import { getEnergyDay, getEnergyMonthlyRange, getEnergyRange, getTaskEnergyDay } from '../src/api/energy'
+import AnalysisPanel from '../src/components/AnalysisPanel.vue'
 import AppDatePicker from '../src/components/AppDatePicker.vue'
 import AppSelect from '../src/components/AppSelect.vue'
 import StandardReportQuery from '../src/components/StandardReportQuery.vue'
@@ -36,7 +37,9 @@ beforeEach(() => {
   vi.mocked(getEnergyDay).mockResolvedValue({})
   vi.mocked(getTaskEnergyDay).mockResolvedValue({
     records: ['实测', '插值', '平均速率补齐；有效时段 08:00～08:30', '缺失', '计数器重置'].map((note, index) => ({
-      task_id: String(index), production_time: `2026-11-07T08:0${index}:00`, energy_note: note,
+      task_id: String(index),
+      project_code: index ? 'CMYZ0170' : null, ship_no: index ? '非船' : '', segment_name: index ? '804C' : '  ',
+      production_time: `2026-11-07T08:0${index}:00`, energy_note: note,
       electricity_consumption: 27.4, gas_consumption: [0, 1, 1, null, null][index],
     })),
     equipment_scope: ['Cutter01'], units: { electricity: 'kWh', gas: 'Nm³' },
@@ -82,6 +85,8 @@ test('task energy shows numeric zero and missing readings with their evidence an
   const table = wrapper.get('[aria-label="任务能耗明细表"]')
   expect(table.findAll('thead th').map(cell => cell.text())).toEqual(['序号', '工程号', '船名', '分段名', '任务开始', '切割时长', '电耗', '气耗'])
   const rows = table.findAll('tbody tr').slice(0, 5)
+  expect(rows[0].findAll('td').slice(1, 4).map(cell => cell.text())).toEqual(['--', '--', '--'])
+  expect(rows[1].findAll('td').slice(1, 4).map(cell => cell.text())).toEqual(['CMYZ0170', '非船', '804C'])
   expect(rows.map(row => row.findAll('td').slice(-2).map(cell => cell.text())))
     .toEqual([['27.4', '0.0'], ['27.4', '1.0'], ['27.4', '1.0'], ['27.4', '--'], ['27.4', '--']])
   expect(rows[2].findAll('td').at(-1).get('span[title^="平均速率补齐"]').attributes('title'))
@@ -154,4 +159,19 @@ test.each([
     report_type: kind, period_start: '2026-09-01', period_end: '2026-09-02',
     parameters: expect.objectContaining({ summary_period_start: '2025-12-01', summary_period_end: '2026-11-07' }),
   }), 'html']])
+})
+
+test.each([
+  ['equipment', getTaskEnergyDay],
+  ['leadership', getLeadershipReport],
+])('%s reloads the source when the analysis requests a refreshed version', async (kind, load) => {
+  const { wrapper } = await openReport(kind)
+  const reads = vi.mocked(load)
+  const before = reads.mock.calls.length
+  const panel = wrapper.getComponent(AnalysisPanel)
+  expect(panel.props('versionCheckEnabled')).toBe(true)
+  panel.vm.$emit('refresh-report')
+  await flushPromises()
+  expect(reads.mock.calls).toHaveLength(before + 1)
+  expect(reads.mock.lastCall[1]).toMatchObject({ force: true, signal: expect.any(AbortSignal) })
 })

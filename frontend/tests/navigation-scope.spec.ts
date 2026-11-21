@@ -80,6 +80,9 @@ test('shared modules keep their navigation selection and their own secondary men
   expect(menus.secondaryMenus.map(menu => menu.key)).toContain('operations-incidents')
   await router.push('/admin/settings/database')
   expect(menus.secondaryMenus.map(menu => menu.key)).toContain('database-monitors')
+  expect(menus.secondaryMenus.find(menu => menu.key === 'configuration-diagnostics')?.routePath)
+    .toBe('/admin/settings/configuration-diagnostics')
+  expect(menus.secondaryMenus.find(menu => menu.key === 'admin-accounts')?.routePath).toBe('/admin/settings/admins')
   await router.push('/admin/settings/automation?page=2')
   expect(router.currentRoute.value.fullPath).toBe('/admin/automation?page=2')
   expect(menus.primaryKey).toBe('automation')
@@ -236,6 +239,8 @@ test('route guards use registered line identifiers and still enforce the user ro
   await router.push('/admin/welding/reports/daily')
   expect(router.currentRoute.value.path).toBe('/worker/tasks')
   expect(getDeviceId()).toBe('cut-b')
+  await router.push('/admin/settings/configuration-diagnostics')
+  expect(router.currentRoute.value.path).toBe('/worker/tasks')
 })
 
 test('a pending device navigation keeps its filters and cannot be overlapped or applied after failure', async () => {

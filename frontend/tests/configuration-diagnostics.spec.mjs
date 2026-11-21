@@ -1,158 +1,153 @@
-import { scriptFunction } from './typescript-helpers.mjs'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
-import * as Vue from 'vue'
-import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
+// @vitest-environment jsdom
 
-const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
-const source = read('../src/views/ConfigurationDiagnosticsView.vue')
-const { descriptor } = parse(source)
-const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-const data = { categories: ['数据库连接配置', 'AI 模型配置'], items: [
-  { key: 'SQLSERVER_HOST', category: '数据库连接配置', status: 'pending' },
-  { key: 'LLM_MAX_CONCURRENT', category: 'AI 模型配置', status: 'error' },
-  { key: 'LLM_ENABLED', category: 'AI 模型配置', status: 'effective' },
-] }
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import { afterEach, expect, test, vi } from 'vitest'
+import AppSelect from '../src/components/AppSelect.vue'
+import ConfigurationDiagnosticsView from '../src/views/ConfigurationDiagnosticsView.vue'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
-function mount(fetcher) {
-  let state
-  const bindings = { computed: Vue.computed, onBeforeUnmount: Vue.onBeforeUnmount, onMounted: Vue.onMounted, ref: Vue.ref, watch: Vue.watch, getConfigurationDiagnostics: fetcher }
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { report, loading, error, category, search, rows, visibleRows, page, pageSize, load, display, consumerVersions, processRoles }`)
-  const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
-  const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
-  app.mount({})
-  return { app, state }
+const categoryNames = ['数据库连接配置', 'AI 模型配置']
+const item = (key, category, status = 'error') => ({
+  key, category, status, saved_value: false, saved_source: 'settings.env', valid: false, process_mismatch: true,
+  rule: '需要重启', processes: { web: { status, source: 'Web快照', value: 0 } },
+})
+const items = [
+  item('SQLSERVER_HOST', categoryNames[0], 'pending'),
+  item('LLM_MAX_CONCURRENT', categoryNames[1]),
+  item('LLM_ENABLED', categoryNames[1], 'effective'),
+]
+const report = (items, processes = {}) => Response.json({ success: true, data: {
+  items, processes, categories: categoryNames, errors: [],
+  notes: ['内部说明不显示'], precedence: { private: '内部优先级不显示' },
+} })
+
+enableAutoUnmount(afterEach)
+
+function open(read) {
+  const requests = []
+  stubTableLayout()
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/cancel') || url.pathname === '/api/v1/operations/browser') return Response.json({})
+    expect(url.pathname).toBe('/api/v1/configuration/diagnostics')
+    expect(init.method ?? 'GET').toBe('GET')
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+    requests.push(init.signal)
+    return read()
+  })
+  const wrapper = mount(ConfigurationDiagnosticsView)
+  const button = label => wrapper.findAll('button').find(candidate => candidate.text() === label)
+  return {
+    wrapper, requests, button,
+    filterCategory: async category => {
+      wrapper.getComponent(AppSelect).vm.$emit('update:modelValue', category)
+      await flushPromises()
+    },
+    filterName: value => wrapper.get('input[aria-label="配置项名称"]').setValue(value),
+    keys: () => wrapper.findAll('tbody tr').flatMap(row => row.findAll('td:first-child strong').map(cell => cell.text())),
+    page: () => wrapper.get('button[aria-current="page"]').attributes('aria-label'),
+  }
 }
-const flush = async () => { await Promise.resolve(); await Vue.nextTick() }
 
-test('diagnostics is an admin settings child and uses the shared read-only API', () => {
-  const router = read('../src/router/index.ts')
-  assert.match(router, /path: '\/admin'[\s\S]*meta: \{ role: 'admin' \}[\s\S]*path: 'settings'[\s\S]*path: 'configuration-diagnostics'[\s\S]*ConfigurationDiagnosticsView/)
-  assert.match(read('../src/api/configuration.ts'), /getConfigurationDiagnostics[\s\S]*request<ConfigurationDiagnostics>\('\/api\/v1\/configuration\/diagnostics', \{ signal \}\)/)
-  assert.doesNotMatch(script, /fetch\(|method:|saveConfiguration|\.snapshot\(/)
+test('configuration diagnostics filter only abnormal rows locally and show saved values and sources', async () => {
+  const page = open(() => report(items))
+  await nextTick()
+  expect(page.wrapper.attributes('aria-busy')).toBe('true')
+  expect(page.wrapper.get('[role="status"]').text()).toContain('正在读取配置快照')
+  await flushPromises()
+  expect(page.keys()).toEqual(['LLM_MAX_CONCURRENT'])
+  const row = page.wrapper.get('tbody tr')
+  expect(row.text()).toContain('关闭')
+  expect(row.text()).toContain('0')
+  expect(row.text()).toContain('来源：settings.env')
+  expect(row.text()).toContain('来源：Web快照')
+  expect(row.text()).toContain('后台进程与 Web 配置不一致')
+  expect(page.wrapper.text()).not.toContain('内部说明不显示')
+  await page.filterCategory(categoryNames[1])
+  await page.filterName('  llm_max  ')
+  expect(page.keys()).toEqual(['LLM_MAX_CONCURRENT'])
+  await page.filterCategory(categoryNames[0])
+  expect(page.keys()).toEqual([])
+  expect(page.wrapper.text()).toContain('没有符合条件的异常配置项')
+  expect(page.requests).toHaveLength(1)
 })
 
-test('new view compiles and has themed narrow-screen, loading, empty and failure states', () => {
-  const compiled = compileScript(descriptor, { id: 'configuration-diagnostics' })
-  assert.deepEqual(compileTemplate({ id: 'configuration-diagnostics', source: descriptor.template.content, filename: 'ConfigurationDiagnosticsView.vue', compilerOptions: { bindingMetadata: compiled.bindings } }).errors, [])
-  assert.deepEqual(compileStyle({ id: 'configuration-diagnostics', source: descriptor.styles[0].content, scoped: true }).errors, [])
-  assert.match(source, /@media\(max-width:560px\)/)
-  assert.match(source, /<AppReportTable/)
-  assert.match(source, /role="alert"/)
-  assert.match(source, /<template #empty>/)
-  assert.match(source, /:aria-busy="loading"/)
+test('each Consumer displays its own version and the unavailable instance keeps its own warning', async () => {
+  const page = open(() => report(items, {
+    web: { available: true, version: 'web-one' },
+    scheduler: { available: true, version: 'scheduler-one' },
+    automation: { available: true, version: 'automation-one' },
+    consumers: {
+      'consumer-1': { state: 'running', available: true, version: 'first-instance' },
+      'consumer-2': { state: 'lost', available: false, version: 'second-instance' },
+    },
+  }))
+  await flushPromises()
+  const view = page.wrapper.text()
+  expect(view).toContain('Consumer consumer-1 · running配置版本：first-instance')
+  expect(view).toContain('Consumer consumer-2 · lost配置版本：second-instance')
+  expect(view).toContain('此实例配置快照不可用')
+  for (const version of ['web-one', 'scheduler-one', 'automation-one']) expect(view).toContain(version)
 })
 
-test('only abnormal configurations are shown and category and search filters need no additional requests', async () => {
-  let calls = 0
-  const page = mount(async () => { calls++; return data })
-  try {
-    await flush()
-    assert.deepEqual(page.state.rows.value.map(row => row.key), ['LLM_MAX_CONCURRENT'])
-    page.state.category.value = 'AI 模型配置'
-    assert.equal(page.state.rows.value.length, 1)
-    page.state.search.value = '  llm_max  '
-    assert.deepEqual(page.state.rows.value.map(row => row.key), ['LLM_MAX_CONCURRENT'])
-    page.state.category.value = '数据库连接配置'
-    assert.equal(page.state.rows.value.length, 0)
-    assert.equal(calls, 1)
-    assert.equal(page.state.display(false), '关闭')
-    assert.equal(page.state.display(0), '0')
-  } finally { page.app.unmount() }
+test('diagnostics page and filters keep a ten-row limit and refresh resets to the first page', { timeout: 15_000 }, async () => {
+  const candidates = Array.from({ length: 25 }, (_, index) => item(`ERROR_${index}`, categoryNames[index < 12 ? 1 : 0]))
+  let rows = [...items.filter(row => row.status !== 'error'), item('OPTIONAL_KEY', categoryNames[0], 'unconfigured'), ...candidates]
+  const page = open(() => report(rows))
+  await flushPromises()
+  expect(page.keys()).toHaveLength(10)
+  await page.wrapper.get('button[aria-label="第 3 页"]').trigger('click')
+  expect(page.keys()).toEqual(['ERROR_20', 'ERROR_21', 'ERROR_22', 'ERROR_23', 'ERROR_24'])
+  await page.filterCategory(categoryNames[1])
+  expect(page.page()).toBe('第 1 页')
+  await page.wrapper.get('button[aria-label="第 2 页"]').trigger('click')
+  await page.filterName('ERROR_1')
+  expect(page.keys()).toEqual(['ERROR_1', 'ERROR_10', 'ERROR_11'])
+  expect(page.page()).toBe('第 1 页')
+  await page.filterCategory('')
+  await page.filterName('')
+  await page.wrapper.get('button[aria-label="第 2 页"]').trigger('click')
+  rows = candidates
+  await page.button('刷新快照').trigger('click')
+  await flushPromises()
+  expect(page.page()).toBe('第 1 页')
+  rows = []
+  await page.button('刷新快照').trigger('click')
+  await flushPromises()
+  expect(page.keys()).toEqual([])
+  expect(page.wrapper.text()).toContain('暂无异常配置项')
 })
 
-test('each Consumer keeps its own status and configuration version', async () => {
-  const page = mount(async () => ({ ...data, processes: { consumers: {
-    'consumer-1': { state: 'running', available: true, version: 'one' },
-    'consumer-2': { state: 'lost', available: false, version: 'two' },
-  } } }))
-  try {
-    await flush()
-    assert.deepEqual(page.state.consumerVersions.value.map(([id, value]) => [id, value.state, value.version]), [
-      ['consumer-1', 'running', 'one'], ['consumer-2', 'lost', 'two'],
-    ])
-    assert.deepEqual(page.state.processRoles.value, ['web', 'scheduler', 'automation'])
-  } finally { page.app.unmount() }
+test('diagnostics errors hide raw data, preserve successful rows and allow retry', async () => {
+  let offline = false
+  const page = open(() => offline ? Response.json({ detail: 'secret-credentials' }, { status: 502 }) : report(items))
+  await flushPromises()
+  offline = true
+  await page.button('刷新快照').trigger('click')
+  await flushPromises()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('配置诊断读取失败')
+  expect(page.wrapper.text()).not.toContain('secret-credentials')
+  expect(page.keys()).toEqual(['LLM_MAX_CONCURRENT'])
+  offline = false
+  await page.button('重试').trigger('click')
+  await flushPromises()
+  expect(page.requests).toHaveLength(3)
+  expect(page.wrapper.text()).not.toContain('配置诊断读取失败')
 })
 
-test('abnormal rows paginate in tens after filtering and filters and refresh reset the page', async () => {
-  let result = { ...data, items: [
-    ...data.items.filter(item => item.status !== 'error'),
-    { key: 'OPTIONAL_KEY', category: '数据库连接配置', status: 'unconfigured' },
-    ...Array.from({ length: 25 }, (_, index) => ({ key: `ERROR_${index}`, category: index < 12 ? 'AI 模型配置' : '数据库连接配置', status: 'error' })),
-  ] }
-  const page = mount(async () => result)
-  try {
-    await flush()
-    assert.equal(page.state.rows.value.length, 25)
-    assert.equal(page.state.visibleRows.value.length, 10)
-    page.state.page.value = 3
-    assert.deepEqual(page.state.visibleRows.value.map(row => row.key), ['ERROR_20', 'ERROR_21', 'ERROR_22', 'ERROR_23', 'ERROR_24'])
-    page.state.category.value = 'AI 模型配置'
-    await flush()
-    assert.equal(page.state.page.value, 1)
-    assert.equal(page.state.rows.value.length, 12)
-    page.state.page.value = 2
-    page.state.search.value = 'ERROR_1'
-    await flush()
-    assert.equal(page.state.page.value, 1)
-    assert.equal(page.state.rows.value.length, 3)
-    page.state.category.value = ''
-    page.state.search.value = ''
-    await flush()
-    assert.equal(page.state.visibleRows.value.length, 10)
-    page.state.page.value = 2
-    result = { ...data, items: [] }
-    await page.state.load()
-    await flush()
-    assert.equal(page.state.page.value, 1)
-    assert.deepEqual(page.state.visibleRows.value, [])
-  } finally { page.app.unmount() }
-})
-
-test('diagnostics omits the explanation, aligns cells left and spaces values, sources and badges', () => {
-  assert.doesNotMatch(descriptor.template.content, /report\.precedence|report\.notes|生效状态<\/span>|全部状态/)
-  assert.match(descriptor.template.content, /:items="visibleRows"[\s\S]*:total="rows.length"/)
-  assert.match(descriptor.template.content, /@page="page = \$event"/)
-  assert.doesNotMatch(descriptor.template.content, /@page-size|:page-sizes/)
-  assert.match(descriptor.template.content, /class="diagnostic-value"[\s\S]*class="diagnostic-source"[\s\S]*来源：/)
-  assert.match(descriptor.template.content, /<template v-for="\(role, index\)[\s\S]*?class="diagnostic-cell"><NTag[^>]+>[\s\S]*?<\/NTag><span class="diagnostic-value"/)
-  assert.match(descriptor.styles[0].content, /\.diagnostic-cell\{[^}]*gap:12px/)
-  assert.doesNotMatch(descriptor.styles[0].content, /table\.content-table/)
-})
-
-test('loading starts immediately and errors retain the last result without exposing raw errors', async () => {
-  let fail = false
-  const page = mount(async () => { if (fail) throw new Error('secret-credentials'); return data })
-  try {
-    assert.equal(page.state.loading.value, true)
-    await flush()
-    fail = true
-    await page.state.load()
-    assert.equal(page.state.loading.value, false)
-    assert.equal(page.state.report.value.items.length, 3)
-    assert.doesNotMatch(page.state.error.value, /secret/)
-    fail = false
-    await page.state.load()
-    assert.equal(page.state.error.value, '')
-  } finally { page.app.unmount() }
-})
-
-test('superseded and unmounted responses do not replace the current report', async () => {
-  const pending = []
-  const page = mount(({ signal }) => new Promise(resolve => pending.push({ signal, resolve })))
-  const latest = page.state.load()
-  assert.equal(pending[0].signal.aborted, true)
-  pending[1].resolve(data)
-  await latest
-  pending[0].resolve({ items: [] })
-  await flush()
-  assert.equal(page.state.report.value.items.length, 3)
-  const last = page.state.load()
-  page.app.unmount()
-  assert.equal(pending[2].signal.aborted, true)
-  pending[2].resolve({ items: [] })
-  await last
-  assert.equal(page.state.report.value.items.length, 3)
+test('a pending refresh locks repeated requests and aborts cleanly when leaving', async () => {
+  let finish
+  let pending = false
+  const page = open(() => pending ? new Promise(resolve => { finish = resolve }) : report(items))
+  await flushPromises()
+  pending = true
+  await page.button('刷新快照').trigger('click')
+  await page.button('刷新快照').trigger('click')
+  expect(page.requests).toHaveLength(2)
+  expect(page.keys()).toEqual(['LLM_MAX_CONCURRENT'])
+  page.wrapper.unmount()
+  expect(page.requests[1].aborted).toBe(true)
+  finish(report([item('LATE', categoryNames[0])]))
+  await flushPromises()
 })

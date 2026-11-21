@@ -1,119 +1,161 @@
-import assert from 'node:assert/strict'
-import { test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import * as Vue from 'vue'
-import { compileScript, compileTemplate, compileStyle, parse } from '@vue/compiler-sfc'
-import { scriptFunction } from './typescript-helpers.mjs'
-const source = readFileSync(new URL('../src/components/DatabaseSourcesPanel.vue', import.meta.url), 'utf8')
-const { descriptor } = parse(source)
-const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-const row = { id: 'quality', name: '质量检测', engine: 'sqlserver', enabled: true, host: 'old-host', port: 1433, database: 'quality', username: 'reader', password_configured: true, configured: true, references: [] }
-const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve() }
-function mount(overrides = {}) {
-  let state
-  const calls = { save: [], test: [], delete: [], toggle: [], list: 0 }
-  const bindings = { computed: Vue.computed, nextTick: Vue.nextTick, ref: Vue.ref, watch: Vue.watch, onMounted: Vue.onMounted,
-    globalThis: { window: {} },
-    useConfirm: () => async () => true, useUnsavedChanges: (dirty, _message, busy) => () => !busy.value,
-    listDatabaseSources: async () => { calls.list++; return { items: [{ ...row }] } },
-    getDatabaseSource: async () => ({ ...row, host: 'latest-host' }),
-    saveDatabaseSource: async (...args) => { calls.save.push(args); return row },
-    testDatabaseSource: async body => { calls.test.push(body); return { connected: true, elapsed_ms: 8, message: '参数未保存' } },
-    setDatabaseSourceEnabled: async (...args) => { calls.toggle.push(args); return row },
-    deleteDatabaseSource: async id => { calls.delete.push(id) }, ...overrides }
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { sources, loading, busy, error, editorError, result, showEditor, dirty, draft, load, open, changeEngine, close, save, testConnection, toggle, remove }`)
-  const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
-  const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
-  app.mount({})
-  return { state, calls, app }
+// @vitest-environment jsdom
+
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { NDialogProvider } from 'naive-ui'
+import { afterEach, expect, test, vi } from 'vitest'
+import { h } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import AppSelect from '../src/components/AppSelect.vue'
+import DatabaseSourcesPanel from '../src/components/DatabaseSourcesPanel.vue'
+import { stubTableLayout } from './table-layout-fixture.mjs'
+
+enableAutoUnmount(afterEach)
+
+const root = '/api/v1/database/sources'
+const row = { id: 'quality', name: '质量检测', engine: 'sqlserver', enabled: true, host: 'old-host', port: 1433,
+  database: 'quality', username: 'reader', password_configured: true, configured: true, references: [] }
+const response = data => Response.json({ success: true, data })
+
+async function openPage(overrides = {}) {
+  const requests = []
+  let current = overrides.row || row
+  stubTableLayout()
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const { pathname } = new URL(String(input), 'http://localhost')
+    if (pathname === '/api/v1/operations/browser' || pathname.endsWith('/cancel')) return Response.json({})
+    const method = init?.method ?? 'GET'
+    const body = init?.body && JSON.parse(init.body)
+    requests.push({ pathname, method, body })
+    if (pathname === root && method === 'GET') return overrides.list ? overrides.list() : response({ items: current ? [current] : [] })
+    if (pathname === root + '/test-connection') return response({ connected: true, elapsed_ms: 8, message: '参数未保存' })
+    if (pathname === root + '/quality' && method === 'GET') return response({ ...current, host: 'latest-host' })
+    if (method === 'PUT') return overrides.save ? overrides.save() : response(row)
+    if (method === 'PATCH') { current = { ...current, enabled: body.enabled }; return response(current) }
+    if (method === 'DELETE') { current = null; return response({ id: 'quality' }) }
+    throw new Error(`Unexpected request ${method} ${pathname}`)
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: DatabaseSourcesPanel }] })
+  await router.push('/')
+  const wrapper = mount({ render: () => h(NDialogProvider, {}, { default: () => h(RouterView) }) }, {
+    attachTo: document.body,
+    global: { plugins: [router], components: { AppSelect }, stubs: { teleport: true, transition: false } },
+  })
+  const input = label => wrapper.get(`input[aria-label="${label}"]`)
+  const button = (label, scope = wrapper) => scope.findAll('button').find(candidate => candidate.text() === label)
+  const click = async (label, scope) => { await button(label, scope).trigger('click'); await flushPromises() }
+  const form = () => wrapper.get('form')
+  const chooseEngine = async engine => {
+    wrapper.getComponent(AppSelect).vm.$emit('update:modelValue', engine)
+    await flushPromises()
+  }
+  return { wrapper, requests, input, button, click, form, chooseEngine }
 }
-test('source UI compiles and includes themed narrow, loading, empty and failure states', () => {
-  const compiled = compileScript(descriptor, { id: 'sources' })
-  assert.deepEqual(compileTemplate({ id: 'sources', filename: 'DatabaseSourcesPanel.vue', source: descriptor.template.content, compilerOptions: { bindingMetadata: compiled.bindings } }).errors, [])
-  assert.deepEqual(compileStyle({ id: 'sources', source: descriptor.styles[0].content, scoped: true }).errors, [])
-  for (const pattern of [/@media\(max-width:560px\)/, /var\(--text-color/, /#empty/, /role="alert"/, /AppReportTable/, /row.references.length > 0/]) assert.match(source, pattern)
+
+test('an edited source can be tested without saving and a blank password preserves stored credentials', async () => {
+  const page = await openPage()
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('质量检测')
+  await page.click('编辑')
+  expect(page.input('密码').element.value).toBe('')
+  expect(page.input('密码').attributes('placeholder')).toBe('已配置，留空保留原密码')
+  await page.input('服务器地址').setValue('edited-host')
+  const editor = page.wrapper.get('[aria-label="编辑数据源"]')
+  await page.click('测试连接', editor)
+  expect(page.form().get('[role="status"]').text()).toContain('参数未保存')
+  expect(page.requests.map(call => call.method)).toEqual(['GET', 'POST'])
+  expect(page.requests[1]).toMatchObject({ pathname: root + '/test-connection', body: { host: 'edited-host', password: null } })
+  await page.form().trigger('submit')
+  await flushPromises()
+  expect(page.requests[2]).toMatchObject({ pathname: root + '/quality', method: 'PUT', body: { host: 'edited-host', password: null } })
+  expect(page.requests[2].body).not.toHaveProperty('password_configured')
+  expect(page.requests[3]).toMatchObject({ method: 'GET', pathname: root })
+  await page.click('测试连接', page.wrapper.get('tbody'))
+  expect(page.requests.slice(-2)).toMatchObject([
+    { pathname: root + '/quality', method: 'GET' },
+    { pathname: root + '/test-connection', method: 'POST', body: { host: 'latest-host', password: null } },
+  ])
+  await page.click('停用')
+  expect(page.requests.find(call => call.method === 'PATCH')).toMatchObject({ pathname: root + '/quality/enabled', body: { enabled: false } })
+  expect(page.wrapper.get('tbody').text()).toContain('已停用')
+  await page.wrapper.get('button[aria-label="删除数据源 质量检测"]').trigger('click')
+  await flushPromises()
+  expect(page.requests.some(call => call.method === 'DELETE')).toBe(false)
+  await page.click('删除数据源')
+  expect(page.requests.some(call => call.method === 'DELETE' && call.pathname === root + '/quality')).toBe(true)
+  expect(page.wrapper.text()).toContain('暂无其他数据源')
 })
-test('shared create/edit draft and tests never echo passwords or save automatically', async () => {
-  const { app, state, calls } = mount()
-  try {
-    await flush()
-    state.open(); state.changeEngine('mysql')
-    assert.equal(state.draft.value.port, 3306)
-    assert.equal(state.draft.value.readonly, true)
-    await state.close()
-    state.open(row)
-    assert.equal(state.draft.value.password, '')
-    state.draft.value.host = 'edited-host'
-    await state.testConnection()
-    assert.equal(calls.test[0].host, 'edited-host')
-    assert.equal(calls.test[0].password, null)
-    assert.equal(calls.save.length, 0)
-    await state.save()
-    assert.equal(calls.save[0][1], false)
-    assert.equal(calls.save[0][0].password, null)
-    assert.ok(!('password_configured' in calls.save[0][0]))
-    assert.equal(state.showEditor.value, false)
-    assert.equal(calls.list, 2)
-    await state.testConnection(row)
-    assert.equal(calls.test[1].host, 'latest-host')
-    await state.toggle(row); await state.remove(row)
-    assert.deepEqual(calls.toggle, [['quality', false]])
-    assert.deepEqual(calls.delete, ['quality'])
-  } finally { app.unmount() }
+
+test('a pending save locks the editor and a failed save keeps unsaved fields and the entered password', async () => {
+  let finish
+  const page = await openPage({ save: () => new Promise(resolve => { finish = resolve }) })
+  await flushPromises()
+  await page.click('编辑')
+  const editor = page.wrapper.get('[aria-label="编辑数据源"]')
+  await page.input('服务器地址').setValue('unsaved-host')
+  await page.input('密码').setValue('fixture-password')
+  await page.form().trigger('submit')
+  await page.form().trigger('submit')
+  await flushPromises()
+  expect(page.requests.filter(call => call.method === 'PUT')).toHaveLength(1)
+  expect(page.form().get('fieldset').element.disabled).toBe(true)
+  await page.click('测试连接', editor)
+  await page.click('取消', editor)
+  expect(page.requests.some(call => call.method === 'POST')).toBe(false)
+  expect(page.form().exists()).toBe(true)
+  finish(Response.json({ detail: '保存失败' }, { status: 409 }))
+  await flushPromises()
+  expect(page.form().get('[role="alert"]').text()).toBe('保存失败')
+  expect(page.input('服务器地址').element.value).toBe('unsaved-host')
+  expect(page.input('密码').element.value).toBe('fixture-password')
+  await page.click('取消', editor)
+  expect(page.wrapper.text()).toContain('放弃未保存的修改')
+  await page.click('继续编辑')
+  expect(page.input('密码').element.value).toBe('fixture-password')
+  await page.form().trigger('submit')
+  finish(response(row))
+  await flushPromises()
+  await page.click('编辑')
+  expect(page.input('密码').element.value).toBe('')
 })
-test('pending save blocks duplicate actions; failed save preserves the entire draft', async () => {
-  let finish; let count = 0
-  const page = mount({ saveDatabaseSource: () => { count++; return new Promise(resolve => { finish = resolve }) } })
-  try {
-    await flush(); page.state.open(row)
-    page.state.draft.value.password = 'private-input'
-    const saving = page.state.save()
-    await page.state.save(); await page.state.testConnection(); await page.state.close()
-    assert.equal(count, 1)
-    assert.equal(page.state.showEditor.value, true)
-    finish(row); await saving
-    assert.equal(page.state.draft.value.password, '')
-  } finally { page.app.unmount() }
-  const failed = mount({ saveDatabaseSource: async () => { throw Error('保存失败') } })
-  try {
-    await flush(); failed.state.open(row)
-    failed.state.draft.value.password = 'private-input'
-    failed.state.draft.value.host = 'unsaved-host'
-    failed.state.dirty.value = true
-    await failed.state.save()
-    assert.equal(failed.state.showEditor.value, true)
-    assert.equal(failed.state.dirty.value, true)
-    assert.equal(failed.state.draft.value.host, 'unsaved-host')
-    assert.equal(failed.state.draft.value.password, 'private-input')
-    assert.equal(failed.state.editorError.value, '保存失败')
-  } finally { failed.app.unmount() }
+
+test('legacy TLS is opt-in, reaches test and save, and is removed when switching to MySQL', async () => {
+  const page = await openPage({ row: { ...row, legacy_tls: true } })
+  await flushPromises()
+  await page.click('编辑')
+  const tls = () => page.wrapper.findAll('[role="checkbox"]').find(control => control.text().includes('兼容旧版 SQL Server TLS'))
+  expect(tls().attributes('aria-checked')).toBe('true')
+  await page.chooseEngine('mysql')
+  expect(tls()).toBeUndefined()
+  expect(page.input('端口').element.value).toBe('3306')
+  expect(page.form().text()).toContain('使用只读事务')
+  const editor = page.wrapper.get('[aria-label="编辑数据源"]')
+  await page.click('测试连接', editor)
+  expect(page.requests.at(-1).body).toMatchObject({ engine: 'mysql', port: 3306, readonly: true, legacy_tls: false })
+  await page.chooseEngine('sqlserver')
+  expect(page.form().text()).not.toContain('参数未保存')
+  expect(tls().attributes('aria-checked')).toBe('false')
+  await tls().trigger('click')
+  await page.click('测试连接', editor)
+  expect(page.requests.at(-1).body).toMatchObject({ engine: 'sqlserver', legacy_tls: true })
+  await page.form().trigger('submit')
+  await flushPromises()
+  expect(page.requests.find(call => call.method === 'PUT').body.legacy_tls).toBe(true)
 })
-test('legacy TLS is opt-in, included in test/save, and cleared for MySQL', async () => {
-  const { app, state, calls } = mount()
-  try {
-    await flush(); state.open(row)
-    assert.equal(state.draft.value.legacy_tls, false)
-    state.draft.value.legacy_tls = true
-    await state.testConnection()
-    assert.equal(calls.test[0].legacy_tls, true)
-    await state.save()
-    assert.equal(calls.save[0][0].legacy_tls, true)
-    state.open({ ...row, legacy_tls: true })
-    assert.equal(state.draft.value.legacy_tls, true)
-    state.changeEngine('mysql')
-    assert.equal(state.draft.value.legacy_tls, false)
-  } finally { app.unmount() }
-})
-test('load failure and unsaved close are explicit; engine changes invalidate test results', async () => {
-  const { app, state } = mount({ listDatabaseSources: async () => { throw Error('读取失败') }, useUnsavedChanges: dirty => () => !dirty.value })
-  try {
-    await flush()
-    assert.equal(state.error.value, '读取失败')
-    assert.equal(state.loading.value, false)
-    state.open(); state.dirty.value = true
-    state.result.value = { connected: true }; state.changeEngine('mysql')
-    assert.equal(state.result.value, null)
-    await state.close()
-    assert.equal(state.showEditor.value, true)
-  } finally { app.unmount() }
+
+test('a failed source list is announced and can be retried', async () => {
+  let finish
+  const page = await openPage({ list: () => new Promise(resolve => { finish = resolve }) })
+  expect(page.wrapper.get('section[aria-busy]').attributes('aria-busy')).toBe('true')
+  finish(Response.json({ detail: '读取失败' }, { status: 502 }))
+  await flushPromises()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('读取失败')
+  await page.click('重新加载')
+  finish(response({ items: [] }))
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('暂无其他数据源')
+  expect(page.wrapper.text()).not.toContain('读取失败')
+  await page.click('新增数据源')
+  expect(page.input('数据源 ID').element.disabled).toBe(false)
+  await page.chooseEngine('mysql')
+  expect(page.input('端口').element.value).toBe('3306')
 })

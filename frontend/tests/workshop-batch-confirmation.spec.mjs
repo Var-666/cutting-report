@@ -1,25 +1,31 @@
+// @vitest-environment jsdom
+
 import assert from 'node:assert/strict'
-import { afterEach, beforeEach, test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { parse, compileScript } from '@vue/compiler-sfc'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { NButton, NCheckbox, NDialogProvider } from 'naive-ui'
+import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import * as Vue from 'vue'
-import { renderToString } from '@vue/server-renderer'
-import { scriptFunction } from './typescript-helpers.mjs'
 import { useWorkshopConfirmation } from '../src/composables/useWorkshopConfirmation.ts'
 import { useWorkshopCorrection } from '../src/composables/useWorkshopCorrection.ts'
 import { taskProductionDate } from '../src/api/reportDates.ts'
-import { formatChineseDateTime } from '../src/utils/dateDisplay.ts'
 import { confirmWorkshopTasks } from '../src/api/reports.ts'
+import { reportCache } from '../src/api/reportCache'
+import AppDatePicker from '../src/components/AppDatePicker.vue'
+import AppSelect from '../src/components/AppSelect.vue'
+import WorkshopCorrectionDialog from '../src/components/workshop/WorkshopCorrectionDialog.vue'
+import WorkshopView from '../src/views/WorkshopView.vue'
+import { setupSoybeanComponents } from '../src/vendor/soybean-admin/components'
+
+enableAutoUnmount(afterEach)
 
 import { setDeviceCatalog, resetDeviceContext } from '../src/api/deviceContext.ts'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
 beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }] }))
-const read = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
-const confirmationSource = read('composables/useWorkshopConfirmation.ts')
-const correctionSource = read('composables/useWorkshopCorrection.ts')
-const batchDialogSource = read('components/workshop/WorkshopBatchConfirmationDialog.vue')
 const originalFetch = globalThis.fetch
-afterEach(() => { globalThis.fetch = originalFetch; resetDeviceContext() })
+afterEach(() => { globalThis.fetch = originalFetch; reportCache.clear(); resetDeviceContext() })
 
 test('batch confirmation sends all selected task ids in one request', async () => {
   const calls = []
@@ -47,46 +53,6 @@ test('task revisions accompany confirmation so a rebuilt scope cannot use an old
   }
   await confirmWorkshopTasks(['A', 'B'], '2026-09-30', { A: 2, B: 1 })
   assert.deepEqual(sent.snapshot_revisions, { A: 2, B: 1 })
-})
-
-test('worker task table exposes multi-select and reviews tasks before confirmation', () => {
-  const descriptor = parse(readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')).descriptor
-  const script = confirmationSource
-  const template = descriptor.template.content
-
-  assert.match(script, /const selectedTasks = ref\(new Map<string, WorkshopTask>\(\)\)/)
-  assert.match(script, /async function submitBatchConfirmation/)
-  assert.match(script, /const confirmationResult = await confirmWorkshopTasks\(tasks\.map\(\(row\) => row\.task_id\)/)
-  assert.match(script, /function applyConfirmedTasks\(confirmations: TaskConfirmation\[\] = \[\]\)/)
-  assert.match(script, /confirmed_by_id: confirmation\.worker_id/)
-  assert.match(script, /confirmed_by: confirmation\.worker_name/)
-  assert.match(script, /confirmed_at: confirmation\.confirmed_at/)
-  assert.equal((script.match(/applyConfirmedTasks\(confirmations\)/g) || []).length, 2)
-  assert.match(template, /aria-label="全选当前页待确认任务"/)
-  assert.match(template, /确认选中任务/)
-  assert.match(batchDialogSource, /确认以下任务由我完成/)
-  assert.match(batchDialogSource, /:items="batchConfirmation\.tasks"/)
-  assert.match(batchDialogSource, /工程号[\s\S]*分段名[\s\S]*程序号[\s\S]*生产时间/)
-  assert.match(template, /@click="openSingleConfirmation\(row\)"/)
-  assert.match(template, /:disabled="loading \|\| correction.saving"/)
-  assert.match(template, /:disabled="loading \|\| batchConfirmation.saving"/)
-  assert.doesNotMatch(script, /title: [\"']备注[\"']/)
-  assert.doesNotMatch(template, /row\.remark/ )
-  assert.match(descriptor.scriptSetup.content, /key: 'c8', title: "切割时长", width: 104, align: 'center'/)
-  assert.match(template, /<AppReportTable :columns="taskTableColumns"/)
-  const shared = parse(readFileSync(new URL('../src/components/AppReportTable.vue', import.meta.url), 'utf8')).descriptor
-  const styles = shared.styles.map(style => style.content).join('\n')
-  assert.match(styles, /n-data-table-td\)\{[^}]*padding:var\(--table-cell-padding\);/)
-  assert.match(read('assets/style.css'), /--table-cell-padding: 6px 14px;/)
-  assert.match(styles, /border-right-color:color-mix\(in srgb, var\(--n-merged-border-color\) 35%, transparent\)/)
-})
-
-test('workshop keeps confirmation corrections while the source correction entry is removed', () => {
-  const descriptor = parse(readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')).descriptor
-  assert.doesNotMatch(descriptor.scriptSetup.content, /WorkshopSourceCorrections/)
-  assert.doesNotMatch(descriptor.template.content, /更正日报源记录|WorkshopSourceCorrections/)
-  assert.match(correctionSource, /await correctWorkshopTask\(row.task_id/)
-  assert.match(correctionSource, /await revokeWorkshopTask\(row.task_id/)
 })
 
 const response = data => Response.json({ success: true, data })
@@ -164,23 +130,86 @@ test('correction workflow retains ownership checks, production date, reason rule
   assert.equal(state.correction.visible, false)
 })
 
-test('correction dialog renders only the selected reason as active and preserves its task and error text', async () => {
-  const descriptor = parse(read('components/workshop/WorkshopCorrectionDialog.vue')).descriptor
-  const script = compileScript(descriptor, { id: 'correction-dialog-test', inlineTemplate: true }).content
-    .replace(/^import .*$/gm, '').replace('export default', 'return')
-  const bindings = { ...Vue, ...Object.fromEntries(Object.entries(Vue).map(([key, value]) => [`_${key}`, value])), time: formatChineseDateTime }
-  const component = scriptFunction(...Object.keys(bindings), script)(...Object.values(bindings))
-  const app = Vue.createSSRApp({ render: () => Vue.h(component, {
-    correction: { visible: true, saving: false, loading: false, row: { program_no: 'A<1>', confirmed_by: '工人甲' }, error: '请核对', audits: [] },
-    isWorker: false, action: 'revoke', workerId: '', reason: '原因甲', availableWorkers: [], visibleCorrectionReasonPresets: ['原因甲', '原因乙'],
-  }) })
-  app.component('NModal', { inheritAttrs: false, props: ['show'], setup: (props, { slots }) => () => props.show ? slots.default?.() : null })
-  app.component('NButton', { setup: (_, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.()) })
-  app.component('NInput', { setup: (_, { attrs }) => () => Vue.h('textarea', attrs) })
-  app.component('AppSelect', { setup: (_, { slots }) => () => Vue.h('select', {}, slots.default?.()) })
-  const html = await renderToString(app)
-  assert.equal((html.match(/class="active"/g) || []).length, 1)
-  assert.match(html, /A&lt;1&gt;/)
-  assert.match(html, /原因乙/)
-  assert.match(html, /请核对/)
+test('correction dialog shows the task safely and lets the user select and edit a preset reason', async () => {
+  const wrapper = mount(WorkshopCorrectionDialog, {
+    props: {
+      correction: { visible: true, saving: false, loading: false, row: { program_no: 'A<1>', confirmed_by: '工人甲' }, error: '请核对', audits: [] },
+      isWorker: false, action: 'revoke', workerId: '', reason: '原因甲', availableWorkers: [], visibleCorrectionReasonPresets: ['原因甲', '原因乙'],
+    },
+    attachTo: document.body,
+    global: { plugins: [{ install: setupSoybeanComponents }], components: { AppSelect }, stubs: { teleport: true } },
+  })
+  const presets = () => wrapper.get('[role="group"][aria-label="常用更正原因"]').findAllComponents(NButton)
+  expect(presets().map(button => [button.text(), button.props('type')])).toEqual([['原因甲', 'primary'], ['原因乙', 'default']])
+  expect(wrapper.get('[role="dialog"]').text()).toContain('A<1>')
+  expect(wrapper.get('[role="alert"]').text()).toBe('请核对')
+  await presets()[1].trigger('click')
+  expect(wrapper.emitted('reason')).toEqual([['原因乙']])
+  await wrapper.setProps({ reason: '原因乙' })
+  expect(presets().map(button => button.props('type'))).toEqual(['default', 'primary'])
+  await wrapper.get('textarea[name="correction_reason"]').setValue('现场核对')
+  expect(wrapper.emitted('update:reason')).toEqual([['现场核对']])
+})
+
+test('worker can review several tasks before confirming once and blank fields remain missing', async () => {
+  stubTableLayout()
+  const stamp = '2026-09-30'
+  const tasks = [
+    { task_id: 'A', program_no: 'OP-027', project_code: null, ship_no: '  ', segment_name: '', production_date: stamp, snapshot_revision: 2 },
+    { task_id: 'B', program_no: 'OP-028', project_code: 'CMYZ0170', ship_no: '非船', segment_name: '804C', production_date: stamp, snapshot_revision: 1 },
+    { task_id: 'C', program_no: 'OP-029', confirmed_by: '其他工人', confirmed_by_id: 'u2', production_date: stamp },
+  ]
+  const user = { user_id: 'w1', username: 'w1', display_name: '当前工人', role: 'worker', active: true }
+  const confirmations = []
+  const day = { report_date: stamp, period_start: stamp, period_end: stamp, item_count: 3, confirmed_count: 1 }
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path.endsWith('/cancel')) return response({})
+    if (path === '/api/v1/workshop/latest-date') return response({ report_date: stamp })
+    if (path === '/api/v1/workshop/reports') return response(day)
+    if (path === '/api/v1/workshop/tasks') return response({ report: day, items: tasks, total: 3, page: 1,
+      page_size: 10, project_names: [], confirmed_count: 1 })
+    if (path === '/api/v1/workshop/tasks/confirm') {
+      const payload = JSON.parse(init.body)
+      confirmations.push(payload)
+      return response({ confirmed_count: 2, items: payload.task_ids.map(task_id => ({
+        task_id, worker_id: user.user_id, worker_name: user.display_name, confirmed_at: '2026-09-30T08:00:00+08:00',
+      })) })
+    }
+    throw new Error(`Unexpected request ${path}`)
+  }
+  const router = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/worker/tasks', name: 'worker-tasks', component: WorkshopView, props: { user, mode: 'worker' } },
+  ] })
+  await router.push('/worker/tasks')
+  const wrapper = mount({ render: () => Vue.h(NDialogProvider, {}, { default: () => Vue.h(RouterView) }) }, {
+    attachTo: document.body,
+    global: { plugins: [router, createPinia(), { install: setupSoybeanComponents }], components: { AppSelect, AppDatePicker }, stubs: { teleport: true } },
+  })
+  await flushPromises()
+  const rows = wrapper.findAll('tbody tr')
+  const first = rows.find(row => row.text().includes('OP-027'))
+  const second = rows.find(row => row.text().includes('OP-028'))
+  const closed = rows.find(row => row.text().includes('OP-029'))
+  expect(first.findAll('td').slice(2, 5).map(cell => cell.text())).toEqual(['--', '--', '--'])
+  expect(second.findAll('td').slice(2, 5).map(cell => cell.text())).toEqual(['CMYZ0170', '非船', '804C'])
+  expect(closed.getComponent(NCheckbox).props('disabled')).toBe(true)
+  expect(wrapper.text()).not.toContain('更正日报源记录')
+  await wrapper.get('[role="checkbox"][aria-label="全选当前页待确认任务"]').trigger('click')
+  const review = wrapper.findAll('button').find(button => button.text() === '确认选中任务')
+  await review.trigger('click')
+  await flushPromises()
+  const dialog = wrapper.get('[role="dialog"][aria-modal="true"]')
+  expect(dialog.text()).toContain('确认以下任务由我完成')
+  expect(dialog.text()).not.toContain('OP-029')
+  expect(dialog.findAll('tbody tr')).toHaveLength(2)
+  expect(dialog.findAll('tbody tr')[0].findAll('td').slice(1, 3).map(cell => cell.text())).toEqual(['--', '--'])
+  expect(confirmations).toHaveLength(0)
+  await dialog.findAll('button').find(button => button.text() === '确认这 2 项任务').trigger('click')
+  await flushPromises()
+  expect(confirmations).toEqual([{
+    report_date: '2026-09-30', task_ids: ['A', 'B'], snapshot_revisions: { A: 2, B: 1 },
+  }])
+  expect(wrapper.text()).toContain('撤销我的确认')
+  expect(tasks[0]).toMatchObject({ project_code: null, ship_no: '  ', segment_name: '' })
 })

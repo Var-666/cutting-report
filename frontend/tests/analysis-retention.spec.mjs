@@ -1,287 +1,294 @@
-import { runTypeScript } from './typescript-helpers.mjs'
-import { test } from 'vitest'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
-import { createActivationTimer } from '../src/utils/activationTimer.ts'
-import { renderComponent } from './vue-component-helpers.mjs'
+// @vitest-environment jsdom
 
-const source = readFileSync(new URL('../src/components/AnalysisPanel.vue', import.meta.url), 'utf8')
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { KeepAlive, h, nextTick, ref } from 'vue'
+import { resetDeviceContext, selectDevice, setDeviceCatalog } from '../src/api/deviceContext'
+import AnalysisPanel from '../src/components/AnalysisPanel.vue'
+import ReportAnalysis from '../src/components/ReportAnalysis.vue'
+import ReportJobStatus from '../src/components/ReportJobStatus.vue'
+import AutomationRunProgress from '../src/components/automation/AutomationRunProgress.vue'
 
-test('historical analysis keeps its timestamp and update errors without a cache warning banner', async () => {
-  const html = await renderComponent('components/ReportAnalysis', { analysis: {
-    status: 'success', mode: 'model', overview: '已有成功分析。生产记录需要核对。', features: '', alerts: '', suggestions: '',
-    facts: [], cached: true, cache_note: '沿用历史成功分析，原生成时间保持不变。', generated_at: '2026-11-12T09:55:00+08:00',
-  }, error: '本次更新正在等待模型', ready: true, loading: false })
-  assert.match(html, /已有成功分析/)
-  assert.match(html, /title="沿用历史成功分析，原生成时间保持不变。"[^>]*>历史统计/)
-  assert.match(html, /09:55:00/)
-  assert.match(html, /本次更新正在等待模型/)
-  assert.doesNotMatch(html, /智能分析暂不可用/)
+const result = (time, overview = time) => ({
+  status: 'success', mode: 'model', overview, facts: [], data_version: 'v1.v1', cached: true,
+  generated_at: `2026-10-21T${time}:00+08:00`,
+})
+const data = value => Response.json({ success: true, data: value })
+const failure = (detail, status = 502, headers) => Response.json({ detail }, { status, headers })
+
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  setDeviceCatalog({ default_device_id: 'Cutter01', items: ['Cutter01', 'Cutter02'].map(id => ({ id })) })
+})
+afterEach(() => {
+  vi.useRealTimers()
+  resetDeviceContext()
 })
 
-test('visible analysis checks every five minutes, refreshes only changed data and stops when deactivated', async () => {
-  const props = { reportType: 'leadership', reportDate: '2026-10-19', ready: true, dataVersion: 'v1', versionCheckEnabled: true }
-  const intervals = new Map(), events = []
-  let activate, deactivate, version = 'v1.v1', analysisCalls = 0, latestReads = 0, versionChecks = 0
-  const context = vm.createContext({
-    defineProps: () => props, defineEmits: () => event => events.push(event),
-    ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
-    watch() {}, onActivated: fn => { activate = fn }, onDeactivated: fn => { deactivate = fn }, onBeforeUnmount() {},
-    getDeviceId: () => 'Cutter01', subscribeDevices: () => () => {}, createActivationTimer,
-    analyzeReport: async () => { analysisCalls += 1; return result('10:00') },
-    getLatestAnalysis: async () => { latestReads += 1; return result('10:00') },
-    getAnalysisVersion: async () => { versionChecks += 1; return { data_version: version } },
-    window: {
-      setInterval: (callback, delay) => { const id = intervals.size + 1; intervals.set(id, { callback, delay }); return id },
-      clearInterval: id => intervals.delete(id),
-    },
-    document: { visibilityState: 'visible' }, AbortController, console,
+function openPanel({ props: initial = {}, latest = () => data(null), generate = () => data(result('10:00')),
+  version = () => data({ data_version: 'v1.v1' }) } = {}) {
+  const props = ref({ reportType: 'workshop', reportDate: '2026-10-21', ready: true, dataVersion: 'v1', versionCheckEnabled: true, ...initial })
+  const shown = ref(true)
+  const requests = { latest: [], generate: [], version: [] }
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname.endsWith('/cancel')) return data({})
+    const request = { query: Object.fromEntries(url.searchParams), signal: init.signal }
+    if (url.pathname === '/api/v1/analysis/latest') {
+      requests.latest.push(request)
+      return latest(request)
+    }
+    if (url.pathname === '/api/v1/analysis/version') {
+      requests.version.push(request)
+      return version(request)
+    }
+    if (url.pathname === '/api/v1/analysis' && init.method === 'POST') {
+      request.body = JSON.parse(init.body)
+      requests.generate.push(request)
+      return generate(request)
+    }
+    throw new Error(`Unexpected request ${url.pathname}`)
   })
-  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, ''), context)
-  activate()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(intervals.size, 2)
-  assert.equal(intervals.get(1).delay, 5 * 60 * 1000)
-  assert.equal(analysisCalls, 0)
-  assert.equal(latestReads, 1)
-  const tick = intervals.get(1).callback
-  tick()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(versionChecks, 1)
-  assert.deepEqual(events, [])
-  version = 'v2.v2'
-  tick()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(events, ['refresh-report'])
-  assert.equal(analysisCalls, 0, 'default page reads must never generate a duplicate model call')
-  deactivate()
-  assert.equal(intervals.size, 0)
-  tick()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(versionChecks, 2, 'a deactivated page must stop checking the source')
-})
-
-function panelFixture({ defaultView = true, read, analyze } = {}) {
-  const props = { reportType: 'workshop', reportDate: '2026-10-21', ready: true, dataVersion: 'v1', versionCheckEnabled: defaultView }
-  let device = 'Cutter01', subscriber
-  const reads = [], calls = []
-  let now = 1_000_000
-  const context = vm.createContext({
-    defineProps: () => props, defineEmits: () => () => {},
-    ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
-    watch() {}, onActivated() {}, onDeactivated() {}, onBeforeUnmount() {},
-    getDeviceId: () => device, subscribeDevices: fn => { subscriber = fn; return () => {} },
-    createActivationTimer: () => ({ isActive: () => true, cancel() {} }),
-    getLatestAnalysis: (query, options) => { reads.push({ query, options }); return read(query, options) },
-    analyzeReport: (query, options) => { calls.push({ query, options }); return analyze(query, options) },
-    document: { visibilityState: 'visible' }, AbortController, console, Date: { now: () => now },
+  const refreshed = vi.fn()
+  const wrapper = mount({
+    render: () => h(KeepAlive, {}, { default: () => shown.value ? h(AnalysisPanel, { ...props.value, onRefreshReport: refreshed }) : null }),
   })
-  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-    + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, pollLatestAnalysis, reloadAnalysis, retryAnalysis, analysis, loading, readingLatest, error }', context)
-  return { ...context.panel, props, reads, calls, advance(ms) { now += ms }, switchDevice(id) { device = id; subscriber() } }
+  function button(label) {
+    const found = wrapper.findAll('button').find(control => control.text() === label)
+    if (!found) throw new Error(`Missing analysis action ${label}`)
+    return found
+  }
+  return { wrapper, requests, refreshed, shown, button,
+    change: async values => { props.value = { ...props.value, ...values }; await nextTick() },
+    tick: async (ms = 10_000) => { await vi.advanceTimersByTimeAsync(ms); await flushPromises() },
+  }
 }
 
-const flush = () => new Promise(resolve => setImmediate(resolve))
-const result = (time, overview = time) => ({ status: 'success', mode: 'model', overview, generated_at: `2026-10-21T${time}:00+08:00`, data_version: 'v1.v1', cached: true })
-
-test('default report reads its last success while production data is still loading', async () => {
-  let latest = result('09:55', '上一份成功分析')
-  let finishRead
-  let finishModel
-  const panel = panelFixture({ read: async () => latest, analyze: () => new Promise(resolve => { finishModel = resolve }) })
-  Object.assign(panel.props, { ready: false, prefetchLatest: true, dataVersion: '' })
-  panel.scheduleAutomaticAnalysis()
-  await flush()
-  assert.equal(panel.analysis.value.overview, '上一份成功分析')
-  assert.equal(panel.calls.length, 0)
-
-  latest = new Promise(resolve => { finishRead = resolve })
-  Object.assign(panel.props, { ready: true, dataVersion: 'v2' })
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.analysis.value.overview, '上一份成功分析')
-  finishRead({ ...result('09:57'), status: 'failed' })
-  await flush()
-  assert.equal(panel.analysis.value.overview, '上一份成功分析')
-  const updating = panel.reloadAnalysis()
-  assert.equal(panel.loading.value, true)
-  assert.equal(panel.analysis.value.overview, '上一份成功分析')
-  finishModel({ ...result('10:05', '新分析'), data_version: 'v2.v2' })
-  await updating
-  assert.equal(panel.analysis.value.overview, '新分析')
-})
-
-test('prefetch with no cache never generates before the report is ready', async () => {
-  const panel = panelFixture({ read: async () => null, analyze: async () => result('10:00') })
-  Object.assign(panel.props, { ready: false, prefetchLatest: true })
-  panel.scheduleAutomaticAnalysis()
-  await flush()
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.reads.length, 1)
-  assert.equal(panel.calls.length, 0)
-  panel.props.ready = true
-  panel.scheduleAutomaticAnalysis()
-  await flush()
-  assert.equal(panel.calls.length, 1)
-  assert.equal(panel.analysis.value.overview, '10:00')
-})
-
-test('a displayed analysis stays visible while the update button is busy', async () => {
-  const html = await renderComponent('components/ReportAnalysis', { analysis: result('09:55', '已有成功分析'), ready: true, loading: true })
-  assert.match(html, /已有成功分析/)
-  assert.doesNotMatch(html, /分析中|读取中|正在整理报表指标/)
-})
-
-test('entering a default page displays the previous success and polls for the next completed result', async () => {
-  let latest = result('09:55')
-  const panel = panelFixture({ read: async () => latest })
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.readingLatest.value, true, 'reading cached content must have a separate loading state')
-  await flush()
-  assert.equal(panel.analysis.value.overview, '09:55')
-  latest = result('10:00')
-  panel.pollLatestAnalysis()
-  assert.equal(panel.analysis.value.overview, '09:55', 'the old result must remain visible while the read is pending')
-  await flush()
-  assert.equal(panel.analysis.value.overview, '10:00', 'a new completion must replace old wording even when source data is unchanged')
-  assert.equal(panel.calls.length, 0)
-  assert.equal(panel.reads.length, 2)
-})
-
-test('an empty default cache explicitly prepares the first analysis once', async () => {
-  let latest = null
-  const panel = panelFixture({ read: async () => latest, analyze: async () => result('09:55') })
-  await panel.loadAnalysis()
-  assert.equal(panel.analysis.value.overview, '09:55')
-  assert.equal(panel.loading.value, false)
-  latest = result('10:00')
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.analysis.value.overview, '10:00')
-  assert.equal(panel.calls.length, 1)
-})
-
-test('a failed result read keeps the last success and retry still only reads the cache', async () => {
-  let failed = false
-  const panel = panelFixture({ read: async () => { if (failed) throw new Error('offline'); return result('09:55') } })
-  await panel.loadAnalysis()
-  failed = true
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.error.value, 'offline')
-  assert.equal(panel.analysis.value.overview, '09:55')
-  failed = false
-  await panel.retryAnalysis()
-  assert.equal(panel.error.value, '')
-  assert.equal(panel.calls.length, 0)
-})
-
-test('manual refresh calls the model and an older background snapshot cannot replace it', async () => {
-  const panel = panelFixture({ read: async () => result('09:55'), analyze: async () => result('10:01') })
-  await panel.loadAnalysis()
-  await panel.reloadAnalysis()
-  assert.equal(panel.calls.length, 1)
-  assert.equal(panel.calls[0].query.force, true)
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.analysis.value.overview, '10:01')
-})
-
-test('switching device or day aborts an old snapshot read and prevents its late result from returning', async () => {
-  const pending = []
-  const panel = panelFixture({ read: () => new Promise(resolve => pending.push(resolve)), analyze: async () => null })
-  panel.scheduleAutomaticAnalysis()
-  panel.switchDevice('Cutter02')
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.reads[0].options.signal.aborted, true)
-  pending[1](result('10:00', 'device two'))
-  await flush()
-  pending[0](result('10:01', 'device one'))
-  await flush()
-  assert.equal(panel.analysis.value.overview, 'device two')
-  panel.props.reportDate = '2026-10-20'
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.analysis.value, null, 'a different report day must never show the previous day analysis')
-  pending[2](null)
-  await flush()
-})
-
-test('custom report queries retain on-demand analysis rather than taking the default background snapshot', async () => {
-  let answer = result('10:00', 'custom range')
-  const panel = panelFixture({ defaultView: false, analyze: async () => answer })
-  await panel.loadAnalysis()
-  panel.pollLatestAnalysis()
-  assert.equal(panel.analysis.value.overview, 'custom range')
-  assert.equal(panel.reads.length, 0)
-  assert.equal(panel.calls.length, 1)
-  assert.equal(panel.calls[0].query.force, false)
-  answer = result('09:55', 'matching cached input after a data correction')
-  await panel.loadAnalysis()
-  assert.equal(panel.analysis.value.overview, answer.overview, 'a custom query must use its matching input cache even if it was generated earlier')
-})
-
-for (const defaultView of [true, false]) test(`cold analysis retries after backoff instead of every poll (default=${defaultView})`, async () => {
-  let unavailable = true
-  const panel = panelFixture({ defaultView, read: async () => null, analyze: async () => {
-    if (unavailable) throw Object.assign(new Error('正在等待成功的智能分析结果'), { status: 503, retryAfterMs: 60_000 })
-    return result('10:00')
-  } })
-  await panel.loadAnalysis()
-  assert.equal(panel.calls.length, 1)
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.calls.length, 1)
-  panel.advance(60_000)
-  unavailable = false
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.calls.length, 2)
-  assert.equal(panel.analysis.value.overview, '10:00')
-  panel.pollLatestAnalysis()
-  await flush()
-  assert.equal(panel.calls.length, 2, 'an existing successful result must survive an empty latest read')
-})
-
-test('waiting report and automation progress keep waiting visible without download or mail completion', async () => {
-  const job = await renderComponent('components/ReportJobStatus', { job: { report_id: 'waiting', report_type: 'leadership', status: 'pending',
-    stage_message: '等待智能分析完成，系统将自动重试', ai_status: 'waiting' } })
-  assert.match(job, /等待智能分析完成/)
-  assert.doesNotMatch(job, /打开报告|下载 HTML|暂不可用/)
-  const execution = await renderComponent('components/automation/AutomationRunProgress', { execution: {
-    schedule_id: 'schedule', schedule_name: '每日生产报告', status: 'analysis_wait',
-  } })
-  assert.match(execution, /等待智能分析成功，后台将自动重试/)
-  assert.doesNotMatch(execution, /邮件已发送|执行失败/)
-})
-
-test('same-query update and failure retain the previous result; device or range changes clear it', async () => {
-  const props = { reportType: 'leadership', reportDate: '2026-10-14', ready: true, dataVersion: 'v1' }
-  let device = 'Cutter01', subscriber, reject
-  let calls = 0
-  const context = vm.createContext({
-    defineProps: () => props, defineEmits: () => () => {},
-    ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
-    watch() {}, onActivated() {}, onDeactivated() {}, onBeforeUnmount() {},
-    getDeviceId: () => device, subscribeDevices: fn => { subscriber = fn; return () => {} },
-    createActivationTimer: () => ({ isActive: () => true, cancel() {} }),
-    analyzeReport: () => ++calls === 1 ? Promise.resolve(result('10:00', 'previous')) : new Promise((_, fail) => { reject = fail }),
-    AbortController, console,
+test('historical analysis keeps its reason, timestamp and update error visible', () => {
+  const wrapper = mount(ReportAnalysis, {
+    props: { analysis: { ...result('09:55', '已有成功分析'), cache_note: '沿用历史成功分析，原生成时间保持不变。' },
+      error: '本次更新正在等待模型', ready: true, loading: false },
   })
-  runTypeScript(source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '') + '\nthis.panel = { loadAnalysis, scheduleAutomaticAnalysis, analysis, error }', context)
-  const panel = context.panel
-  await panel.loadAnalysis()
-  props.dataVersion = 'v2'
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.analysis.value.overview, 'previous')
-  reject(new Error('temporary failure'))
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(panel.analysis.value.overview, 'previous')
-  assert.equal(panel.error.value, 'temporary failure')
-  props.periodStart = '2026-09-01'
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.analysis.value, null)
-  device = 'Cutter02'
-  subscriber()
-  panel.scheduleAutomaticAnalysis()
-  assert.equal(panel.analysis.value, null)
+  expect(wrapper.get('[title="沿用历史成功分析，原生成时间保持不变。"]').text()).toBe('历史统计')
+  expect(wrapper.text()).toContain('09:55:00')
+  expect(wrapper.get('[role="alert"]').text()).toContain('本次更新正在等待模型')
+  expect(wrapper.text()).toContain('已有成功分析')
+  expect(wrapper.text()).not.toContain('智能分析暂不可用')
+})
+
+test('visible analysis checks source versions every five minutes and stops when deactivated', async () => {
+  let current = 'v1.v1'
+  const page = openPanel({ latest: () => data(result('10:00')), version: () => data({ data_version: current }) })
+  await flushPromises()
+  expect(page.requests.latest).toHaveLength(1)
+  await page.tick(299_999)
+  expect(page.requests.version).toHaveLength(0)
+  await page.tick(1)
+  expect(page.requests.version[0].query).toMatchObject({ report_type: 'workshop', report_date: '2026-10-21' })
+  expect(page.refreshed).not.toHaveBeenCalled()
+  current = 'v2.v2'
+  await page.tick(300_000)
+  expect(page.requests.version).toHaveLength(2)
+  expect(page.refreshed).toHaveBeenCalledOnce()
+  expect(page.requests.generate).toHaveLength(0)
+  const latestCount = page.requests.latest.length
+  page.shown.value = false
+  await nextTick()
+  await page.tick(300_000)
+  expect(page.requests.version).toHaveLength(2)
+  expect(page.requests.latest).toHaveLength(latestCount)
+})
+
+test('a conflict asks the page to refresh the source and shows synchronization feedback', async () => {
+  const page = openPanel({ generate: () => failure('数据版本已变化', 409) })
+  await flushPromises()
+  expect(page.refreshed).toHaveBeenCalledOnce()
+  expect(page.wrapper.text()).toContain('报表数据已更新，正在同步后重新分析')
+  page.shown.value = false
+  await nextTick()
+  expect(page.requests.generate).toHaveLength(1)
+})
+
+test('a pending version check is aborted when hidden and its late response cannot trigger refresh', async () => {
+  let finish
+  const page = openPanel({ latest: () => data(result('10:00')), version: () => new Promise(resolve => { finish = resolve }) })
+  await flushPromises()
+  await page.tick(300_000)
+  expect(page.requests.version).toHaveLength(1)
+  page.shown.value = false
+  await nextTick()
+  expect(page.requests.version[0].signal.aborted).toBe(true)
+  finish(data({ data_version: 'v3.v3' }))
+  await flushPromises()
+  expect(page.refreshed).not.toHaveBeenCalled()
+})
+
+test('cached analysis is visible before the report loads and remains visible through a failed read and manual refresh', async () => {
+  let latest = data(result('09:55', '上一份成功分析'))
+  let finish
+  const page = openPanel({
+    props: { ready: false, prefetchLatest: true, dataVersion: '' },
+    latest: () => latest,
+    generate: () => new Promise(resolve => { finish = resolve }),
+  })
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('上一份成功分析')
+  expect(page.requests.generate).toHaveLength(0)
+  latest = data({ ...result('09:57'), status: 'failed' })
+  await page.change({ ready: true, dataVersion: 'v2' })
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('上一份成功分析')
+  await page.button('重新分析').trigger('click')
+  expect(page.button('重新分析').element.disabled).toBe(true)
+  expect(page.wrapper.text()).toContain('上一份成功分析')
+  expect(page.wrapper.text()).not.toContain('正在整理报表指标')
+  expect(page.requests.generate[0].body).toMatchObject({ force: true, data_version: 'v2.v2' })
+  finish(data({ ...result('10:05', '新分析'), data_version: 'v2.v2' }))
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('新分析')
+})
+
+test('an empty prefetched cache does not generate before the report is ready', async () => {
+  const page = openPanel({ props: { ready: false, prefetchLatest: true } })
+  await flushPromises()
+  await page.tick(30_000)
+  expect(page.requests.latest).toHaveLength(1)
+  expect(page.requests.generate).toHaveLength(0)
+  await page.change({ ready: true })
+  await flushPromises()
+  expect(page.requests.generate).toHaveLength(1)
+  expect(page.wrapper.text()).toContain('10:00')
+})
+
+test.each([true, false])('a default analysis poll replaces the old success without invoking the model again (initial cache=%s)', async cached => {
+  let latest = cached ? result('09:55', '初次成功') : null
+  const page = openPanel({ latest: () => data(latest), generate: () => data(result('09:55', '初次成功')) })
+  expect(page.wrapper.text()).toContain('正在读取最近一次已完成的分析')
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('初次成功')
+  latest = result('10:00', '后台新结果')
+  await page.tick()
+  expect(page.wrapper.text()).toContain('后台新结果')
+  expect(page.requests.latest).toHaveLength(2)
+  expect(page.requests.generate).toHaveLength(cached ? 0 : 1)
+})
+
+test('retrying a failed cache read retains the prior success and only fetches the cache again', async () => {
+  let offline = false
+  const page = openPanel({ latest: () => offline ? failure('分析源离线') : data(result('09:55', '原分析')) })
+  await flushPromises()
+  offline = true
+  await page.tick()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('分析源离线')
+  expect(page.wrapper.text()).toContain('原分析')
+  offline = false
+  await page.button('重试').trigger('click')
+  await flushPromises()
+  expect(page.wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(page.requests.latest).toHaveLength(3)
+  expect(page.requests.generate).toHaveLength(0)
+})
+
+test('an older background snapshot cannot replace a manual model refresh', async () => {
+  const page = openPanel({ latest: () => data(result('09:55', '旧结果')), generate: () => data(result('10:01', '最新模型结果')) })
+  await flushPromises()
+  await page.button('重新分析').trigger('click')
+  await flushPromises()
+  await page.tick()
+  expect(page.requests.generate.map(call => call.body.force)).toEqual([true])
+  expect(page.wrapper.text()).toContain('最新模型结果')
+  expect(page.wrapper.text()).not.toContain('旧结果')
+})
+
+test('switching devices or report dates cancels an old snapshot and ignores its late result', async () => {
+  const pending = []
+  const page = openPanel({ latest: () => new Promise(resolve => pending.push(resolve)) })
+  await flushPromises()
+  selectDevice('Cutter02')
+  await flushPromises()
+  expect(page.requests.latest[0].signal.aborted).toBe(true)
+  expect(page.requests.latest[1].query.device_id).toBe('Cutter02')
+  pending[1](data(result('10:00', '二号机分析')))
+  pending[0](data(result('10:01', '一号机分析')))
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('二号机分析')
+  expect(page.wrapper.text()).not.toContain('一号机分析')
+  await page.change({ reportDate: '2026-10-20' })
+  expect(page.requests.latest[2].query.report_date).toBe('2026-10-20')
+  expect(page.wrapper.text()).not.toContain('二号机分析')
+  pending[2](data(null))
+  await flushPromises()
+})
+
+test('an explicit range requests its own analysis, passing detail and summary versions without reading the default cache', async () => {
+  let answer = result('10:00', '指定区间')
+  const page = openPanel({
+    props: { versionCheckEnabled: false, periodStart: '2026-10-02', periodEnd: '2026-10-03',
+      summaryPeriodStart: '2025-11-01', summaryPeriodEnd: '2026-10-21', summaryDataVersion: 'month' },
+    generate: () => data(answer),
+  })
+  await flushPromises()
+  await page.tick()
+  expect(page.requests.latest).toHaveLength(0)
+  expect(page.requests.generate).toHaveLength(1)
+  expect(page.requests.generate[0].body).toMatchObject({ force: false, report_type: 'workshop',
+    period_start: '2026-10-02', period_end: '2026-10-03',
+    summary_period_start: '2025-11-01', summary_period_end: '2026-10-21', data_version: 'v1.month' })
+  expect(page.wrapper.text()).toContain('指定区间')
+  answer = result('09:55', '与更正输入匹配的分析')
+  await page.change({ dataVersion: 'v2' })
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('与更正输入匹配的分析')
+})
+
+test.each([true, false])('a temporarily unavailable analysis respects the server retry delay (default=%s)', async defaults => {
+  let unavailable = true
+  const page = openPanel({
+    props: { versionCheckEnabled: defaults },
+    generate: () => unavailable ? failure('正在等待成功的智能分析结果', 503, { 'Retry-After': '60' }) : data(result('10:00', '恢复后的分析')),
+  })
+  await flushPromises()
+  expect(page.requests.generate).toHaveLength(1)
+  await page.tick(50_000)
+  expect(page.requests.generate).toHaveLength(1)
+  unavailable = false
+  await page.tick()
+  expect(page.requests.generate).toHaveLength(2)
+  expect(page.wrapper.text()).toContain('恢复后的分析')
+  await page.tick()
+  expect(page.requests.generate).toHaveLength(2)
+})
+
+test('same-query updates and failures preserve the visible result but a different range clears it', async () => {
+  let first = true
+  let finish
+  const page = openPanel({
+    props: { versionCheckEnabled: false },
+    generate: () => {
+      if (!first) return new Promise(resolve => { finish = resolve })
+      first = false
+      return data(result('10:00', '此前结果'))
+    },
+  })
+  await flushPromises()
+  await page.change({ dataVersion: 'v2' })
+  expect(page.wrapper.text()).toContain('此前结果')
+  finish(failure('模型暂时不可用'))
+  await flushPromises()
+  expect(page.wrapper.text()).toContain('此前结果')
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('模型暂时不可用')
+  await page.change({ periodStart: '2026-09-01', periodEnd: '2026-09-02' })
+  expect(page.wrapper.text()).not.toContain('此前结果')
+})
+
+test('waiting report and automation progress are visible without download or mail completion', () => {
+  const job = mount(ReportJobStatus, { props: { job: { report_id: 'waiting', report_type: 'leadership',
+    status: 'pending', stage_message: '等待智能分析完成，系统将自动重试', ai_status: 'waiting' } } })
+  expect(job.text()).toContain('等待智能分析完成')
+  expect(job.text()).not.toMatch(/打开报告|下载 HTML|暂不可用/)
+  const run = mount(AutomationRunProgress, { props: { execution: { schedule_id: 'schedule',
+    schedule_name: '每日生产报告', status: 'analysis_wait' } } })
+  expect(run.text()).toContain('等待智能分析成功，后台将自动重试')
+  expect(run.text()).not.toMatch(/邮件已发送|执行失败/)
 })

@@ -1,14 +1,23 @@
+// @vitest-environment jsdom
+
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
 import * as Vue from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { getProductionOverview, overviewPeriod } from '../src/api/productionOverview.ts'
 import { getDeviceId, resetDeviceContext, setDeviceCatalog } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
-import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../src/api/reportRequests.ts'
+import { REPORT_POLL_INTERVAL } from '../src/api/reportRequests.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
-import { scriptFunction } from './typescript-helpers.mjs'
+import { useProductionOverview } from '../src/composables/useProductionOverview'
+
+vi.mock('../src/api/productionOverview.ts', async importOriginal => {
+  const actual = await importOriginal()
+  return { ...actual, getProductionOverview: vi.fn(actual.getProductionOverview) }
+})
+
+enableAutoUnmount(afterEach)
 
 const lines = [
   { id: 'c1', type: 'cutting', name: '切割一线', enabled: true, source_key: 'sql' },
@@ -19,7 +28,12 @@ const lines = [
 const data = (changes = {}) => ({ metrics: [{ title: '任务数', value: 0, unit: '项', precision: 0 }], dataAsOf: '2026-11-17T08:00:00+08:00', timezone: 'Asia/Shanghai', stale: false, refreshing: false, refreshFailed: false, empty: true, preparing: false, ...changes })
 const response = payload => new Response(JSON.stringify({ success: true, data: payload }), { headers: { 'Content-Type': 'application/json' } })
 const flush = async () => { await Vue.nextTick(); await new Promise(setImmediate) }
-afterEach(() => { reportCache.clear(); resetDeviceContext() })
+afterEach(() => {
+  vi.useRealTimers()
+  vi.mocked(getProductionOverview).mockRestore()
+  reportCache.clear()
+  resetDeviceContext()
+})
 
 test('month bounds cover leap years and year changes', () => {
   assert.deepEqual(overviewPeriod('2024-02'), { start: '2024-02-01', end: '2024-02-29' })
@@ -84,18 +98,13 @@ test('overview never presents welding generation time as the snapshot cutoff', a
 })
 
 function controller(read) {
-  let today = '2026-11-17'
-  const timers = new Map(), intervals = new Map()
-  let timerId = 0, mounted, dispose
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  vi.setSystemTime(new Date('2026-11-17T01:00:00Z'))
+  vi.mocked(getProductionOverview).mockImplementation(read)
   const items = Vue.ref(lines)
-  const script = readFileSync(new URL('../src/composables/useProductionOverview.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/^export /gm, '')
-  const bindings = { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, ref: Vue.ref, watch: Vue.watch, onMounted: callback => { mounted = callback }, onBeforeUnmount: callback => { dispose = callback }, getProductionOverview: read,
-    reportToday: () => today, toError: value => value, setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
-    setInterval: callback => { intervals.set(++timerId, callback); return timerId }, clearInterval: id => intervals.delete(id) }
-  const scope = Vue.effectScope()
-  const api = scope.run(() => scriptFunction(...Object.keys(bindings), `${script}; return useProductionOverview`)(...Object.values(bindings))(() => items.value))
-  mounted()
-  return { ...api, items, timers, tickMonth: value => { today = value; for (const callback of intervals.values()) callback() }, close: () => { dispose(); scope.stop() } }
+  let api
+  const wrapper = mount({ setup() { api = useProductionOverview(() => items.value); return () => null } })
+  return { ...api, items, close: () => wrapper.unmount() }
 }
 
 test('overview limits concurrency, skips disabled lines and retains results after a failed retry', async () => {
@@ -124,7 +133,7 @@ test('overview limits concurrency, skips disabled lines and retains results afte
     assert.equal(state.rows.value[0].data.dataAsOf, '2026-11-17T08:00:00+08:00')
     assert.equal(state.rows.value[0].error, '重试失败')
     state.refresh('c1')
-    pending[5].reject(new DOMException('请求已取消', 'AbortError')); await flush()
+    pending[5].reject(Object.assign(new Error('请求已取消'), { name: 'AbortError' })); await flush()
     assert.equal(state.rows.value[0].error, '')
     assert.ok(state.rows.value[0].data)
     state.items.value = [{ ...lines[0], enabled: false }]; await flush()
@@ -188,19 +197,21 @@ test('polling is bounded, stops on errors and cancels on leaving or a new month'
   })
   try {
     state.items.value = [lines[0]]; await flush()
-    assert.equal(state.timers.size, 1)
-    for (let index = 0; index < 75; index++) {
-      const [id, callback] = [...state.timers.entries()][0]
-      state.timers.delete(id); callback(); await flush()
-    }
-    assert.equal(state.timers.size, 0)
+    const reads = calls.length
+    await vi.advanceTimersByTimeAsync(REPORT_POLL_INTERVAL * 75)
+    assert.equal(calls.length, reads + 75)
+    assert.match(state.rows.value[0].error, /已停止自动检查/)
     fail = true; state.refresh('c1'); await flush()
-    assert.equal(state.timers.size, 0)
-    state.tickMonth('2026-12-01'); await flush()
+    const failedReads = calls.length
+    await vi.advanceTimersByTimeAsync(REPORT_POLL_INTERVAL)
+    assert.equal(calls.length, failedReads)
+    vi.setSystemTime(new Date('2026-12-01T01:00:00Z'))
+    await vi.advanceTimersByTimeAsync(60_000)
     assert.equal(state.month.value, '2026-12')
     assert.equal(calls.at(-1).month, '2026-12')
     assert.equal(state.rows.value[0].data, null)
   } finally { state.close() }
+  vi.useRealTimers()
   const pending = []
   const leaving = controller((line, month, signal) => new Promise(resolve => pending.push({ signal, resolve })))
   leaving.close()

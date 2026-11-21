@@ -1,16 +1,25 @@
+// @vitest-environment jsdom
+
 import assert from 'node:assert/strict'
+import { flushPromises, mount } from '@vue/test-utils'
+import { init } from 'echarts/core'
 import { afterEach, test, vi } from 'vitest'
-afterEach(() => vi.useRealTimers())
-import * as Vue from 'vue'
 import { ref } from 'vue'
-import { readFileSync } from 'node:fs'
-import { compileScript, parse } from '@vue/compiler-sfc'
-import { scriptFunction } from './typescript-helpers.mjs'
+import AppDatePicker from '../src/components/AppDatePicker.vue'
+import DispatchHistoryTrend from '../src/components/dispatch/DispatchHistoryTrend.vue'
 import { useCuttingDispatchHistory } from '../src/composables/useCuttingDispatchHistory.ts'
 import { renderComponent } from './vue-component-helpers.mjs'
 
+vi.mock('echarts/core', async importOriginal => ({
+  ...await importOriginal(),
+  init: vi.fn(),
+}))
+
 const originalFetch = globalThis.fetch
-afterEach(() => { globalThis.fetch = originalFetch })
+afterEach(() => {
+  globalThis.fetch = originalFetch
+  vi.useRealTimers()
+})
 const period = { start_date: '2026-11-01', end_date: '2026-11-03', machine_ip: '10.0.0.2' }
 const days = [{ date: '2026-11-01', sent_count: 0, completed_count: 0 }, { date: '2026-11-02', sent_count: 12, completed_count: 0 }, { date: '2026-11-03', sent_count: 0, completed_count: 0 }]
 const response = data => Response.json({ success: true, data })
@@ -25,34 +34,19 @@ function dataFor(url) {
   return { page: Number(query.get('page')), total: 12, items: [{ dispatch_id: query.get('start_date') || 'all' }] }
 }
 
-function mountTrend(t, trend, onSelect) {
-  const clicks = {}, canvasClicks = {}, selections = []
-  const props = Vue.reactive({ trend, filters: period, selectedDay: '', loading: false, error: '',
-    machineIps: [], machineName: () => '', disabled: false })
+function mountTrend(t, trend, overrides = {}) {
+  const clicks = {}, canvasClicks = {}
   const chart = { on: (name, callback) => { clicks[name] = callback },
     getZr: () => ({ on: (name, callback) => { canvasClicks[name] = callback } }),
     setOption() {}, resize() {}, dispose() {}, containPixel: () => true, convertFromPixel: () => 0 }
-  const stub = { setup: (_props, { slots }) => () => Vue.h('div', slots.default?.()) }
-  const bindings = { init: () => chart, use() {}, BarChart: {}, GridComponent: {}, TooltipComponent: {},
-    LegendComponent: {}, SVGRenderer: {}, NButton: stub, AppSelect: stub, ReportPeriodPicker: stub, ReportPanelState: stub,
-    useThemeVars: () => Vue.ref({}), ResizeObserver: class { observe() {} disconnect() {} } }
-  const descriptor = parse(readFileSync(new URL('../src/components/dispatch/DispatchHistoryTrend.vue', import.meta.url), 'utf8')).descriptor
-  const code = compileScript(descriptor, { id: 'dispatch-trend-clicks', inlineTemplate: true }).content
-    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
-      for (const name of names.split(',')) {
-        const [original, alias = original] = name.trim().split(/\s+as\s+/)
-        bindings[alias] = Vue[original]
-      }
-      return ''
-    }).replace(/^import .*$/gm, '').replace('export default', 'return')
-  const Component = scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
-  const renderer = Vue.createRenderer({ createElement: () => ({ style: {} }), createComment: () => ({}), createText: () => ({}),
-    insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
-  const app = renderer.createApp({ render: () => Vue.h(Component, { ...props,
-    onSelectDay: (...args) => { selections.push(args); onSelect?.(...args) } }) })
-  app.mount({})
-  t.onTestFinished(() => app.unmount())
-  return { clicks, canvasClicks, chart, selections, props }
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  init.mockReturnValue(chart)
+  const wrapper = mount(DispatchHistoryTrend, { props: {
+    trend, filters: period, selectedDay: '', loading: false, error: '',
+    machineIps: [], machineName: () => '', disabled: false, ...overrides,
+  }, global: { components: { AppDatePicker } } })
+  t.onTestFinished(() => wrapper.unmount())
+  return { clicks, canvasClicks, chart, wrapper }
 }
 
 test('completion-only chart bars, dates and blank column areas open completed records', async t => {
@@ -64,19 +58,19 @@ test('completion-only chart bars, dates and blank column areas open completed re
     const url = new URL(value, 'http://localhost'); requests.push(url)
     return response({ page: 1, total: 1, items: [{ dispatch_id: 'previously-dispatched-task' }] })
   }
-  const chart = mountTrend(t, trend, (...args) => page.selectHistoryDay(...args))
+  const chart = mountTrend(t, trend, { onSelectDay: (...args) => page.selectHistoryDay(...args) })
   for (const click of [
     () => chart.clicks.click({ componentType: 'series', seriesType: 'bar', seriesName: '加工完成', name: '2026-11-02' }),
     () => chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' }),
     () => chart.canvasClicks.click({ offsetX: 100, offsetY: 100 }),
   ]) {
     click()
-    await new Promise(resolve => setImmediate(resolve))
+    await flushPromises()
     assert.equal(requests.at(-1).searchParams.get('date_type'), 'completed')
     assert.equal(requests.at(-1).searchParams.get('start_date'), '2026-11-02')
     assert.equal(page.histories.value[0].dispatch_id, 'previously-dispatched-task')
   }
-  assert.deepEqual(chart.selections, Array(3).fill(['2026-11-02', 'completed']))
+  assert.deepEqual(chart.wrapper.emitted('select-day'), Array(3).fill(['2026-11-02', 'completed']))
 })
 
 test('chart selection preserves sent bars and skips busy, out-of-grid and duplicate canvas clicks', async t => {
@@ -84,14 +78,13 @@ test('chart selection preserves sent bars and skips busy, out-of-grid and duplic
     items: [{ date: '2026-11-02', sent_count: 5, completed_count: 3 }] })
   chart.clicks.click({ componentType: 'series', seriesType: 'bar', seriesName: '成功派发', name: '2026-11-02' })
   chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' })
-  assert.deepEqual(chart.selections, [['2026-11-02', 'sent'], ['2026-11-02', 'sent']])
+  assert.deepEqual(chart.wrapper.emitted('select-day'), [['2026-11-02', 'sent'], ['2026-11-02', 'sent']])
   chart.canvasClicks.click({ target: {}, offsetX: 100, offsetY: 100 })
   chart.chart.containPixel = () => false
   chart.canvasClicks.click({ offsetX: 100, offsetY: 100 })
-  chart.props.disabled = true
-  await Vue.nextTick()
+  await chart.wrapper.setProps({ disabled: true })
   chart.clicks.click({ componentType: 'xAxis', value: '2026-11-02' })
-  assert.equal(chart.selections.length, 2)
+  assert.equal(chart.wrapper.emitted('select-day').length, 2)
 })
 
 test('default trend requests seven inclusive Shanghai days and clearing restores that range', async t => {
@@ -225,15 +218,17 @@ test('a failed filter request clears old rows so they cannot be mistaken for the
   assert.equal(page.historyLoading.value, false)
 })
 
-test('actual trend component renders selection, zero, loading and failure states', async () => {
+test('actual trend component renders selection, zero, loading and failure states', async t => {
   const props = { trend: { ...period, items: days.map(item => ({ ...item, sent_count: 0, completed_count: 0 })), machine_ips: ['10.0.0.2'], timezone: 'Asia/Shanghai' },
     filters: period, loading: false, error: '', selectedDay: '2026-11-02', machineIps: ['10.0.0.2'], machineName: () => '测试机床', disabled: false }
-  const render = overrides => renderComponent('components/dispatch/DispatchHistoryTrend', { ...props, ...overrides })
-  const html = await render({})
-  for (const value of ['每日派发与完成趋势', '全部机床', '测试机床', '2026-11-02', '所选区间暂无派发或完成记录', '清除筛选 / 全部记录']) assert.ok(html.includes(value), value)
-  assert.ok((await render({ trend: null, loading: true })).includes('正在读取派发趋势'))
-  const failed = await render({ trend: null, error: '离线测试错误' })
-  assert.ok(failed.includes('趋势读取失败') && failed.includes('离线测试错误') && failed.includes('重试'))
+  const { wrapper } = mountTrend(t, props.trend, props)
+  for (const value of ['每日派发与完成趋势', '测试机床', '2026-11-02', '所选区间暂无派发或完成记录', '清除筛选 / 全部记录']) assert.ok(wrapper.text().includes(value), value)
+  await wrapper.setProps({ trend: null, loading: true })
+  assert.match(wrapper.text(), /正在读取派发趋势/)
+  await wrapper.setProps({ loading: false, error: '离线测试错误' })
+  assert.match(wrapper.text(), /趋势读取失败.*离线测试错误.*重试/)
+  await wrapper.findAll('button').find(button => button.text() === '重试').trigger('click')
+  assert.equal(wrapper.emitted('retry').length, 1)
 })
 
 test('history success time displays the same configured day as the trend and filters', async () => {
@@ -283,18 +278,9 @@ test('completed-day selection keeps its own date filter while the existing sent-
   assert.equal(calls.at(-1).searchParams.get('date_type'), 'sent')
 })
 
-test('visible history and trend refresh silently once per tick, preserving filters and stopping on pause', async t => {
-  const timers = new Map(); let nextId = 0
-  const oldWindow = globalThis.window, oldDocument = globalThis.document
-  globalThis.window = {
-    setTimeout(callback, delay) { assert.equal(delay,5000); timers.set(++nextId,callback); return nextId },
-    clearTimeout(id) { timers.delete(id) },
-  }
-  globalThis.document = { hidden:false }
-  t.onTestFinished(() => {
-    if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow
-    if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument
-  })
+test('visible history and trend refresh silently once per tick, preserving filters and stopping on pause', async () => {
+  vi.useFakeTimers()
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
   const page = state(), calls = []
   globalThis.fetch = async value => {
     calls.push(new URL(value,'http://localhost'))
@@ -304,29 +290,24 @@ test('visible history and trend refresh silently once per tick, preserving filte
   }
   page.historyPage.value = 2
   page.startHistoryPolling(); page.startHistoryPolling()
-  assert.equal(timers.size,1)
-  async function tick() {
-    const [id,callback] = timers.entries().next().value
-    timers.delete(id); await callback()
-  }
+  assert.equal(vi.getTimerCount(),1)
+  const tick = () => vi.advanceTimersByTimeAsync(5000)
   await tick()
   assert.equal(calls.length,2)
   assert.equal(calls.find(url=>!url.pathname.endsWith('/trend')).searchParams.get('page'),'2')
-  assert.equal(timers.size,1)
-  document.hidden=true; await tick(); assert.equal(calls.length,2)
-  document.hidden=false; page.busy.value=true; await tick(); assert.equal(calls.length,2)
+  assert.equal(vi.getTimerCount(),1)
+  hidden.mockReturnValue(true); await tick(); assert.equal(calls.length,2)
+  hidden.mockReturnValue(false); page.busy.value=true; await tick(); assert.equal(calls.length,2)
   page.busy.value=false
-  page.pauseHistory(); assert.equal(timers.size,0)
+  page.pauseHistory(); assert.equal(vi.getTimerCount(),0)
 })
 
-test('trend date selector exposes separate completed counts including days with only completions', async () => {
-  const html = await renderComponent('components/dispatch/DispatchHistoryTrend', {
-    trend:{...period,timezone:'Asia/Shanghai',machine_ips:[],items:[{date:'2026-11-02',sent_count:0,completed_count:3}]},
-    filters:period,loading:false,error:'',selectedDay:'2026-11-02',selectedDateType:'completed',machineIps:[],machineName:()=>'',disabled:false,
-  })
-  assert.ok(html.includes('完成 3 条'))
-  assert.ok(html.includes('2026-11-02|completed'))
-  assert.ok(!html.includes('所选区间暂无派发或完成记录'))
+test('trend date selector exposes separate completed counts including days with only completions', t => {
+  const trend = { ...period, timezone: 'Asia/Shanghai', machine_ips: [],
+    items: [{ date: '2026-11-02', sent_count: 0, completed_count: 3 }] }
+  const { wrapper } = mountTrend(t, trend, { selectedDay: '2026-11-02', selectedDateType: 'completed' })
+  assert.match(wrapper.text(), /完成 3 条/)
+  assert.doesNotMatch(wrapper.text(), /所选区间暂无派发或完成记录/)
 })
 
 test('completed badge shows its finish time in the same configured timezone as the chart', async () => {

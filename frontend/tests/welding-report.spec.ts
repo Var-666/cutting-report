@@ -13,6 +13,7 @@ import AppSelect from '../src/components/AppSelect.vue'
 import WeldingReportView from '../src/views/WeldingReportView.vue'
 import WeldingHomeView from '../src/views/WeldingHomeView.vue'
 import { useAppStore } from '../src/state/app'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
 enableAutoUnmount(afterEach)
 afterEach(() => {
@@ -40,7 +41,7 @@ function report(query: URLSearchParams, label: string) {
 
 async function setup() {
   setDeviceCatalog({ default_device_id: 'weld-a', items: [weldLine] })
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  stubTableLayout()
   const calls: Array<{ query: URLSearchParams; scope: string | null; signal: AbortSignal | null | undefined }> = []
   let respond: (query: URLSearchParams) => Response | Promise<Response> = query =>
     report(query, `初始作业-${query.get('page') ?? 1}`)
@@ -131,7 +132,7 @@ test('a cancelled older result cannot replace the range selected by the latest r
 })
 
 async function openWeldingOverview(path = '/home') {
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  stubTableLayout()
   const destination = { render: () => null }
   const router = createRouter({
     history: createMemoryHistory(),
