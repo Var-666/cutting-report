@@ -11,6 +11,7 @@ import AppSelect from '../src/components/AppSelect.vue'
 import ReportForm from '../src/components/ReportForm.vue'
 import ReportJobStatus from '../src/components/ReportJobStatus.vue'
 import ReportCenterView from '../src/views/ReportCenterView.vue'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
 enableAutoUnmount(afterEach)
 beforeEach(() => {
@@ -44,11 +45,12 @@ async function chooseDate(wrapper, value) {
   await wrapper.vm.$nextTick()
 }
 
-async function center() {
+async function center({ query = {}, readHistory } = {}) {
   const pending = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname.endsWith('/cancel')) return Response.json({})
+    if (url.pathname === '/api/v1/reports' && readHistory) return readHistory(url.searchParams)
     if (url.pathname === '/api/v1/reports' || url.pathname === '/api/v1/designer/published-definitions') {
       return Response.json({ success: true, data: { items: [], total: 0, page: 1, page_size: 10 } })
     }
@@ -63,10 +65,10 @@ async function center() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/reports', name: 'report-center', component: ReportCenterView },
   ] })
-  await router.push('/reports')
+  await router.push({ path: '/reports', query })
   const wrapper = mount(ReportCenterView, { props: { fixedReportType: 'workshop' }, global: { plugins: [router], components } })
   await flushPromises()
-  return { wrapper, pending, form: wrapper.getComponent(ReportForm) }
+  return { wrapper, pending, router, form: wrapper.getComponent(ReportForm) }
 }
 
 test('report status provides a user-facing label when AI is unavailable', () => {
@@ -163,4 +165,30 @@ test('the form clears dependent filters once on date change and submits project 
   expect(form.emitted('date-change').at(-1)).toEqual(['2026-08-01'])
   await form.trigger('submit')
   expect(form.emitted('submit').at(-1)[0]).toMatchObject({ report_type: 'leadership', report_date: '2026-08-01', project_code: null, ship_no: null })
+})
+
+test('report history restores the linked page, keeps its fixed page size and preserves unrelated URL filters', async () => {
+  stubTableLayout()
+  const requests = []
+  const { wrapper, router } = await center({
+    query: { page: '2', page_size: '99', source: 'notice' },
+    readHistory(params) {
+      const page = Number(params.get('page'))
+      requests.push([page, Number(params.get('page_size'))])
+      return Response.json({ success: true, data: {
+        page, page_size: 10, total: 30,
+        items: [{ report_id: `report-${page}`, report_title: `列表第 ${page} 页`, report_type: 'workshop', status: 'failed' }],
+      } })
+    },
+  })
+  expect(requests).toEqual([[2, 10]])
+  expect(wrapper.text()).toContain('列表第 2 页')
+  await wrapper.get('button[aria-label="第 3 页"]').trigger('click')
+  await flushPromises()
+  expect(requests).toEqual([[2, 10], [3, 10]])
+  expect(wrapper.text()).toContain('列表第 3 页')
+  expect(router.currentRoute.value.query).toEqual({ page: '3', source: 'notice' })
+  router.back()
+  await flushPromises()
+  expect(wrapper.text()).toContain('列表第 2 页')
 })

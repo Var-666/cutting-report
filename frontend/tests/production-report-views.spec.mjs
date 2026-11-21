@@ -54,9 +54,12 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => { Reflect.deleteProperty(Element.prototype, 'scrollTo') })
+afterEach(() => {
+  vi.useRealTimers()
+  Reflect.deleteProperty(Element.prototype, 'scrollTo')
+})
 
-async function openReport(kind = 'equipment') {
+async function openReport(kind = 'equipment', query = {}) {
   stubTableLayout()
   vi.stubGlobal('matchMedia', () => Object.assign(new EventTarget(), { matches: false }))
   const observers = []
@@ -79,7 +82,7 @@ async function openReport(kind = 'equipment') {
       { path: '/other', component: { render: () => h('h1', '其他报表') } },
     ],
   })
-  await router.push(`/${kind}`)
+  await router.push({ path: `/${kind}`, query })
   const pinia = createPinia()
   const theme = useThemeStore(pinia)
   theme.setThemeScheme('light')
@@ -172,10 +175,15 @@ test.each([
   expect(area(detailLabel).textContent).toContain('2026年09月01日 至 2026年09月02日')
   expect(area(summaryLabel).textContent).toContain('2025年12月01日 至 2026年11月07日')
   const view = wrapper.getComponent(kind === 'equipment' ? EnergyPeriodReportView : LeadershipReportView)
-  view.getComponent(StandardReportQuery).vm.$emit('export', 'html')
+  const query = view.getComponent(StandardReportQuery)
+  query.vm.$emit('update:startDate', '2026-08-05')
+  query.vm.$emit('update:chartType', 'line')
+  await flushPromises()
+  expect(query.props('dateDirty')).toBe(true)
+  query.vm.$emit('export', 'html')
   expect(view.emitted('export')).toEqual([[expect.objectContaining({
     report_type: kind, period_start: '2026-09-01', period_end: '2026-09-02',
-    parameters: expect.objectContaining({ summary_period_start: '2025-12-01', summary_period_end: '2026-11-07' }),
+    parameters: expect.objectContaining({ chart_type: 'line', summary_period_start: '2025-12-01', summary_period_end: '2026-11-07' }),
   }), 'html']])
 })
 
@@ -285,4 +293,146 @@ test.each(['leadership', 'equipment', 'workshop'])('%s charts recover the theme 
   await router.push(`/${kind}`)
   await flushPromises()
   expect(vi.mocked(init).mock.calls.slice(-2).map(call => call[1])).toEqual([undefined, undefined])
+})
+
+test('equipment resumes the cached monthly poll and updates its chart when the meter summary is ready', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const initial = { syncing: true, missing_day_count: 2, rows: [{ report_date: '2026-11-01', electricity: { value: 9 }, gas: { value: 2 } }] }
+  const completed = { syncing: false, missing_day_count: 0, rows: [{ report_date: '2026-11-01', electricity: { value: 42 }, gas: { value: 8 } }] }
+  let finish
+  const summary = getEnergyMonthlyRange.mockImplementation(async (_start, _end, options) => options?.mode === 'poll'
+    ? new Promise(resolve => { finish = resolve }) : initial)
+  const { wrapper, router } = await openReport()
+  const old = summary.mock.calls.length
+  const polls = () => summary.mock.calls.slice(old).filter(([, , options]) => options?.mode === 'poll')
+  const electricity = () => chartOptions('月度能耗图').series[0].data
+  expect(electricity()).toEqual([9])
+  await router.push('/other')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(polls()).toHaveLength(0)
+  await router.push('/equipment')
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(polls()).toHaveLength(1)
+  wrapper.getComponent(StandardReportQuery).vm.$emit('update:chartType', 'line')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(polls()).toHaveLength(1)
+  finish(completed)
+  await flushPromises()
+  expect(electricity()).toEqual([42])
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(polls()).toHaveLength(1)
+})
+
+const rangeA = { start: '2026-09-01', end: '2026-09-02' }
+const rangeB = { start: '2026-09-03', end: '2026-09-04' }
+const rangeC = { start: '2026-09-05', end: '2026-09-06' }
+
+function reportRangeResult(kind, start, end, measurement) {
+  if (kind === 'equipment') {
+    return { task_report: { period_start: start, period_end: end,
+      equipment_scope: ['Cutter01'], units: { electricity: 'kWh', gas: 'Nm³' }, summary: { task_count: 1 },
+      records: [{ task_id: 'manual-range', production_time: `${start}T08:00:00`, electricity_consumption: measurement }],
+    } }
+  }
+  return { snapshot: { data_as_of: end }, daily_records: [{ period_start: start, cut_length_m: measurement }] }
+}
+
+test.each([
+  ['leadership', getLeadershipRange, '区间每日趋势图'],
+  ['equipment', getEnergyRange, '任务能耗图'],
+])('%s back and forward restore dated results, ignore obsolete replies and preserve unsubmitted dates on chart changes', async (kind, read, chartLabel) => {
+  const pending = []
+  let hold = false
+  read.mockImplementation(async (start, end, { signal }) => hold
+    ? new Promise(resolve => pending.push({ start, end, signal, finish: value => resolve(reportRangeResult(kind, start, end, value)) }))
+    : reportRangeResult(kind, start, end, 19))
+  const { wrapper, router } = await openReport(kind, { ...rangeA, chart: 'bar' })
+  const chart = () => chartOptions(chartLabel).series[0].data
+  const control = () => wrapper.getComponent(StandardReportQuery)
+  expect(chart()).toContain(19)
+  hold = true
+  await router.push({ query: { ...rangeB, chart: 'line' } })
+  await flushPromises()
+  expect(pending).toHaveLength(1)
+  expect(control().props('loading')).toBe(true)
+  expect(chart()).toContain(19)
+  expect(router.currentRoute.value.query).toMatchObject({ ...rangeB, chart: 'line' })
+  router.back()
+  await flushPromises()
+  expect(pending[0].signal.aborted).toBe(true)
+  pending[0].finish(59)
+  await flushPromises()
+  expect(chart()).not.toContain(59)
+  expect(control().props('loading')).toBe(false)
+  expect(control().props('chartType')).toBe('bar')
+
+  router.forward()
+  await flushPromises()
+  expect(pending).toHaveLength(2)
+  pending[1].finish(29)
+  await flushPromises()
+  expect(chart()).toContain(29)
+  expect(control().props('chartType')).toBe('line')
+  control().vm.$emit('update:startDate', '2026-08-17')
+  await flushPromises()
+  control().vm.$emit('update:chartType', 'bar')
+  await flushPromises()
+  expect(control().props('startDate')).toBe('2026-08-17')
+  expect(control().props('dateDirty')).toBe(true)
+  expect(router.currentRoute.value.query).toEqual({ ...rangeB, chart: 'bar' })
+  expect(pending).toHaveLength(2)
+})
+
+test.each([
+  ['leadership', getLeadershipRange, '区间每日趋势图'],
+  ['equipment', getEnergyRange, '任务能耗图'],
+])('%s a newer linked range wins when the old and new requests resolve in reverse order', async (kind, read, chartLabel) => {
+  const pending = []
+  let hold = false
+  read.mockImplementation(async (start, end, { signal }) =>
+    hold ? new Promise(resolve => pending.push({ start, end, signal, finish: value => resolve(reportRangeResult(kind, start, end, value)) }))
+      : reportRangeResult(kind, start, end, 19))
+  const { router, wrapper } = await openReport(kind, rangeA)
+  hold = true
+  await router.push({ query: rangeB })
+  await flushPromises()
+  await router.push({ query: { ...rangeC, chart: 'line' } })
+  await flushPromises()
+  expect(pending.map(call => call.start)).toEqual([rangeB.start, rangeC.start])
+  expect(pending[0].signal.aborted).toBe(true)
+  pending[1].finish(32)
+  await flushPromises()
+  pending[0].finish(11)
+  await flushPromises()
+  expect(chartOptions(chartLabel).series[0].data).toContain(32)
+  expect(chartOptions(chartLabel).series[0].data).not.toContain(11)
+  expect(router.currentRoute.value.query).toEqual({ ...rangeC, chart: 'line' })
+  expect(wrapper.getComponent(StandardReportQuery).props('loading')).toBe(false)
+})
+
+test.each([
+  ['leadership', getLeadershipRange],
+  ['equipment', getEnergyRange],
+])('%s choosing a chart while a submitted request is pending applies its dates only after success', async (kind, read) => {
+  read.mockImplementation(async (start, end) => reportRangeResult(kind, start, end, 19))
+  const { wrapper, router } = await openReport(kind, rangeA)
+  const before = read.mock.calls.length
+  let finish
+  read.mockImplementationOnce((start, end) => new Promise(resolve => { finish = () => resolve(reportRangeResult(kind, start, end, 36)) }))
+  const control = wrapper.getComponent(StandardReportQuery)
+  control.vm.$emit('update:startDate', rangeB.start)
+  control.vm.$emit('update:endDate', rangeB.end)
+  await flushPromises()
+  control.vm.$emit('submit')
+  await flushPromises()
+  control.vm.$emit('update:chartType', 'line')
+  await flushPromises()
+  expect(router.currentRoute.value.query).toEqual({ ...rangeA, chart: 'line' })
+  expect(read.mock.calls.slice(before)).toEqual([[rangeB.start, rangeB.end, expect.objectContaining({ signal: expect.any(AbortSignal) })]])
+  expect(read.mock.lastCall[2].signal.aborted).toBe(false)
+  finish()
+  await flushPromises()
+  expect(router.currentRoute.value.query).toEqual({ ...rangeB, chart: 'line' })
+  expect(control.props('loading')).toBe(false)
 })
