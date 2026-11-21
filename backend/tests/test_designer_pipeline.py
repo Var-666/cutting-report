@@ -145,9 +145,8 @@ def test_custom_demo_pipeline_generates_configured_report(state_database, tmp_pa
     assert "每日切割长度" in html
     assert 'id="custom-chart"' in html
     assert "报告结束" in html
-    assert "@page { size:A4 landscape" in html
+    assert "@page { size:auto; margin:0;" in html
     assert "window.__REPORT_READY__ = true" in html
     assert "report-printing" in html
     assert 'class="screen-only"' in html
-    assert 'class="print-table-page"' in html
-    assert 'class="print-table-chunk"' in html
+    assert 'window.prepareIndustrialReport()' in html

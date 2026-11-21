@@ -257,7 +257,8 @@ def test_p6_schema_upgrade_keeps_published_migrations_and_rejects_live_consumers
             apply_migrations(maintenance)
         queue.release('worker', owner)
         versions = apply_migrations(maintenance)
-        assert versions[:2] == old and versions[2]['version'] == '003_consumer_scaling'
+        assert versions[2]['version'] == '003_consumer_scaling'
+        assert [item for item in versions if item['version'] != '003_consumer_scaling'] == old
         assert apply_migrations(maintenance) == versions
         assert prepare_consumers(maintenance)['background'] == 0
     database.check_runtime()

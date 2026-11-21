@@ -19,14 +19,19 @@ def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path, state_datab
     assert completed["summary"]["gas"]["complete_count"] == 24
 
 
-def test_month_resync_preserves_known_hours_when_platform_regresses(tmp_path, state_database):
-    energy, client = service(tmp_path, state_database, now=datetime(2026, 8, 20, 12))
+def test_month_resync_publishes_only_the_hours_available_from_the_platform(tmp_path, state_database):
+    now = [datetime(2026, 8, 20, 12)]
+    energy, client = service(tmp_path, state_database, now=now[0])
+    energy.clock = lambda: now[0]
     original = energy.get_day(DAY)
+    assert original["summary"]["gas"]["value"] == 96
     client.rows = [row for row in samples() if row["Mt"] < "2026-08-18T12:00:00"]
-    assert energy.sync_month(DAY, force=True) == 0
+    now[0] += timedelta(minutes=1)
+    assert energy.sync_month(DAY, force=True) == 1
     saved = energy.repository.get_day(energy.day_source_key(DAY), DAY.isoformat())
-    assert saved["updated_at"] == original["updated_at"]
-    assert saved["summary"]["gas"]["value"] == 96
+    assert saved["updated_at"] > original["updated_at"]
+    assert saved["summary"]["gas"]["status"] == "partial"
+    assert saved["rows"][12]["gas"]["value"] is None
 
 
 def test_previous_today_snapshot_is_finalized_after_midnight_within_ttl(tmp_path, state_database):

@@ -188,7 +188,7 @@ def test_control_signals_in_ai_preparation_are_not_degraded(state_database, tmp_
 
 
 @pytest.mark.parametrize(('report_type', 'interval'), SCENARIOS)
-def test_report_checks_current_analysis_and_falls_back_after_optional_failure(state_database, tmp_path, monkeypatch, report_type, interval):
+def test_report_reuses_current_analysis_and_omits_it_when_history_changes(state_database, tmp_path, monkeypatch, report_type, interval):
     pipeline, job = pipeline_job(state_database, tmp_path, report_type, interval)
     if report_type == 'leadership' and not interval:
         from pathlib import Path
@@ -211,13 +211,21 @@ def test_report_checks_current_analysis_and_falls_back_after_optional_failure(st
     retry = pipeline.metadata.claim_next_job(job['created_at'])
     pipeline.run(retry)
     completed = pipeline.metadata.get_job('cached-report')
-    assert completed['status'] == 'completed' and completed['ai_status'] == 'success'
+    assert completed['status'] == 'completed'
     html = (pipeline.settings.reports_dir / completed['relative_path']).read_text()
     has_optional_history = report_type != 'leadership' or interval
     assert len(history_calls) == (1 if has_optional_history else 0)
-    assert analyses[0]['cached'] and bool(analyses[0].get('cache_note')) == has_optional_history
-    assert '智能分析暂不可用' not in html
-    assert '本期生产记录已整理' in html and '本期生产记录已整理' in original_html
+    assert '本期生产记录已整理' in original_html
+    if has_optional_history:
+        assert completed['ai_status'] == analyses[0]['status'] == 'unavailable'
+        assert '历史分析与本次导出统计不匹配' in analyses[0]['overview']
+        assert '历史分析与本次导出统计不匹配' in html
+        assert '本期生产记录已整理' not in html
+    else:
+        assert completed['ai_status'] == 'success'
+        assert analyses[0]['cached']
+        assert '本期生产记录已整理' in html
+        assert '智能分析暂不可用' not in html
     assert 'class="analysis-sparkline"' not in html
     if report_type == 'leadership' and not interval:
         from app.services.pdf_service import PdfService

@@ -157,6 +157,7 @@ def _analysis_child(root, output, background):
     from dataclasses import replace
     from app.database.metadata import MetadataRepository
     from app.services.llm_service import background_llm_work, llm_capacity
+    from app.services.report_analysis.workshop import build_context
     from app.services.report_analysis_service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     with PostgresDatabase(configuration(root)) as database:
@@ -171,7 +172,7 @@ def _analysis_child(root, output, background):
 
         service.llm.analyze_context = model
         with background_llm_work() if background else nullcontext():
-            result = service._analyze(report_type="workshop", report_date="2026-10-24", context={"facts": [], "tables": []}, force=False)
+            result = service._analyze(report_type="workshop", report_date="2026-10-24", context=build_context("2026-10-24", []), force=False)
             output.put(("result", result.cached))
 
 

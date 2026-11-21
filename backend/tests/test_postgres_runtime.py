@@ -267,7 +267,12 @@ def test_automation_email_alarm_dispatch_and_retention(state):
     assert not created and same['dispatch_id'] == first['dispatch_id']
     assert dispatches.transition(first['dispatch_id'],expected=['ready'],status='sent',now=stamp)['status'] == 'sent'
     assert dispatches.list(page=1,page_size=20,sent_start=(now-timedelta(days=1)).isoformat(),sent_end=(now+timedelta(days=1)).isoformat())[1] == 1
-    assert dispatches.daily_sent_counts(sent_start=(now-timedelta(days=1)).isoformat(),sent_end=(now+timedelta(days=1)).isoformat(),timezone='Asia/Shanghai',machine_ip=None)
+    sent, completed, machines = dispatches.daily_dispatch_counts(
+        sent_start=(now-timedelta(days=1)).isoformat(), sent_end=(now+timedelta(days=1)).isoformat(),
+        timezone='Asia/Shanghai', machine_ip=None,
+    )
+    assert sent == {now.date().isoformat(): 1}
+    assert completed == {} and machines == ['127.0.0.1']
     retention = RetentionRepository(database)
     assert retention.cleanup_expired_records(report_cutoff='2000-01-01',analysis_cutoff='2000-01-01',alarm_cutoff='2000-01-01',
         dispatch_cutoff='2000-01-01',audit_cutoff='2000-01-01',queued_at=stamp,batch_size=100)['reports'] == 0

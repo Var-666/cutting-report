@@ -218,7 +218,7 @@ def test_alarm_response_models_cover_closed_incidents_and_incomplete_reports(api
         items = result if isinstance(result, list) else result['items']
         assert {item['status'] for item in items} == {'generating', 'failed'}
         assert all(item['analysis'] is None for item in items)
-        assert next(item for item in items if item['status'] == 'failed')['error_message'] == '模型暂不可用'
+        assert next(item for item in items if item['status'] == 'failed')['error_message'] == '告警报告生成失败'
 
 
 @pytest.mark.parametrize('section,field,value', [

@@ -212,12 +212,15 @@ def test_custom_sql_cannot_silently_use_cutter01_scope_or_override_device_parame
 
 def test_cutter02_export_explains_disconnected_energy_even_without_tasks(tmp_path, state_database):
     cfg = line_settings(cutting_settings(project_root=tmp_path, data_source_mode='demo',
-                                       demo_mode=True, llm_enabled=False), 'Cutter02')
+                                       demo_mode=True, llm_enabled=True), 'Cutter02')
     cfg.ensure_runtime_dirs()
     cfg.echarts_vendor_path.parent.mkdir(exist_ok=True)
     cfg.echarts_vendor_path.write_text('window.echarts = {};')
     metadata = MetadataRepository(state_database, device_id='Cutter02')
     pipeline = ReportPipeline(cfg, metadata, query_service=QueryService(cfg, client=source_client(cfg)))
+    from tests.analysis_fakes import model_analysis
+
+    pipeline.analysis_service.llm.analyze_context = model_analysis
     metadata.create_job(report_id='cutter02-export', report_date=DAY, project_code=None, ship_no=None,
                         request_id='export', created_at=STAMP, report_type='equipment')
     pipeline.run(metadata.claim_next_job(STAMP))
@@ -437,6 +440,7 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
 
 
 def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(database, tmp_path):
+    from app.services.report_analysis.workshop import build_context
     from app.services.report_analysis_service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     db, _ = database
@@ -445,15 +449,15 @@ def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(dat
     for key in ('Cutter01','Cutter02'):
         cfg=line_settings(cutting_settings(project_root=tmp_path,llm_enabled=True),key)
         service=ReportAnalysisService(cfg,MetadataRepository(db,device_id=key))
-        def analyze(kind,context,**kwargs):
+        def analyze(kind, context):
             calls.append(kind)
-            return model_analysis(kind,context,**kwargs)
+            return model_analysis(kind, context)
         service.llm.analyze_context=analyze
         services.append(service)
-        assert not service._analyze(report_type='workshop',report_date=DAY,context={'facts':[]},force=False,publish_latest=True).cached
+        assert not service._analyze(report_type='workshop',report_date=DAY,context=build_context(DAY, []),force=False,publish_latest=True).cached
     assert len(calls)==2
     for service in services:
-        assert service._analyze(report_type='workshop',report_date=DAY,context={'facts':[]},force=False,publish_latest=True).cached
+        assert service._analyze(report_type='workshop',report_date=DAY,context=build_context(DAY, []),force=False,publish_latest=True).cached
     assert len(calls)==2
     with db.connect() as connection:
         assert {row['display_scope'] for row in connection.execute('SELECT display_scope FROM report_analyses')}=={'Cutter01','Cutter02'}

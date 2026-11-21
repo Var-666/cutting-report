@@ -17,6 +17,7 @@ from app.database.coordination import CoordinationRepository
 from app.database.metadata import MetadataRepository
 from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
 from app.services.llm_service import llm_capacity
+from app.services.pdf_service import PdfService
 from app.worker import WorkerProcess
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
@@ -35,6 +36,8 @@ def _stress_consumer(cfg, stopped, ready, go, release, events, results):
     from tests.analysis_fakes import worker_settings_with_fake_model
 
     worker = WorkerProcess(worker_settings_with_fake_model(cfg))
+    # A stress round releases up to 45 tasks at once. Keep one render slot shared across consumers.
+    phase_pdf = PdfService(max_waiters=44, coordination_path=worker.runtime.pdf_service.coordination_path)
     pool = worker.runtime.database.pool
     metrics = {'instance': worker.instance_id, 'pool_limit': cfg.postgres_pool_max_size,
                'peak_checked_out': 0, 'pool_timeouts': 0, 'getconn_max_seconds': 0,
@@ -85,7 +88,7 @@ def _stress_consumer(cfg, stopped, ready, go, release, events, results):
             events.put(('model', 'start', time(), task_id, worker.instance_id, line))
             sleep(.015)
             events.put(('model', 'end', time(), task_id, worker.instance_id, line))
-        with worker.runtime.pdf_service._render_slot():
+        with phase_pdf._render_slot():
             events.put(('pdf', 'start', time(), task_id, worker.instance_id, line))
             sleep(.01)
             events.put(('pdf', 'end', time(), task_id, worker.instance_id, line))

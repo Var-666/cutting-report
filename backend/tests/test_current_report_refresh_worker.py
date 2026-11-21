@@ -10,6 +10,8 @@ import httpx
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
 from app.database.metadata import MetadataRepository
+from app.services.report_analysis.brief import period_scope
+from app.services.report_analysis.workshop import build_context as build_workshop_context
 from app.services.report_analysis_service import ReportAnalysisService
 from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
@@ -60,8 +62,12 @@ def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(s
     entered, second_entered, release, completed = Event(), Event(), Event(), Event()
     lock = Lock()
     requests, results = [], []
-    context = {"report_date": TODAY.isoformat(), "facts": [], "tables": []}
     analysis_date = TODAY.strftime('%Y-%m') if report_type == 'leadership' else TODAY.isoformat()
+    context = build_workshop_context(TODAY.isoformat(), [])
+    context['scope'] = period_scope(report_type, analysis_date)
+
+    content = dict(headline="本期生产记录已整理", summary="本期暂无任务。",
+                   key_metric_ids=[], findings=[], actions=[])
 
     def transport(request):
         with lock:
@@ -73,8 +79,7 @@ def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(s
         else:
             second_entered.set()
         return httpx.Response(200, json={
-            "choices": [{"message": {"content": json.dumps({key: "分析" for key in
-                ("overview", "features", "alerts", "suggestions")})}}],
+            "choices": [{"message": {"content": json.dumps(content)}}],
             "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9},
         })
 

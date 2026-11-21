@@ -174,7 +174,7 @@ def test_energy_source_outages_do_not_replace_successful_statistics(configured, 
     snapshots = provider.snapshot_service.repository
     snapshots.save(ReportSnapshot(key, payload, fingerprint(payload), now, now, now + timedelta(seconds=600)))
     energy = provider.pipeline.energy_period_service
-    failure = {'warning': 'source unavailable', 'configuration_error': None}
+    failure = {'warning': 'source unavailable', 'configuration_error': None, 'source_failed': True}
     monkeypatch.setattr(energy, 'configuration_error', lambda: None)
     monkeypatch.setattr(energy, 'get_day', lambda *args, **kwargs: {'sync_ok': False})
     monkeypatch.setattr(energy, 'get_task_day', lambda *args, **kwargs: failure)
