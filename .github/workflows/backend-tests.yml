@@ -1,0 +1,103 @@
+name: Backend Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:5c4783a8cc3f0074912164f94dfa1be4e043438f0f707cf968d7af9a0d31a2c8
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: p5-isolated-test-only
+          POSTGRES_DB: p5_test
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d p5_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: weld-local-test-only
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 127.0.0.1:53316:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      P5_TEST_POSTGRES: '1'
+      P5_TEST_POSTGRES_PORT: '5432'
+      P5_TEST_POSTGRES_PASSWORD: p5-isolated-test-only
+      P4_TEST_POSTGRES: '1'
+      P4_TEST_POSTGRES_PORT: '5432'
+      P4_TEST_POSTGRES_PASSWORD: p5-isolated-test-only
+      P4_TEST_POSTGRES_DATABASE: p5_test
+      WELD_TEST_MYSQL_PORT: '53316'
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: backend/.python-version
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.13.6'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --project backend --locked --no-build --python python
+      - name: Initialize isolated PostgreSQL test roles
+        run: >-
+          docker exec -i
+          -e POSTGRES_PASSWORD=p5-isolated-test-only
+          -e POSTGRES_MIGRATOR_PASSWORD=p5-migrator-test-only
+          -e POSTGRES_APP_PASSWORD=p5-app-test-only
+          ${{ job.services.postgres.id }}
+          psql -v ON_ERROR_STOP=1 -U postgres -d p5_test
+          < scripts/postgres/10-roles.sql
+      - name: Install report rendering dependencies
+        run: |
+          .venv/bin/python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - name: Run full backend regression
+        id: pytest
+        run: .venv/bin/python -m pytest backend/tests -q -ra --junitxml=backend-test-results.xml
+      - name: Summarize results and verify database integration tests ran
+        if: ${{ always() && steps.pytest.outcome != 'skipped' }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          suite = ET.parse('backend-test-results.xml').getroot().find('testsuite')
+          cases = suite.findall('testcase')
+          passed = sum(all(case.find(tag) is None for tag in ('failure', 'error', 'skipped')) for case in cases)
+          print(f"Backend Tests: collected={len(cases)}, passed={passed}, failures={suite.attrib['failures']}, "
+                f"errors={suite.attrib['errors']}, skipped={suite.attrib['skipped']}, duration={suite.attrib['time']}s")
+          assert cases, 'Backend tests were not collected'
+          for module in ('test_postgres_migration', 'test_postgres_runtime', 'test_unit_of_work',
+                         'test_consumer_scaling', 'test_postgres_consumer_stability', 'test_welding_mysql'):
+              selected = [case for case in cases if case.attrib['classname'].split('.')[-1] == module]
+              assert selected, f'{module} was not collected'
+              assert all(case.find('skipped') is None for case in selected), f'{module} contains skipped integration tests'
+          PY
+      - name: Upload backend JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-test-results
+          path: backend-test-results.xml
