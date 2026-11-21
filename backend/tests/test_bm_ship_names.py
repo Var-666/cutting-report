@@ -257,8 +257,9 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_
         status='success', overview='测试分析', features='', alerts='', suggestions=''))
     repo = pipeline.workshop_repository
     now = '2026-11-01T10:00:00+08:00'
-    admin = repo.bootstrap_admin(username='admin',display_name='管理员',password='test-password',now=now)
-    service = WorkshopService(repo,repo,cfg,query_service=query)
+    admin = UserRepository(state_database).bootstrap_admin(
+        username='admin', display_name='管理员', password='test-password', now=now)
+    service = WorkshopService(repo, pipeline.range_service.confirmations, cfg, query_service=query)
     service.generate_daily_report(ConfirmTaskRequest(report_date=date(2026,11,1)),admin)
     page = service.list_tasks(date(2026,11,1),None,'all','manager',1,20,False,admin)
     assert page['total']==2

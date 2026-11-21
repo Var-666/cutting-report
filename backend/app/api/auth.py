@@ -18,7 +18,7 @@ from app.config import Settings
 from app.core.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
 )
-from app.database.workshop import AuthenticationError
+from app.database.identity_security import AuthenticationError
 from app.services.worker_auth_service import WorkerAuthenticationUnavailableError
 from app.services.sso_service import SsoError
 from app.models.contracts import ApiEnvelope

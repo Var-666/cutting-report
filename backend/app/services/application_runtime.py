@@ -23,7 +23,6 @@ from app.database.database_monitors import DatabaseMonitorRepository
 from app.services.database_monitor_service import DatabaseMonitorService
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.database.retention import RetentionRepository
-from app.database.workshop import WorkshopRepository
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
 from app.database.sso import SsoRequestRepository
@@ -81,7 +80,6 @@ class ApplicationRuntime:
     metadata: MetadataRepository
     llm_usage: LlmUsageRepository
     report_snapshots: ReportSnapshotRepository
-    workshop: WorkshopRepository
     users: UserRepository
     sessions: SessionRepository
     sso: SsoService
@@ -128,7 +126,6 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
     llm_usage.initialize()
     leadership_snapshots = LeadershipSnapshotRepository(database)
     report_snapshots = ReportSnapshotRepository(database)
-    workshop = WorkshopRepository(database)
     automation = AutomationRepository(database)
     definitions = DefinitionRepository(database, settings.timezone)
     definitions.initialize()
@@ -270,7 +267,7 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
     return ApplicationRuntime(
         coordination=coordination, worker_status_reader=reader,
         database=database, metadata=metadata, llm_usage=llm_usage,
-        report_snapshots=report_snapshots, workshop=workshop,
+        report_snapshots=report_snapshots,
         users=UserRepository(database), sessions=SessionRepository(database),
         sso=SsoService(settings, SsoRequestRepository(database), UserRepository(database)),
         definitions=definitions, automation=automation, automation_runtime=automation_runtime,
