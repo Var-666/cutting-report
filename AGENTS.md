@@ -113,7 +113,9 @@ pnpm --dir frontend run typecheck
 - 只实现用户明确说明的功能；不得基于未经确认的业务假设自行增加页面入口、操作流程或管理功能。未明确说明的新增需求或业务规则，先澄清再实现。
 - 保留现有风格：Python 使用类型标注和 Pydantic 边界校验；Vue 使用 Composition API；JavaScript 不强制分号。
 - 公共 API、数据结构、认证、统计口径或背景工作机制改动前，先用 `rg` 检查调用方和对应测试。
-- 后端验证：`./.venv/bin/python -m pytest backend/tests`。
+- 本地后端优先运行受影响的 pytest 用例或模块，修复失败后复验对应范围。
+- PR 由 `Backend Tests` 在隔离 PostgreSQL 18 和 MySQL 8.4 上运行完整 `backend/tests`。保留事务、租约和并发等核心用例及断言。确有耗时的压力测试如需分层，须保留独立的自动化检查。
+- `Backend Tests`、`API contracts` 和 `Frontend CI` 独立执行。合并前须通过全部必需检查。
 - 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
 - 报表改动完成后，用同一组筛选与统计区间核对摘要、KPI、图表和明细的数量、单位及时间边界。报表页面、HTML、PDF 和邮件禁止展示辅助说明，包括图表或表格下的小字段落、脚注以及统计方法、比较规则或颜色规则的解释。必要的统计区间、单位、展示数量及异常状态直接使用标题、字段名、数据或状态标签。验收时发现辅助说明须删除后方可交付。
@@ -128,7 +130,7 @@ pnpm --dir frontend run typecheck
 - `scripts/export_api_contracts.py` 挂载契约范围内的 Router，不启动 Runtime、不连接数据源。前端只通过 `pnpm run api:generate` 调用现有 `@hey-api/openapi-ts` TypeScript 插件更新 `src/api/generated/`，不手改生成文件、不生成第二套 HTTP SDK。新增纳入类型复用的 Router 时同步补入导出范围。
 - 前端业务 API 优先引用生成的请求与响应数据类型，已有共享名称可用类型别名兼容；密码等只写请求字段使用生成器的 `*Writable` 类型。`request<T>()` 已解包 `data`，`T` 应是业务数据，不能再次使用完整 envelope，也不能为生成器修改 Cookie、设备/产线、取消、重试、缓存和下载机制。
 - 页面草稿、URL 字符串筛选、驼峰参数适配、图表补零和任务接受到轮询详情之间的展示状态由前端维护，优先从生成类型派生。API 字段/类型不一致应修正契约或调用方，不用 `any`、无依据的断言或类型抑制掩盖；报表创建的最小接受响应不能当作完整任务详情。
-- 契约修改后执行 `pnpm run api:generate`、`pnpm run api:check`、`pnpm run typecheck` 及受影响的定向测试。现有 API contracts CI 检查本地响应契约和生成漂移，Frontend CI 检查 TypeScript；保持精简，不因此运行全量后端回归。认证、设计器和系统诊断等未迁移模块按后续实际修改逐步覆盖，不为全覆盖重写历史业务。
+- 本地修改契约后执行 `pnpm run api:generate`、`pnpm run api:check`、`pnpm run typecheck` 及受影响的定向测试。PR 仍执行完整 `Backend Tests`。`API contracts` 检查响应契约和生成漂移，`Frontend CI` 负责前端检查。认证、设计器和系统诊断等未迁移模块按后续实际修改逐步覆盖，不为全覆盖重写历史业务。
 - API contracts CI 必须启动隔离 PG18、复用原测试角色/迁移夹具并设置 `P5_TEST_POSTGRES=1`；JUnit 检查两个契约模块均有收集且 skipped/failure/error 全为 0，不能以跳过 PostgreSQL 用例取得绿色结果。
 
 ## 焊接查询性能（P09）
