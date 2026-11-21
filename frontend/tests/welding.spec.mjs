@@ -1,0 +1,1498 @@
+import { renderComponent } from './vue-component-helpers.mjs'
+import { setup as setupCssr } from '@css-render/vue3-ssr'
+import { renderToString } from '@vue/server-renderer'
+import { SharedDataTable, createSharedDataTable } from './data-table-helpers.mjs'
+import { scriptFunction } from './typescript-helpers.mjs'
+import { afterEach, beforeEach, test, vi } from 'vitest'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { computed, h, reactive, ref } from 'vue'
+import * as Vue from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter, isNavigationFailure, NavigationFailureType, RouterView, useRoute, useRouter } from 'vue-router'
+import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
+import { lineHome, productionGroups, selectedLineType } from '../src/utils/productionLines.ts'
+import { adminMenus, navigationSection } from '../src/router/menus.ts'
+import { analyzeWelding, getLatestWeldingAnalysis, downloadWelding, getWeldingPart, getWeldingReport, weldingQuery } from '../src/api/welding.ts'
+import { weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay, weldingKpis, weldingTitles } from '../src/utils/weldingReport.ts'
+import { weldingRoutes } from '../src/router/weldingRoutes.ts'
+import { setDeviceCatalog, selectDevice } from '../src/api/deviceContext.ts'
+import { reportCache } from '../src/api/reportCache.ts'
+import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../src/api/reportRequests.ts'
+import { queryDateRange, sameRouteQuery } from '../src/utils/reportRouteState.ts'
+import { parseWeldingRouteQuery, weldingRouteQuery } from '../src/utils/weldingRouteState.ts'
+import { formatChineseDate } from '../src/utils/dateDisplay.ts'
+
+const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
+beforeEach(() => setDeviceCatalog({ default_device_id: 'welding', items: [{ id: 'welding', name: '焊接', type: 'welding' }] }))
+afterEach(() => reportCache.clear())
+
+test('welding KPI layouts preserve zero, missing and pending measurements with their scope notes', async () => {
+  setActivePinia(createPinia())
+  for (const variant of ['home', 'report']) {
+    const html = await renderComponent('components/HomeKpiCard', {
+      title: '焊接长度', value: 0, unit: 'm', precision: 2, variant,
+      trendLabel: '仅使用长度、用时均有效的作业',
+    })
+    assert.match(html, /aria-label="焊接长度：0\.00 m"/)
+    assert.ok(html.includes('仅使用长度、用时均有效的作业'))
+    assert.ok(!html.includes('暂无趋势'))
+    const missing = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, unit: 'm', variant })
+    assert.match(missing, /aria-label="焊接长度：暂无数据"/)
+    assert.ok(!missing.includes('>m<'))
+    const loading = await renderComponent('components/HomeKpiCard', { title: '焊接长度', value: null, unit: 'm', loading: true, variant })
+    assert.match(loading, /aria-label="焊接长度：正在加载"/)
+    assert.match(loading, /aria-label="正在获取生产数据"/)
+  }
+  const pending = await renderComponent('components/WeldingKpiCards', {
+    kind: 'parts', loading: false,
+    report: { summary: { involved_part_count: 3, part_row_count: 4, part_actual_length_m: null }, daily: [],
+      meta: { pending_metrics: { part_actual_length_m: '工件归属待核实' }, ambiguous_part_count: 1 } },
+  })
+  assert.ok(pending.includes('累计实际焊接长度：待核实 m'))
+  assert.ok(pending.includes('口径待核实'))
+  assert.ok(pending.includes('工件累计值；归属不明确时待核实'))
+  assert.ok(pending.includes('参与流水号存在多条工件归属'))
+})
+
+test('device types contain independent welding lines without adding a third navigation level', () => {
+  const items = [{ id: 'Cutter01', type: 'cutting', name: '20KW' }, { id: 'Cutter02', type: 'cutting', name: '30KW' }, { id: 'welding', type: 'welding', name: '小组立焊接线' }, { id: 'other-welding', type: 'welding', name: '另一焊接线' }]
+  const groups = productionGroups(items)
+  assert.deepEqual(groups.map(group => [group.name, group.items.length]), [['切割', 2], ['焊接', 2]])
+  assert.equal(selectedLineType(items, 'other-welding'), 'welding')
+  assert.equal(selectedLineType(items, 'Cutter01'), 'cutting')
+})
+
+test('cross-line switching enters the correct home and restores selection if navigation is cancelled', async () => {
+  const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
+  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'Cutter02', type: 'cutting' }, { id: 'welding', type: 'welding' }, { id: 'other-welding', type: 'welding' }] }
+  const destinations = []
+  let cancel = false
+  const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
+  const bindings = { lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', path: '/admin/cutting/home', query: {} }), useRouter: () => router,
+    allowDeviceSwitch: async () => true, deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
+  const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
+  await app.switchDevice('welding')
+  assert.equal(selection.id, 'welding')
+  assert.equal(destinations.at(-1), '/admin/welding/home')
+  await app.switchDevice('Cutter02')
+  assert.equal(selection.id, 'Cutter02')
+  assert.equal(destinations.at(-1), '/admin/cutting/home')
+  await app.switchDevice('other-welding')
+  assert.equal(selection.id, 'other-welding')
+  assert.equal(destinations.at(-1), '/admin/welding/home')
+  await app.switchDevice('welding')
+  assert.equal(selection.id, 'welding')
+  await app.switchDevice('Cutter02')
+  cancel = true
+  await app.switchDevice('other-welding')
+  assert.equal(selection.id, 'Cutter02')
+  assert.equal(app.switching.value, false)
+})
+
+test('business menus isolate cutting capabilities and flatten the welding layout', () => {
+  const routes = [{ path: 'alarms', name: 'alarms', meta: { line: 'cutting', title: '告警' } }, weldingRoutes,
+    { path: 'settings', meta: { title: '设置' }, children: [{ path: 'database', name: 'database', meta: { title: '数据库' } }, { path: 'automation', name: 'automation', meta: { title: '自动化', line: 'cutting' } }] }]
+  const menus = adminMenus(routes, '/admin', 'welding')
+  assert.ok(menus.some(menu => menu.key === 'welding-home'))
+  assert.ok(menus.some(menu => menu.key === '/admin/welding/reports' && menu.children.length === 4))
+  const text = JSON.stringify(menus)
+  assert.ok(!text.includes('alarms') && !text.includes('automation'))
+  assert.ok(JSON.stringify(adminMenus(routes)).includes('alarms'))
+  assert.ok(!JSON.stringify(adminMenus(routes)).includes('welding-home'))
+  assert.ok(!menus.some(menu => menu.label === '智能分析'))
+  const legacyAnalysis = weldingRoutes.children.find(route => route.path === 'analysis')
+  assert.deepEqual(legacyAnalysis.redirect({ query: { start: '2026-09-01', end: '2026-09-02' } }), {
+    path: '/admin/welding/reports/daily', query: { start: '2026-09-01', end: '2026-09-02' },
+  })
+  assert.match(source('views/WeldingReportView.vue'), /<ReportAnalysis[\s\S]*生成当前区间分析[\s\S]*@reload="runAnalysis"/)
+})
+
+test('query parameters retain zero device, robot and process codes; unknown is not zero', () => {
+  assert.deepEqual(weldingQuery({ device_no: 0, robot_no: 0, weld_type: 0, state: '', project_no: null, anomalies_only: false }), { device_no: 0, robot_no: 0, weld_type: 0, anomalies_only: false })
+  assert.equal(weldingDisplay(null, 'completed_part_count'), '待核实')
+  assert.equal(weldingDisplay(0, 'weld_length_m'), '0.000')
+  assert.equal(weldingDisplay(null, 'weld_length_m'), '未记录')
+  const cards = weldingKpis('daily', { summary: { weld_length_m: 0, involved_part_count: 0 }, meta: { pending_metrics: { completed_part_count: 'pending' } } })
+  assert.equal(cards[1].value, 0)
+  assert.equal(cards[2].value, 0)
+  assert.equal(cards[3].value, null)
+  const parts = weldingKpis('parts', { summary: { part_row_count: 0, part_actual_length_m: null }, meta: { ambiguous_part_count: 2, pending_metrics: { part_actual_length_m: '歧义关联' } } })
+  assert.equal(parts[1].value, 0)
+  assert.equal(parts[2].value, '待核实')
+  assert.equal(parts[3].value, 2)
+})
+
+test('equivalent query defaults and field order share one HTTP request while filters stay isolated', async t => {
+  let finish
+  const gate = new Promise(resolve => { finish = resolve })
+  const calls = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+    calls.push(url)
+    await gate
+    return new Response(JSON.stringify({ success: true, data: { data_version: 'shared' } }), { headers: { 'Content-Type': 'application/json' } })
+  })
+  const first = getWeldingReport('daily', { start: '2026-10-01', end: '2026-10-02' })
+  const second = getWeldingReport('daily', { page_size: 20, page: 1, end: '2026-10-02', start: '2026-10-01', descending: true, sort_by: 'time', anomalies_only: false })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.length, 1)
+  finish()
+  assert.equal(await first, await second)
+  await getWeldingReport('daily', { start: '2026-10-01', end: '2026-10-02', device_no: 0 })
+  assert.equal(calls.length, 2)
+  await getWeldingReport('daily', { device_no: '0', end: '2026-10-02', start: '2026-10-01' })
+  assert.equal(calls.length, 2)
+})
+
+test('a successful JSON response cannot be downloaded as a PDF', async t => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }))
+  await assert.rejects(downloadWelding('/api/v1/welding/export', 'test.pdf'), /文件格式不正确/)
+})
+
+function view(readReport, options = {}) {
+  const script = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const cleanup = []
+  const { setTimeout, clearTimeout } = options.clock ?? globalThis
+  const bindings = {
+    REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, setTimeout, clearTimeout,
+    selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
+    defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ async push() {}, async replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
+    reportToday: () => '2026-10-26', getWeldingReport: async (...args) => ({ meta: {}, ...await readReport(...args) }), getLatestWeldingAnalysis: async () => null,
+    formatChineseDate,
+    deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
+  }
+  return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel, usesFilterDialog, filtersOpen, openFilters, cancelFilters, applyFilters, resetFilters };`)(...Object.values(bindings)), cleanup }
+}
+
+const period = { start: '2026-10-26', end: '2026-10-26' }
+const busyResponse = (retryAfter = '1') => Response.json({ detail: '焊接数据查询请求繁忙，请稍后重试。' }, { status: 503, headers: { 'Retry-After': retryAfter } })
+const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('welding filter dialog keeps edits and reset local until applied', async () => {
+  const requests = []
+  const app = view(async (_kind, values) => {
+    requests.push(values)
+    return { query: values, data_version: 'filtered' }
+  })
+  assert.equal(view(() => {}, { kind: 'daily' }).usesFilterDialog.value, false)
+  assert.equal(app.usesFilterDialog.value, true)
+  app.openFilters()
+  app.draft.robot_no = 3
+  app.cancelFilters()
+  assert.equal(app.draft.robot_no, '')
+  app.openFilters()
+  app.draft.robot_no = 3
+  app.resetFilters()
+  assert.equal(app.draft.robot_no, '')
+  assert.equal(requests.length, 0)
+  app.draft.robot_no = 0
+  app.applyFilters()
+  await settle()
+  assert.equal(app.filtersOpen.value, false)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].robot_no, 0)
+  assert.equal(requests[0].page_size, 10)
+})
+
+test('pending welding filters compare effective conditions and commit only after success', async t => {
+  let fail = false
+  const calls = []
+  const page = view(async (_kind, values) => {
+    calls.push(values)
+    if (fail) throw new Error('查询失败')
+    return { query: { ...values }, data_version: 'v1', meta: {} }
+  })
+  t.onTestFinished(() => page.cleanup.forEach(cleanup => cleanup()))
+  assert.equal(page.filtersDirty.value, false)
+  page.draft.device_no = '0'
+  assert.equal(page.filtersDirty.value, true)
+  await page.submit()
+  assert.equal(page.filtersDirty.value, false)
+  assert.match(page.appliedQueryLabel.value, /2026年10月26日 至 2026年10月26日 · 设备 0/)
+  page.draft.device_no = 0
+  page.draft.page = 4
+  page.draft.page_size = 20
+  page.draft.project_no = 'ignored on jobs'
+  assert.equal(page.filtersDirty.value, false, 'numeric strings, pagination and unsupported filters are equivalent')
+  page.draft.robot_no = 2
+  fail = true
+  await page.submit()
+  assert.equal(page.filtersDirty.value, true)
+  assert.equal(page.activeQuery.value.robot_no, '')
+  assert.equal(page.report.value.data_version, 'v1')
+  assert.equal(page.error.value, '查询失败')
+  fail = false
+  await page.changePage(2)
+  assert.equal(calls.at(-1).robot_no, '', 'pagination does not submit the draft')
+  assert.equal(page.filtersDirty.value, true)
+  await page.submit()
+  assert.equal(page.filtersDirty.value, false)
+  assert.match(page.appliedQueryLabel.value, /机器人 2/)
+  page.draft.start = 'invalid'
+  assert.equal(page.filtersDirty.value, true, 'invalid dates must not normalize into an applied range')
+})
+
+function snapshotWaitTimers(t) {
+  const timers = new Map()
+  let clock = 0, sequence = 0
+  const setTimeout = (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence }
+  const clearTimeout = id => timers.delete(id)
+  // Only the HTTP retry tests need global timers. Page tests inject a clock into the view.
+  if (t) {
+    vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(setTimeout)
+    vi.spyOn(globalThis, 'clearTimeout').mockImplementation(clearTimeout)
+  }
+  return { timers, setTimeout, clearTimeout, advance(milliseconds) { clock += milliseconds }, fire() { const [id, timer] = timers.entries().next().value; timers.delete(id); clock += timer.delay; timer.callback() } }
+}
+const preparingResponse = () => Response.json({ detail: '统计正在生成，请稍后重试' }, { status: 503, headers: { 'Retry-After': '1', 'X-Welding-Error': 'snapshot_refresh_busy' } })
+
+for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) test(`${kind} keeps its snapshot visible and replaces it when background refresh finishes without applying draft edits`, async t => {
+  const clock = snapshotWaitTimers()
+  const calls = []
+  let complete
+  const app = view((kind, values, signal, force) => {
+    calls.push({ kind, values, signal, force })
+    return calls.length === 1
+      ? Promise.resolve({ query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } })
+      : new Promise(resolve => { complete = resolve })
+  }, { kind, clock })
+  t.onTestFinished(() => app.cleanup.forEach(cleanup => cleanup()))
+  await app.read({ ...period, device_no: 0 })
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(clock.timers.size, 1)
+  app.draft.device_no = 7
+  clock.fire(); await settle()
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(calls[1].values.device_no, 0)
+  assert.equal(calls[1].force, false)
+  complete({ query: calls[1].values, data_version: 'latest', meta: { report_data: { refreshing: false } } })
+  await settle()
+  assert.equal(app.report.value.data_version, 'latest')
+  assert.equal(app.draft.device_no, 7)
+  assert.equal(clock.timers.size, 0)
+})
+
+test('a new homepage filter or unmount cancels background checks and ignores late results', async t => {
+  const clock = snapshotWaitTimers()
+  const calls = []
+  const app = view((kind, values, signal) => new Promise(resolve => calls.push({ values, signal, resolve })), { kind: 'dashboard', clock })
+  const first = app.read({ ...period, device_no: 0 })
+  calls[0].resolve({ query: calls[0].values, data_version: 'old', meta: { report_data: { refreshing: true } } })
+  await first
+  clock.fire(); await settle()
+  const selected = app.read({ ...period, device_no: 1 })
+  assert.equal(calls[1].signal.aborted, true)
+  calls[2].resolve({ query: calls[2].values, data_version: 'selected', meta: { report_data: { refreshing: true } } })
+  await selected
+  calls[1].resolve({ query: calls[1].values, data_version: 'late' }); await settle()
+  assert.equal(app.report.value.data_version, 'selected')
+  assert.equal(clock.timers.size, 1)
+  app.cleanup.forEach(cleanup => cleanup())
+  assert.equal(clock.timers.size, 0)
+})
+
+test('background snapshot checks stop at the same bounded count as cutting reports', async t => {
+  const clock = snapshotWaitTimers()
+  let calls = 0
+  const app = view(async (kind, values) => {
+    calls += 1
+    return { query: values, data_version: 'previous', meta: { report_data: { refreshing: true } } }
+  }, { clock })
+  t.onTestFinished(() => app.cleanup.forEach(cleanup => cleanup()))
+  await app.read(period)
+  for (let index = 0; index < 75; index += 1) {
+    assert.equal(clock.timers.size, 1)
+    clock.fire()
+    await settle()
+  }
+  assert.equal(calls, 76)
+  assert.equal(clock.timers.size, 0)
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+})
+
+test('snapshot preparation keeps the page loading and reads the completed snapshot without forcing another refresh', async t => {
+  const clock = snapshotWaitTimers(t)
+  const calls = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+    calls.push(new URL(url, 'http://test'))
+    return calls.length === 1 ? preparingResponse() : Response.json({ success: true, data: { query: period, data_version: 'prepared' } })
+  })
+  const app = view(getWeldingReport)
+  const pending = app.read(period, true)
+  await settle()
+  assert.equal(app.loading.value, true)
+  assert.equal(app.error.value, '')
+  assert.equal(clock.timers.size, 1)
+  assert.equal(calls[0].searchParams.get('refresh'), 'true')
+  clock.fire(); await pending
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].searchParams.has('refresh'), false)
+  assert.equal(app.report.value.data_version, 'prepared')
+  assert.equal(app.loading.value, false)
+  assert.equal(app.error.value, '')
+})
+
+test('snapshot preparation stops after 75 checks instead of retrying forever', async t => {
+  const clock = snapshotWaitTimers(t)
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => preparingResponse())
+  const result = getWeldingReport('dashboard', period).then(() => null, error => error)
+  await settle()
+  for (let attempt = 0; attempt < 75; attempt++) {
+    assert.equal(clock.timers.size, 1)
+    clock.fire()
+    await settle()
+  }
+  const error = await result
+  assert.equal(error.code, 'snapshot_refresh_busy')
+  assert.equal(error.status, 503)
+  assert.equal(fetchMock.mock.calls.length, 76)
+  assert.equal(clock.timers.size, 0)
+})
+
+test('leaving the page cancels a snapshot wait and clears its timer', async t => {
+  const { timers } = snapshotWaitTimers(t)
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => preparingResponse())
+  const app = view(getWeldingReport)
+  const pending = app.read(period)
+  await settle()
+  assert.equal(timers.size, 1)
+  app.cleanup.forEach(cleanup => cleanup())
+  await pending
+  assert.equal(timers.size, 0)
+  assert.equal(fetchMock.mock.calls.length, 1)
+  assert.equal(app.error.value, '')
+})
+
+test('a new filter cancels the previous snapshot wait and cannot receive its result', async t => {
+  const { timers } = snapshotWaitTimers(t)
+  let calls = 0
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+    calls++
+    return new URL(url, 'http://test').searchParams.get('device_no') === '0' ? preparingResponse() : Response.json({ success: true, data: { query: { ...period, device_no: 1 }, data_version: 'new-filter' } })
+  })
+  const app = view(getWeldingReport)
+  const old = app.read({ ...period, device_no: 0 })
+  await settle()
+  await app.read({ ...period, device_no: 1 }); await old
+  assert.equal(timers.size, 0)
+  assert.equal(calls, 2)
+  assert.equal(app.activeQuery.value.device_no, 1)
+  assert.equal(app.report.value.data_version, 'new-filter')
+})
+
+test('welding route parsing validates all boundaries, preserves numeric zero and drops incompatible filters', () => {
+  const all = { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', weld_type: '0', state: '0', part_state: '0', serial_number: 'S', project_no: 'P', section_no: 'SEC', part_no: 'PART', anomalies_only: 'true', sort_by: 'length', descending: 'false', page: '3', page_size: '50', unrelated: 'keep' }
+  const jobs = parseWeldingRouteQuery(all, 'jobs', '2026-10-26')
+  assert.deepEqual([jobs.device_no, jobs.robot_no, jobs.weld_type, jobs.state], [0, 0, 0, 0])
+  assert.equal(jobs.anomalies_only, true)
+  assert.equal(jobs.descending, false)
+  const parts = parseWeldingRouteQuery(all, 'parts', '2026-10-26')
+  assert.deepEqual([parts.project_no, parts.section_no, parts.part_no, parts.part_state], ['P', 'SEC', 'PART', 0])
+  assert.equal(parts.robot_no, '')
+  for (const kind of ['daily', 'equipment', 'dashboard']) {
+    const parsed = parseWeldingRouteQuery(all, kind, '2026-10-26')
+    assert.equal(parsed.serial_number, '')
+    assert.equal(parsed.project_no, '')
+    assert.equal(parsed.anomalies_only, false)
+    assert.equal(parsed.robot_no, kind === 'equipment' ? 0 : '')
+  }
+  for (const value of ['', ' ', '0x10', '1e2', '1.2', '-1', '9007199254740992', ['0', '1'], null]) {
+    const parsed = parseWeldingRouteQuery({ ...all, device_no: value, robot_no: value }, 'jobs', '2026-10-26')
+    assert.equal(parsed.device_no, '', `invalid device ${value}`)
+    assert.equal(parsed.robot_no, '')
+  }
+  const invalid = parseWeldingRouteQuery({ start: '2025-01-01', end: '2026-10-26', serial_number: '\u0000bad', page: '100001', page_size: '101', state: 'no', sort_by: 'bad', anomalies_only: '1', descending: '0' }, 'jobs', '2026-10-26')
+  assert.deepEqual([invalid.start, invalid.end, invalid.page, invalid.page_size, invalid.state, invalid.serial_number, invalid.sort_by, invalid.anomalies_only, invalid.descending], ['2026-10-26', '2026-10-26', 1, 10, '', '', 'time', false, true])
+  const query = weldingRouteQuery(all, jobs)
+  assert.equal(query.unrelated, 'keep')
+  assert.equal(query.device_no, '0')
+  assert.equal(query.anomalies_only, 'true')
+  assert.equal(query.descending, 'false')
+  assert.equal('project_no' in query, false)
+  assert.deepEqual(parseWeldingRouteQuery(query, 'jobs', '2026-10-26'), jobs)
+})
+
+const flushWelding = async () => { await settle(); await Vue.nextTick() }
+async function mountWelding(t, kind = 'jobs', query = {}, analysisOptions = {}) {
+  const calls = [], downloads = [], analyses = [], cacheReads = []
+  let held = false, state
+  const selection = Vue.reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding' }, { id: 'line-b', type: 'welding' }, { id: 'Cutter01', type: 'cutting' }] })
+  let router
+  const bindings = {
+    ...Vue, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, useRoute, useRouter, defineProps: () => ({ get kind() { return router.currentRoute.value.meta.kind } }),
+    selectedLineType, deviceSelection: selection, queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
+    reportToday: () => '2026-10-26', weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
+    getWeldingReport: (kind, values, signal) => {
+      // Match the backend's parts query normalization instead of echoing conflicting state fields.
+      const normalized = kind === 'parts' ? { ...values, state: null, part_state: values.part_state !== '' && values.part_state != null ? values.part_state : values.state === '' ? null : values.state } : { ...values }
+      const response = { query: normalized, data_version: `version-${calls.length + 1}`, report_type: kind === 'dashboard' ? 'jobs' : kind, summary: {}, rows: [], meta: {} }
+      const call = { kind, query: { ...values }, line: selection.id, signal }
+      calls.push(call)
+      if (!held) return Promise.resolve(response)
+      return new Promise((resolve, reject) => { call.resolve = () => resolve(response); call.reject = reject })
+    },
+    downloadWelding: async (url, filename) => downloads.push({ url: new URL(url, 'http://test'), filename }),
+    getLatestWeldingAnalysis: async (kind, query, version, signal) => {
+      cacheReads.push({ kind, query: { ...query }, version, line: selection.id, signal })
+      return analysisOptions.read ? analysisOptions.read(kind, query, version, signal) : null
+    },
+    analyzeWelding: async (kind, query, version, signal) => {
+      analyses.push({ kind, query: { ...query }, version })
+      return analysisOptions.analyze ? analysisOptions.analyze(kind, query, version, signal)
+        : { overview: 'ok', status: 'success', mode: 'model', data_version: version }
+    },
+    getWeldingPart: async (id, page) => ({ part: { id }, seams: { page, items: [] } }),
+  }
+  const code = parse(source('views/WeldingReportView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${code}; return { draft, activeQuery, report, submit, changePage, loading, error, exportReport, runAnalysis, analysis, analysisError, openDetail, details, detailJob, goToPart }`)
+  const page = { setup() { state = setup(...Object.values(bindings)); return () => null } }
+  router = createRouter({ history: createMemoryHistory(), routes: ['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => ({ path: kind === 'dashboard' ? '/admin/welding/home' : `/admin/welding/reports/${kind}`, name: `welding-${kind}`, meta: { kind }, component: page })) })
+  await router.push({ name: `welding-${kind}`, query })
+  const renderer = Vue.createRenderer({ createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ render: () => Vue.h(RouterView) })
+  app.use(router); app.mount({})
+  let mounted = true
+  const unmount = () => { if (mounted) { mounted = false; app.unmount() } }
+  t.onTestFinished(unmount)
+  await flushWelding()
+  return { state, calls, router, selection, downloads, analyses, cacheReads, unmount, hold() { held = true } }
+}
+
+test('welding reopens persistent success without generating analysis and retains it after refresh failure', async t => {
+  const original = { status: 'success', mode: 'model', overview: '历史焊接结论', generated_at: '2026-10-26T08:00:00+08:00',
+    data_version: 'old-version', cached: true, cache_note: '沿用历史成功分析' }
+  const { state, cacheReads, analyses } = await mountWelding(t, 'daily', {}, {
+    read: async () => original, analyze: async () => { throw new Error('model unavailable') },
+  })
+  assert.equal(state.analysis.value.overview, original.overview)
+  assert.equal(cacheReads.length, 1)
+  assert.equal(analyses.length, 0, 'a page read must not generate model calls')
+  await state.runAnalysis()
+  assert.equal(state.analysis.value.generated_at, original.generated_at)
+  assert.equal(state.analysis.value.data_version, original.data_version)
+  assert.equal(state.analysisError.value, 'model unavailable')
+})
+
+test('same-scope report changes keep old analysis while cache refreshes and changed filters reject late cache', async t => {
+  const pending = []
+  let first = true
+  const original = { overview: '原焊接结论', status: 'success', mode: 'model', data_version: 'version-1',
+    generated_at: '2026-10-26T08:00:00+08:00', cached: true }
+  const { state, calls } = await mountWelding(t, 'daily', {}, { read: () => {
+    if (first) { first = false; return original }
+    return new Promise(resolve => pending.push(resolve))
+  } })
+  await state.submit()
+  assert.equal(calls.length, 2)
+  assert.equal(state.analysis.value.overview, original.overview)
+  assert.ok(state.analysis.value.cache_note.includes('数据已更新'))
+  state.draft.device_no = '2'
+  await state.submit()
+  assert.equal(state.analysis.value, null)
+  pending[0]({ ...original, overview: 'late old filter' })
+  await flushWelding()
+  assert.equal(state.analysis.value, null)
+  pending[1](null)
+})
+
+test('switching welding lines or unmounting rejects late model and cache results', async t => {
+  let finishModel
+  const { state, selection, unmount } = await mountWelding(t, 'daily', {}, {
+    analyze: () => new Promise(resolve => { finishModel = resolve }),
+  })
+  const generating = state.runAnalysis()
+  selection.id = 'line-b'
+  await flushWelding()
+  finishModel({ overview: 'late previous line', data_version: 'version-1' })
+  await generating
+  assert.notEqual(state.analysis.value?.overview, 'late previous line')
+  unmount()
+})
+
+for (const kind of ['parts', 'jobs', 'equipment']) {
+  test(`${kind} reads statistics without fetching a hidden analysis`, async t => {
+    const { state, cacheReads } = await mountWelding(t, kind)
+    await state.submit()
+    assert.equal(cacheReads.length, 0)
+  })
+}
+
+for (const kind of ['dashboard', 'daily', 'parts', 'jobs', 'equipment']) {
+  test(`welding ${kind}: copied links restore supported filters and pagination with exactly one request`, async t => {
+    const query = { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', weld_type: '2', state: '3', part_state: '4', serial_number: 'S', project_no: 'P', section_no: 'SEC', part_no: 'PART', anomalies_only: 'true', sort_by: 'length', descending: 'false', page: '3', page_size: '50', unrelated: 'keep' }
+    const { state, calls, router } = await mountWelding(t, kind, query)
+    const expected = parseWeldingRouteQuery(query, kind, '2026-10-26')
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0].query, expected)
+    assert.deepEqual({ ...state.draft }, expected)
+    assert.deepEqual(state.activeQuery.value, kind === 'parts' ? { ...expected, state: null, part_state: expected.part_state === '' ? null : expected.part_state } : expected)
+    assert.deepEqual(router.currentRoute.value.query, weldingRouteQuery(query, expected))
+    await flushWelding()
+    assert.equal(calls.length, 1, 'normalizing the URL does not replay the query')
+  })
+}
+
+for (const [query, expected] of [
+  [{ part_state: '0' }, 0], [{ part_state: '3' }, 3], [{ state: '0' }, 0], [{ state: '3' }, 3],
+  [{ state: '4', part_state: '0' }, 0], [{ state: '4', part_state: '3' }, 3],
+  [{ state: '4', part_state: '' }, ''], [{ state: '4', part_state: 'invalid' }, ''],
+]) {
+  test(`parts state links normalize ${JSON.stringify(query)} without hidden job state`, async t => {
+    const { state, calls, router } = await mountWelding(t, 'parts', { ...period, ...query })
+    assert.equal(state.draft.part_state, expected)
+    assert.equal(state.draft.state, '')
+    assert.equal(calls[0].query.part_state, expected)
+    assert.equal(calls[0].query.state, '')
+    assert.equal(state.activeQuery.value.part_state, expected === '' ? null : expected)
+    assert.equal(router.currentRoute.value.query.part_state, expected === '' ? undefined : String(expected))
+    assert.equal('state' in router.currentRoute.value.query, false)
+    assert.equal(calls.length, 1)
+  })
+}
+
+test('parts state editing, clearing, failure and history keep one applied state for queries, exports and analysis', async t => {
+  const { state, calls, router, downloads, analyses, hold } = await mountWelding(t, 'parts', { ...period, part_state: '3', unrelated: 'keep' })
+  state.draft.part_state = 0
+  assert.equal(state.activeQuery.value.part_state, 3)
+  assert.equal(router.currentRoute.value.query.part_state, '3')
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, 0)
+  assert.equal(router.currentRoute.value.query.part_state, '0')
+  state.draft.part_state = 4
+  for (const format of ['csv', 'html', 'pdf']) await state.exportReport(format)
+  await state.runAnalysis()
+  assert.ok(downloads.every(({ url }) => url.searchParams.get('part_state') === '0' && !url.searchParams.has('state')))
+  assert.equal(analyses[0].query.part_state, 0)
+  assert.equal(analyses[0].query.state, null)
+  assert.equal(analyses[0].version, state.report.value.data_version)
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, 4)
+  state.draft.part_state = ''
+  await state.submit(); await flushWelding()
+  assert.equal(state.activeQuery.value.part_state, null)
+  assert.equal('part_state' in router.currentRoute.value.query, false)
+  assert.equal('state' in router.currentRoute.value.query, false)
+  router.back(); await flushWelding()
+  assert.equal(state.draft.part_state, 4)
+  assert.equal(state.activeQuery.value.part_state, 4)
+  router.back(); await flushWelding()
+  assert.equal(state.draft.part_state, 0)
+  assert.equal(state.activeQuery.value.part_state, 0)
+  router.forward(); await flushWelding()
+  assert.equal(state.draft.part_state, 4)
+  const version = state.report.value.data_version
+  const previousQuery = { ...router.currentRoute.value.query }
+  hold()
+  state.draft.part_state = 5
+  const failed = state.submit()
+  calls.at(-1).reject(new Error('state read failed')); await failed
+  assert.equal(state.draft.part_state, 5)
+  assert.equal(state.activeQuery.value.part_state, 4)
+  assert.equal(state.report.value.data_version, version)
+  assert.deepEqual(router.currentRoute.value.query, previousQuery)
+  assert.equal(previousQuery.unrelated, 'keep')
+  await state.exportReport('csv')
+  await state.runAnalysis()
+  assert.equal(downloads.at(-1).url.searchParams.get('part_state'), '4')
+  assert.equal(analyses.at(-1).query.part_state, 4)
+})
+
+test('jobs state keeps its meaning and ignores a parts state from a copied link', async t => {
+  const { state, calls, router } = await mountWelding(t, 'jobs', { ...period, state: '0', part_state: '3', robot_no: '0', device_no: '0' })
+  assert.equal(state.draft.state, 0)
+  assert.equal(state.draft.part_state, '')
+  assert.equal(state.activeQuery.value.robot_no, 0)
+  assert.equal(state.activeQuery.value.device_no, 0)
+  state.draft.state = 3
+  await state.submit(); await flushWelding()
+  assert.equal(calls.at(-1).query.state, 3)
+  assert.equal(state.activeQuery.value.state, 3)
+  assert.equal(router.currentRoute.value.query.state, '3')
+  assert.equal('part_state' in router.currentRoute.value.query, false)
+})
+
+test('welding queries: successful submit, sorting and ten-row pagination sync URL while preserving unsubmitted drafts', async t => {
+  const page = await mountWelding(t, 'jobs', { ...period, page_size: '50', unrelated: 'keep' })
+  const { state, calls, router, hold } = page
+  Object.assign(state.draft, { device_no: 0, robot_no: 0, weld_type: 2, state: 3, serial_number: 'S', anomalies_only: true, sort_by: 'length', descending: false })
+  assert.equal(router.currentRoute.value.query.serial_number, undefined)
+  hold()
+  const pending = state.submit()
+  assert.equal(router.currentRoute.value.query.serial_number, undefined, 'only successful queries change the URL')
+  state.draft.serial_number = 'unsaved'
+  calls[1].resolve(); await pending; await flushWelding()
+  assert.equal(calls.length, 2)
+  assert.equal(state.draft.serial_number, 'unsaved')
+  for (const [key, value] of Object.entries({ device_no: '0', robot_no: '0', weld_type: '2', state: '3', serial_number: 'S', anomalies_only: 'true', sort_by: 'length', descending: 'false', unrelated: 'keep' })) assert.equal(router.currentRoute.value.query[key], value)
+  const second = state.changePage(3)
+  assert.equal(calls[2].query.serial_number, 'S')
+  assert.equal(calls[2].query.page_size, 10)
+  calls[2].resolve(); await second; await flushWelding()
+  assert.equal(router.currentRoute.value.query.page, '3')
+  assert.equal(router.currentRoute.value.query.page_size, '10')
+  assert.equal(state.draft.serial_number, 'unsaved')
+  const failed = state.changePage(2)
+  calls[3].reject(new Error('query failed')); await failed
+  assert.equal(router.currentRoute.value.query.page, '3')
+  assert.equal(state.activeQuery.value.page, 3)
+  assert.match(state.error.value, /query failed/)
+})
+
+test('welding history: back and forward restore filters; late requests cannot replace the navigation target', async t => {
+  const { state, calls, router, hold } = await mountWelding(t, 'jobs', { ...period, device_no: '0' })
+  state.draft.device_no = 2
+  await state.submit(); await flushWelding()
+  assert.equal(calls.length, 2)
+  hold()
+  router.back(); await flushWelding()
+  assert.equal(calls[2].query.device_no, 0)
+  assert.equal(state.draft.device_no, 0)
+  router.forward(); await flushWelding()
+  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(state.loading.value, false)
+  assert.equal(state.draft.device_no, 2)
+  calls[2].resolve(); await flushWelding()
+  assert.equal(state.activeQuery.value.device_no, 2)
+  router.back(); await flushWelding()
+  calls[3].resolve(); await flushWelding()
+  assert.equal(state.activeQuery.value.device_no, 0)
+  router.forward(); await flushWelding()
+  assert.equal(calls[4].query.device_no, 2)
+  await router.push({ query: { ...router.currentRoute.value.query, device_no: '3' } }); await flushWelding()
+  calls[5].resolve(); await flushWelding()
+  calls[4].resolve(); await flushWelding()
+  assert.equal(calls[4].signal.aborted, true)
+  assert.equal(state.activeQuery.value.device_no, 3)
+  assert.equal(router.currentRoute.value.query.device_no, '3')
+  assert.equal(calls.length, 6)
+})
+
+test('welding exports, analysis and part drilldown use the successful snapshot after draft edits', async t => {
+  const { state, downloads, analyses, calls, router } = await mountWelding(t, 'jobs', { start: '2026-09-01', end: '2026-09-02', device_no: '0', robot_no: '0', serial_number: 'S', page: '2', sort_by: 'id' })
+  Object.assign(state.draft, { start: '2026-10-26', end: '2026-10-26', serial_number: 'unsaved', device_no: 7 })
+  for (const format of ['csv', 'html', 'pdf']) await state.exportReport(format)
+  await state.runAnalysis()
+  for (const { url, filename } of downloads) {
+    assert.equal(url.searchParams.get('start'), '2026-09-01')
+    assert.equal(url.searchParams.get('device_no'), '0')
+    assert.equal(url.searchParams.get('serial_number'), 'S')
+    assert.equal(url.searchParams.get('page'), null)
+    assert.equal(url.searchParams.get('page_size'), null)
+    assert.match(filename, /2026-09-01-2026-09-02/)
+  }
+  assert.deepEqual(analyses[0], { kind: 'jobs', query: { ...state.activeQuery.value }, version: 'version-1' })
+  await state.openDetail({ id: 1, serial_number: 'S', weld_type_label: 'weld' })
+  state.goToPart(); await flushWelding()
+  assert.equal(router.currentRoute.value.name, 'welding-parts')
+  assert.equal(calls.at(-1).query.serial_number, 'S')
+  assert.equal(calls.at(-1).query.start, '2026-09-01')
+  await state.openDetail({ id: 9 })
+  assert.equal(state.details.value.part.id, 9)
+})
+
+test('welding scope changes: report kinds and production lines cannot reuse obsolete responses', async t => {
+  const { state, calls, router, selection, hold, unmount } = await mountWelding(t, 'jobs', { ...period, robot_no: '0', anomalies_only: 'true' })
+  hold()
+  const pending = state.changePage(2)
+  await router.push({ name: 'welding-parts', query: { ...period, project_no: 'P', robot_no: '0' } }); await flushWelding()
+  assert.equal(calls[1].signal.aborted, true)
+  assert.equal(state.report.value, null)
+  assert.equal(calls[2].query.robot_no, '')
+  selection.id = 'line-b'; await flushWelding()
+  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(calls[3].line, 'line-b')
+  calls[3].resolve(); await flushWelding()
+  calls[2].resolve(); calls[1].resolve(); await pending; await flushWelding()
+  assert.equal(state.report.value.data_version, 'version-4')
+  assert.equal(state.activeQuery.value.project_no, 'P')
+  const final = state.changePage(2)
+  unmount()
+  assert.equal(calls[4].signal.aborted, true)
+  calls[4].resolve(); await final
+  assert.equal(state.report.value.data_version, 'version-4')
+})
+
+test('one welding request stays pending while the server queues it', async t => {
+  let finish
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  const app = view(getWeldingReport)
+  const pending = app.read({ ...period, device_no: 0 })
+  await settle()
+  assert.equal(app.loading.value, true)
+  assert.equal(app.error.value, '')
+  assert.equal(fetchMock.mock.calls.length, 1)
+  finish(Response.json({ success: true, data: { query: { ...period, device_no: 0 }, data_version: 'ok' } }))
+  await pending
+  assert.equal(app.report.value.data_version, 'ok')
+  assert.equal(app.loading.value, false)
+})
+
+test('leaving a welding page cancels the pending request without replay', async t => {
+  let reads = 0
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url, options) => {
+    if (url.includes('/requests/')) return Promise.resolve(Response.json({ success: true }))
+    reads += 1
+    return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }))
+  })
+  const app = view(getWeldingReport)
+  const pending = app.read({ ...period,})
+  await settle()
+  app.cleanup.forEach(fn => fn())
+  await pending
+  assert.equal(reads, 1)
+  assert.equal(app.error.value, '')
+  assert.equal(app.report.value, null)
+})
+
+test('queue overflow is shown once and retains the last successful report', async t => {
+  let calls = 0
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ++calls === 1 ? Response.json({ success: true, data: { query: { ...period, device_no: 0 }, data_version: 'previous' } }) : busyResponse())
+  const app = view(getWeldingReport)
+  await app.read({ ...period, device_no: 0 })
+  await app.read({ ...period, device_no: 1 })
+  assert.equal(calls, 2)
+  assert.match(app.error.value, /请求繁忙/)
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value.data_version, 'previous')
+  assert.equal(app.activeQuery.value.device_no, 0)
+})
+
+test('source, authentication and network failures remain visible without replay', async t => {
+  const responses = [
+    () => Response.json({ detail: '数据源超时' }, { status: 503 }),
+    () => Response.json({ detail: '数据源连接池已满' }, { status: 503, headers: { 'X-Report-Error': 'connection_pool_exhausted' } }),
+    () => Response.json({ detail: '权限不足' }, { status: 403, headers: { 'Retry-After': '1' } }),
+    () => busyResponse('invalid'),
+    () => busyResponse('0'),
+    () => busyResponse('-1'),
+    () => { throw new TypeError('network failure') },
+  ]
+  for (const response of responses) {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response())
+    await assert.rejects(getWeldingReport('jobs', period))
+    assert.equal(fetchMock.mock.calls.length, 1)
+    fetchMock.mockRestore()
+  }
+})
+
+test('latest welding analysis reads cache with the applied scope and cancellation without a model request', async t => {
+  const current = new AbortController()
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    const parsed = new URL(url, 'http://localhost')
+    assert.equal(parsed.pathname, '/api/v1/welding/analysis/latest')
+    assert.equal(options.method || 'GET', 'GET')
+    assert.equal(options.headers['X-Production-Line'], 'welding')
+    assert.equal(options.signal, current.signal)
+    assert.equal(parsed.searchParams.get('device_no'), '0')
+    assert.equal(parsed.searchParams.get('report_type'), 'jobs')
+    assert.equal(parsed.searchParams.get('data_version'), 'a'.repeat(64))
+    assert.ok(!parsed.searchParams.has('serial_number'))
+    return new Response(JSON.stringify({ success: true, data: null }), { headers: { 'Content-Type': 'application/json' } })
+  })
+  assert.equal(await getLatestWeldingAnalysis('jobs', { ...period, device_no: 0, serial_number: '' }, 'a'.repeat(64), current.signal), null)
+  assert.equal(fetchMock.mock.calls.length, 1)
+})
+
+test('reports, details, downloads and analysis never replay a capacity rejection', async t => {
+  for (const read of [
+    ...['dashboard', 'daily', 'parts', 'jobs', 'equipment'].map(kind => () => getWeldingReport(kind, period)),
+    () => getWeldingPart(1, 1),
+    () => downloadWelding('/api/v1/welding/export', 'report.pdf'),
+    () => analyzeWelding('jobs', period, 'version'),
+    () => getLatestWeldingAnalysis('jobs', period, 'version'),
+  ]) {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => busyResponse())
+    await assert.rejects(read(), /请求繁忙/)
+    assert.equal(fetchMock.mock.calls.length, 1)
+    fetchMock.mockRestore()
+  }
+})
+
+test('job to part drilldown retains the applied historical production period', () => {
+  const destinations = []
+  const app = view(async () => ({}), { route: { query: { start: '2026-09-01', end: '2026-09-02' } }, router: { push: async value => { destinations.push(value) } } })
+  assert.equal(app.draft.start, '2026-09-01')
+  assert.equal(app.draft.end, '2026-09-02')
+  app.activeQuery.value = { start: '2026-09-01', end: '2026-09-02' }
+  app.detailJob.value = { serial_number: 'part-A' }
+  app.goToPart()
+  assert.deepEqual(destinations[0].query, { serial_number: 'part-A', start: '2026-09-01', end: '2026-09-02' })
+})
+
+test('late responses cannot overwrite newer filters even if fetch ignores abort', async () => {
+  const pending = []
+  const app = view((kind, values, signal) => new Promise(resolve => pending.push({ values, signal, resolve })))
+  const first = app.read({ ...period, device_no: 0 })
+  const next = app.read({ ...period, device_no: 1 })
+  assert.equal(pending[0].signal.aborted, true)
+  pending[1].resolve({ query: { ...period, device_no: 1 }, data_version: 'new' })
+  await next
+  pending[0].resolve({ query: { ...period, device_no: 0 }, data_version: 'old' })
+  await first
+  assert.equal(app.report.value.data_version, 'new')
+  assert.equal(app.activeQuery.value.device_no, 1)
+  const last = app.read({ ...period, device_no: 2 })
+  app.cleanup.forEach(fn => fn())
+  pending[2].resolve({ query: { ...period, device_no: 2 }, data_version: 'unmounted' })
+  await last
+  assert.equal(app.report.value.data_version, 'new')
+})
+
+test('query failure preserves the last successful data and export filter snapshot', async () => {
+  let fail = false
+  const app = view(async (kind, values) => { if (fail) throw new Error('source unavailable'); return { query: values, data_version: 'old' } })
+  await app.read({ ...period, device_no: 0 })
+  fail = true
+  await app.read({ ...period, device_no: 1 })
+  assert.equal(app.error.value, 'source unavailable')
+  assert.equal(app.activeQuery.value.device_no, 0)
+  assert.equal(app.report.value.data_version, 'old')
+})
+
+test('a disabled welding line remains navigable without querying an unconfigured source', async () => {
+  let calls = 0
+  const app = view(async () => { calls += 1 }, { enabled: false })
+  await app.read({ ...period, start: '2026-10-26', end: '2026-10-26' })
+  assert.equal(calls, 0)
+  assert.equal(app.loading.value, false)
+  assert.equal(app.report.value, null)
+  assert.equal(app.error.value, '')
+  assert.match(source('views/WeldingReportView.vue'), /焊接数据库尚未启用[\s\S]*action-label="配置数据库"/)
+})
+
+test('welding and navigation templates compile', () => {
+  for (const path of ['views/WeldingHomeView.vue', 'views/WeldingReportView.vue', 'components/WeldingChart.vue', 'components/WeldingKpiCards.vue', 'components/WeldingRecord.vue', 'components/WeldingCharts.vue', 'components/ReportAnalysis.vue', 'components/AppReportTable.vue', 'components/WeldingTable.vue', 'components/DeviceSwitcher.vue', 'views/DatabaseView.vue', 'layouts/modules/ThemeTabs.vue', 'layouts/AdminLayout.vue', 'layouts/modules/global-menu/modules/vertical-mix-menu.vue']) {
+    const { descriptor, errors } = parse(source(path))
+    assert.deepEqual(errors, [])
+    assert.doesNotThrow(() => compileScript(descriptor, { id: path }), path)
+    const result = compileTemplate({ source: descriptor.template.content, filename: path, id: path, compilerOptions: { bindingMetadata: {} } })
+    assert.deepEqual(result.errors, [], path)
+  }
+
+})
+
+test('identical in-flight filters reuse the query and a later explicit refresh still runs', async () => {
+  const pending = []
+  const app = view((kind, values, signal) => new Promise(resolve => pending.push({ values, signal, resolve })))
+  const first = app.read({ ...period, device_no: 0, page: 1 })
+  const same = app.read({ ...period, page: 1, device_no: 0, serial_number: '' })
+  assert.equal(same, first)
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].resolve({ query: pending[0].values, data_version: 'first' })
+  await first
+  const refresh = app.read({ ...period, device_no: 0, page: 1 })
+  assert.equal(pending.length, 2)
+  pending[1].resolve({ query: pending[1].values, data_version: 'refreshed' })
+  await refresh
+  assert.equal(app.report.value.data_version, 'refreshed')
+})
+
+test('initial watcher and repeated submit share one active request; pagination sends the new page once', async () => {
+  const pending = []
+  const watchers = []
+  const app = view((kind, values, signal) => new Promise(resolve => pending.push({ values, signal, resolve })), { watchers })
+  assert.equal(pending.length, 1)
+  const initial = app.read({ ...period, ...app.draft, page: 1, page_size: 20 })
+  app.submit()
+  assert.equal(pending.length, 1)
+  assert.equal(pending[0].signal.aborted, false)
+  pending[0].resolve({ query: pending[0].values, data_version: 'first' })
+  await initial
+  app.changePage(2)
+  const next = app.read({ ...period, ...app.activeQuery.value, page: 2 })
+  assert.equal(pending.length, 2)
+  assert.equal(pending[1].values.page, 2)
+  pending[1].resolve({ query: pending[1].values, data_version: 'second' })
+  await next
+  assert.equal(app.activeQuery.value.page, 2)
+})
+
+test('welding table keys and detail events respect aggregate, job, part and seam shapes', () => {
+  const script = parse(source('components/WeldingTable.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  for (const [kind, row, key] of [
+    ['daily', { production_date: '2026-10-01' }, '2026-10-01'],
+    ['equipment', { device_no: 0, robot_no: null }, '0:null'],
+    ['jobs', { id: 1, serial_number: null, weld_type_label: '平焊' }, 1],
+    ['parts', { id: 2, project_no: null }, 2],
+    ['seams', { id: 3, robot_no: null }, 3],
+  ]) {
+    const events = []
+    const bindings = { ...Vue, onMounted() {}, onUpdated() {}, onBeforeUnmount() {}, onActivated() {}, onDeactivated() {}, computed, h, NButton: 'button', weldingColumns, weldingVisibleColumns, weldingColumnLayout, weldingDisplay,
+      defineSlots: () => ({}), defineProps: () => ({ kind }), defineEmits: () => (...args) => events.push(args) }
+    const table = scriptFunction(...Object.keys(bindings), `${script}; return { columns, rowKey };`)(...Object.values(bindings))
+    assert.equal(table.rowKey(row), key)
+    for (const column of table.columns.value) {
+      assert.equal(column.titleAlign, column.align || 'left')
+      if (/length|hours|count|output|speed|duration|seconds|consumption|rate/.test(column.key)) assert.equal(column.align, 'right')
+      if (['state_label', 'weld_type_label', 'actions'].includes(column.key)) assert.equal(column.align, 'center')
+      if (['robot_no', 'welding_seam_no', 'serial_number', 'id'].includes(column.key)) assert.equal(column.align, 'left')
+    }
+    const action = table.columns.value.find(column => column.key === 'actions')
+    if (kind === 'jobs' || kind === 'parts') {
+      action.render(row).props.onClick()
+      assert.deepEqual(events, [['detail', row]])
+      assert.equal(action.render({ production_date: '2026-10-01' }), null)
+    } else assert.equal(action, undefined)
+  }
+})
+
+test('unsubmitted filters and pagination cannot send a request without a valid period', () => {
+  let calls = 0
+  const app = view(async () => { calls += 1 })
+  app.changePage(2)
+  assert.equal(calls, 0)
+  for (const range of [
+    { start: '', end: period.end }, { start: period.start, end: '' },
+    { start: '2026-02-30', end: period.end },
+    { start: '2026-10-27', end: '2026-10-26' },
+    { start: '2025-01-01', end: '2026-10-26' },
+  ]) {
+    Object.assign(app.draft, range)
+    app.submit()
+    assert.match(app.actionError.value, /有效日期区间/)
+  }
+  assert.equal(calls, 0)
+  Object.assign(app.draft, period)
+  app.submit()
+  assert.equal(calls, 1)
+  assert.equal(app.actionError.value, '')
+})
+
+test('router resolves registered line types without requiring a fixed welding ID', async () => {
+  const sourceCode = source('router/index.ts')
+  const guard = sourceCode.slice(sourceCode.indexOf('router.beforeEach('), sourceCode.indexOf('\nrouter.afterEach('))
+  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'weld-2', type: 'welding' }] }
+  let beforeEach
+  const bindings = { logoutRequested: false, router: { beforeEach: fn => { beforeEach = fn } }, loadSession: async () => {},
+    session: { user: { role: 'admin' } }, roleHome: () => '/worker/tasks', loadDevices: async () => {},
+    deviceSelection: selection, changeDevice: id => { selection.id = id }, selectedLineType, lineHome }
+  scriptFunction(...Object.keys(bindings), guard)(...Object.values(bindings))
+  const route = line => ({ meta: {}, matched: [{ meta: { role: 'admin' } }, { meta: { line } }] })
+  assert.equal(await beforeEach(route('welding')), '/admin/cutting/home')
+  assert.equal(selection.id, 'Cutter01')
+  selection.id = 'weld-2'
+  assert.equal(await beforeEach(route('welding')), true)
+  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('coating')), '/admin/welding/home')
+  assert.equal(selection.id, 'weld-2')
+  assert.equal(await beforeEach(route('cutting')), '/admin/welding/home')
+  assert.equal(selection.id, 'weld-2')
+  bindings.session.user.role = 'worker'
+  assert.equal(await beforeEach(route('welding')), '/worker/tasks')
+  assert.equal(selection.id, 'weld-2')
+})
+
+test('new line types keep registered labels and destinations', () => {
+  const items = [{ id: 'paint-1', type: 'coating', type_name: '涂装', name: '涂装一线', home_path: '/admin/coating/home' }]
+  assert.equal(productionGroups(items)[0].name, '涂装')
+  assert.equal(selectedLineType(items, 'paint-1'), 'coating')
+  assert.equal(lineHome(items, 'paint-1'), '/admin/coating/home')
+  assert.equal(productionGroups([{ ...items[0], type_name: '' }])[0].name, 'coating')
+})
+
+async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, clearTimeout } = globalThis) {
+  const stub = { setup: (_props, { attrs, slots }) => () => h('div', [attrs.title, attrs.message, slots.default?.()]) }
+  const drawer = { ...stub }
+  const bindings = {
+    setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT,
+    ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ async push() {}, async replace() {} }),
+    reportToday: () => period.start, getWeldingReport: async (...args) => ({ meta: {}, ...await readReport(...args) }), getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
+    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, formatChineseDate,
+    deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
+    NDrawer: drawer, NDrawerContent: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    getWeldingPart: async id => ({ part: { id }, items: [], total: 0 }),
+    ReportAnalysis: { props: ['showMetrics'], setup: props => () => h('section', ['智能分析', props.showMetrics === false ? '' : '分析指标卡']) },
+    AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub, ReportFilterDialog: stub,
+    WeldingCharts: stub, WeldingRecord: stub,
+    WeldingKpiCards: { props: ['report'], setup: props => () => h('div', `作业次数：${props.report?.summary.job_count ?? '--'}`) },
+    WeldingTable: { props: ['items'], setup: props => () => h('div', props.items.map(row => row.serial_number).join('、')) },
+  }
+  function compile(path) {
+    const descriptor = parse(source(path)).descriptor
+    const code = compileScript(descriptor, { id: 'welding-cache-display', inlineTemplate: true }).content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
+      for (const name of names.split(',')) {
+        const [original, alias = original] = name.trim().split(/\s+as\s+/)
+        bindings[alias] = Vue[original]
+      }
+      return ''
+    }).replace(/^import .*$/gm, '').replace('export default', 'return')
+    return scriptFunction(...Object.keys(bindings), code)(...Object.values(bindings))
+  }
+  bindings.ReportDataStatus = compile('components/ReportDataStatus.vue')
+  const Page = compile('views/WeldingReportView.vue')
+  const renderer = Vue.createRenderer({ createElement: () => ({ style: {} }), createComment: () => ({}), createText: () => ({}),
+    insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {} })
+  const app = renderer.createApp({ render: () => h(Page, { kind }) })
+  for (const name of ['NButton', 'NInput', 'NInputNumber', 'NCheckbox']) app.component(name, stub)
+  app.mount({})
+  t.onTestFinished(() => app.unmount())
+  function nodes(node = app._instance.subTree) {
+    return [node, ...(node.component?.subTree ? nodes(node.component.subTree) : []),
+      ...(Array.isArray(node.children) ? node.children.flatMap(child => typeof child === 'object' && child ? nodes(child) : []) : [])]
+  }
+  return {
+    text: () => nodes().filter(node => node.type === Vue.Text || typeof node.type === 'string').map(node => typeof node.children === 'string' ? node.children : '').join(' '),
+    submit: () => nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
+    selectDevice: value => nodes().find(node => node.props?.['onUpdate:modelValue']).props['onUpdate:modelValue'](value),
+    openDetail: row => nodes().find(node => node.type === bindings.WeldingTable && node.props.onDetail).props.onDetail(row),
+    detailDrawer: () => nodes().find(node => node.type === drawer).props,
+  }
+}
+
+for (const [kind, row, label, width] of [
+  ['jobs', { id: 1, weld_type_label: '角焊' }, '焊接作业详情', 'min(760px, 100vw)'],
+  ['parts', { id: 2, project_no: 'P1' }, '工件与焊缝详情', 'min(1200px, 100vw)'],
+]) {
+  test(`welding detail drawer fits the ${kind} report`, async t => {
+    const page = await mountWeldingDisplay(t, async (_kind, query) => ({
+      query, data_version: 'v1', summary: { job_count: 1 }, items: [row], total: 1,
+      meta: { quality: {}, notices: [], devices: [] },
+    }), kind)
+    await flushWelding()
+    await page.openDetail(row)
+    await flushWelding()
+    const drawer = page.detailDrawer()
+    assert.equal(drawer.show, true)
+    assert.equal(drawer['aria-label'], label)
+    assert.equal(drawer.width, width)
+  })
+}
+
+for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
+  test(`${kind} displays its details with overall metrics and analysis only on daily`, async t => {
+    const page = await mountWeldingDisplay(t, async (_kind, query) => ({
+      query, data_version: 'v1', summary: { job_count: 3 }, items: [{ id: 1, serial_number: '当前明细' }], total: 1,
+      meta: { quality: {}, notices: [], devices: [] },
+    }), kind)
+    await flushWelding()
+    assert.ok(page.text().includes('当前明细'))
+    assert.equal(page.text().includes('作业次数：3'), kind === 'daily')
+    assert.equal(page.text().includes('智能分析'), kind === 'daily')
+    assert.ok(!page.text().includes('分析指标卡'))
+    assert.ok(page.text().includes('统计口径与数据核查'))
+  })
+}
+
+test('welding displays edited filters beside the applied result through loading and failure', async t => {
+  const calls = []
+  const page = await mountWeldingDisplay(t, (_kind, values) => new Promise((resolve, reject) => calls.push({ values, resolve, reject })))
+  const result = call => ({ query: call.values, data_version: 'v1', summary: { job_count: 1 }, items: [{ id: 1, serial_number: '旧结果' }], total: 1, meta: { quality: {}, notices: [], devices: [] } })
+  calls[0].resolve(result(calls[0])); await flushWelding()
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 全部设备/)
+  assert.doesNotMatch(page.text(), /筛选条件已修改/)
+  page.selectDevice(7); await flushWelding()
+  assert.match(page.text(), /筛选条件已修改/)
+  assert.doesNotMatch(page.text(), /仍展示上次成功查询结果/)
+  page.submit(); await flushWelding()
+  assert.match(page.text(), /旧结果/)
+  assert.doesNotMatch(page.text(), /当前展示上次结果/)
+  calls[1].reject(new Error('offline')); await flushWelding()
+  assert.match(page.text(), /筛选条件已修改/)
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 全部设备/)
+  assert.match(page.text(), /旧结果/)
+  page.submit(); await flushWelding()
+  calls[2].resolve(result(calls[2])); await flushWelding()
+  assert.doesNotMatch(page.text(), /筛选条件已修改/)
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 设备 7/)
+})
+
+test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
+  const clock = snapshotWaitTimers()
+  const calls = []
+  const page = await mountWeldingDisplay(t, (kind, values, signal, force) => new Promise((resolve, reject) => calls.push({ values, signal, force, resolve, reject })), 'daily', clock)
+  const result = (call, count, refreshing = false) => ({ query: call.values, data_version: String(count),
+    summary: { job_count: count }, items: count ? [{ id: 1, serial_number: `任务${count}` }] : [], total: count ? 1 : 0,
+    meta: { quality: {}, notices: [], devices: [], report_data: { data_as_of: '2026-10-26T08:00:00Z', refreshing } } })
+  assert.equal(calls[0].force, false)
+  assert.match(page.text(), /正在读取焊接数据/)
+  calls[0].resolve(result(calls[0], 3)); await flushWelding()
+  assert.match(page.text(), /作业次数：3/)
+  assert.match(page.text(), /任务3/)
+  assert.doesNotMatch(page.text(), /统计截止|统计生成|2026年10月26日 16:00:00/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据/)
+
+  page.submit(); await flushWelding()
+  assert.equal(calls[1].force, true)
+  assert.match(page.text(), /作业次数：3/)
+  assert.match(page.text(), /任务3/)
+  assert.doesNotMatch(page.text(), /当前展示上次结果/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据/)
+  calls[1].resolve(result(calls[1], 3, true)); await flushWelding()
+  assert.match(page.text(), /刷新/)
+  assert.doesNotMatch(page.text(), /后台更新中/)
+  clock.fire(); await flushWelding()
+  assert.equal(calls[2].force, false)
+  assert.match(page.text(), /任务3/)
+  const failed = result(calls[2], 3, true)
+  failed.meta.report_data.stale = true
+  failed.meta.report_data.refresh_failed = true
+  calls[2].resolve(failed); await flushWelding()
+  assert.match(page.text(), /刷新旧数据/)
+  assert.doesNotMatch(page.text(), /正在重试|保留上次结果/)
+  assert.match(page.text(), /任务3/)
+  assert.equal(clock.timers.size, 1)
+  clock.fire(); await flushWelding()
+  assert.equal(calls[3].force, false)
+  calls[3].resolve(result(calls[3], 9)); await flushWelding()
+  assert.match(page.text(), /作业次数：9/)
+  assert.match(page.text(), /任务9/)
+  assert.equal(clock.timers.size, 0)
+
+  page.submit(); await flushWelding()
+  calls[4].reject(new Error('源库暂不可用')); await flushWelding()
+  assert.match(page.text(), /源库暂不可用/)
+  assert.doesNotMatch(page.text(), /保留上次成功查询结果/)
+  assert.match(page.text(), /作业次数：9/)
+  assert.match(page.text(), /任务9/)
+
+  page.submit(); await flushWelding()
+  calls[5].resolve(result(calls[5], 0)); await flushWelding()
+  assert.match(page.text(), /作业次数：0/)
+  assert.match(page.text(), /当前区间暂无可归属的作业记录/)
+  assert.doesNotMatch(page.text(), /正在读取焊接数据|任务9|源库暂不可用/)
+})
+
+test('explicit refresh requests fresh statistics while initial reads and pagination reuse snapshots', async t => {
+  const clock = snapshotWaitTimers()
+  const urls = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async url => { urls.push(new URL(url, 'http://test')); return Response.json({ success: true, data: {} }) })
+  await getWeldingReport('daily', period)
+  await getWeldingReport('daily', period, undefined, true)
+  assert.equal(urls[0].searchParams.has('refresh'), false)
+  assert.equal(urls[1].searchParams.get('refresh'), 'true')
+  assert.equal(urls[1].searchParams.get('start'), period.start)
+  const calls = []
+  const meta = { source: 'snapshot', stale: true, refreshing: true, data_as_of: '2026-10-26T08:00:00Z' }
+  const app = view(async (kind, values, signal, force) => { calls.push(force); return { query: values, data_version: 'same', meta: { report_data: meta } } }, { clock })
+  t.onTestFinished(() => app.cleanup.forEach(cleanup => cleanup()))
+  await app.read(period)
+  assert.equal(calls[0], false)
+  assert.equal(app.report.value.meta.report_data.stale, true)
+  app.submit(true)
+  await settle()
+  assert.equal(calls[1], true)
+  app.changePage(2)
+  await settle()
+  assert.equal(calls[2], false)
+  assert.equal(app.report.value.meta.report_data.data_as_of, meta.data_as_of)
+  assert.equal(calls.length, 3, 'only one background check should be scheduled after each read')
+  assert.equal(clock.timers.size, 1)
+})
+
+
+test('shared cutting table renders escaped cells, header controls, summary and empty state', async () => {
+  const props = { columns: [{ key: 'c0', title: '任务', width: 160, align: 'left' }, { key: 'c1', title: '长度', width: 120, align: 'right' }],
+    items: [{ id: 'task-1', program: '<script>bad</script>', length: 12 }], rowKey: row => row.id, paginate: false, summary: true }
+  const slots = { 'header-c0': () => h('input', { type: 'checkbox', 'aria-label': '选择当前页' }),
+    c0: ({ row }) => row.program, c1: ({ row }) => String(row.length),
+    'summary-c0': () => '汇总', 'summary-c1': () => '12', empty: () => '当前无任务' }
+  const render = async items => {
+    const app = Vue.createSSRApp({ render: () => h(SharedDataTable, { ...props, items }, slots) })
+    setupCssr(app)
+    return renderToString(app)
+  }
+  const html = await render(props.items)
+  assert.match(html, /n-data-table/)
+  assert.equal((html.match(/<th\b[^>]*text-align:\s*left/g) || []).length, 1)
+  assert.equal((html.match(/<th\b[^>]*text-align:\s*right/g) || []).length, 1)
+  assert.match(html, /n-data-table-td--right-align/)
+  assert.match(parse(source('components/AppReportTable.vue')).descriptor.styles[0].content, /\.app-report-table\{width:100%;min-width:0\}/)
+  assert.match(html, /aria-label="选择当前页"/)
+  assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/)
+  assert.match(html, /汇总/)
+  assert.doesNotMatch(html, /<script>bad/)
+  assert.match(await render([]), /当前无任务/)
+})
+
+test('shared pagination defaults to ten rows, forwards page changes and respects loading', async () => {
+  const Pagination = Vue.defineComponent({
+    props: ['page', 'pageSize', 'itemCount', 'disabled', 'showSizePicker'], emits: ['update:page'],
+    setup(props, { emit }) {
+      assert.equal(props.pageSize, 10)
+      assert.ok(!props.showSizePicker)
+      if (!props.disabled) emit('update:page', props.page + 1)
+      return () => null
+    },
+  })
+  const Table = createSharedDataTable({ NPagination: Pagination })
+  for (const loading of [false, true]) {
+    const events = []
+    const app = Vue.createSSRApp({ render: () => h(Table, { columns: [{ key: 'c0', title: '任务', width: 160 }],
+      items: [], rowKey: row => row.id, total: 100, page: 2, loading,
+      onPage: value => events.push(value) }) })
+    setupCssr(app)
+    await renderToString(app)
+    assert.deepEqual(events, loading ? [] : [3])
+  }
+})
+
+test('welding measurements keep fixed decimals while counts and identifiers retain their meaning', () => {
+  for (const key of ['weld_length_m', 'working_hours', 'weld_speed', 'arc_rate', 'duration_seconds', 'wire_consumption']) {
+    assert.equal(weldingDisplay(12.5, key), '12.500')
+    assert.equal(weldingDisplay(0, key), '0.000')
+  }
+  assert.equal(weldingDisplay(1240, 'job_count'), '1,240')
+  assert.equal(weldingDisplay(1240, 'robot_no'), '1240')
+  assert.equal(weldingDisplay('0012', 'welding_seam_no'), '0012')
+  assert.equal(weldingDisplay(null, 'arc_rate'), '待核实')
+  const styles = parse(source('components/AppReportTable.vue')).descriptor.styles[0].content
+  assert.match(styles, /n-data-table-td\)\{[^}]*font-variant-numeric:tabular-nums;[^}]*vertical-align:middle/)
+})
+
+
+
+
+test('shared report table preserves declared Naive widths across short, long and empty page data', async () => {
+  const snapshots = []
+  const DataTable = Vue.defineComponent({ props: ['columns', 'data', 'scrollX', 'tableLayout', 'rowKey'],
+    setup(props) { snapshots.push({ columns: props.columns, scrollX: props.scrollX, layout: props.tableLayout }); return () => null } })
+  const Table = createSharedDataTable({ NDataTable: DataTable })
+  const columns = [
+    { key: 'c0', title: '姓名', width: 96, align: 'left' },
+    { key: 'c1', title: '文件名', minWidth: 220, align: 'left' },
+    { key: 'c2', title: '状态', width: 104, align: 'center' },
+  ]
+  for (const items of [[], [{ id: 1, name: '张三', file: 'a.nc' }], [{ id: 2, name: '姓名'.repeat(100), file: 'file'.repeat(100) }]]) {
+    const app = Vue.createSSRApp({ render: () => h(Table, { columns, items, rowKey: row => row.id, paginate: false, autoFit: false }) })
+    await renderToString(app)
+  }
+  for (const snapshot of snapshots) {
+    assert.equal(snapshot.layout, 'fixed')
+    assert.equal(snapshot.scrollX, 420)
+    assert.deepEqual(snapshot.columns.map(column => [column.width, column.minWidth]), [[96, undefined], [undefined, 220], [104, undefined]])
+    assert.ok(snapshot.columns.every(column => column.titleAlign === column.align && column.ellipsis.tooltip))
+  }
+  assert.equal(snapshots.length, 3)
+})
+
+test('shared table exposes native resize and full-text tooltips while keeping action columns intact', async () => {
+  let received
+  let actions = 0
+  const DataTable = Vue.defineComponent({ props: ['columns'], setup(props) { received = props.columns; return () => null } })
+  const Table = createSharedDataTable({ NDataTable: DataTable })
+  const filename = 'CMYZ0204-H804C-11 804C数控切割指令完整文件名.gen'
+  const columns = [
+    { key: 'c0', title: '文件名', width: 220 },
+    { key: 'c1', title: '操作', width: 148, ellipsis: false },
+    { key: 'c2', title: '固定说明', width: 160, resizable: false },
+  ]
+  const slots = {
+    c0: () => h('strong', filename),
+    c1: () => h('button', { onClick: () => actions++ }, '设置并派发'),
+  }
+  await renderToString(Vue.createSSRApp({ render: () => h(Table, { columns, items: [], rowKey: row => row.id, paginate: false }, slots) }))
+  assert.equal(received[0].resizable, true)
+  assert.ok(received[0].ellipsis.tooltip)
+  assert.equal(received[1].resizable, true)
+  assert.equal(received[1].ellipsis, false)
+  assert.equal(received[2].resizable, false)
+  const text = await renderToString(Vue.createSSRApp({ render: () => received[0].render({ id: 1 }, 0) }))
+  assert.ok(text.includes(filename), 'the complete filename must reach the native tooltip')
+  const action = received[1].render({ id: 1 }, 0)
+  action.children[0].props.onClick()
+  assert.equal(actions, 1)
+  assert.equal(columns[0].resizable, undefined, 'caller definitions stay unchanged')
+})
+
+test('shared tables cap errors, preserve controls and dragged widths, and fill the container', async () => {
+  let received, observer, contents, disconnected = false
+  let availableWidth = 0
+  let measurements = [['c0', 900], ['c1', 320], ['c2', 520, true], ['c2', 2000, false]]
+  const DataTable = Vue.defineComponent({
+    props: ['columns', 'data', 'scrollX', 'onUnstableColumnResize'],
+    setup(props) { received = props; return () => h('div', props.columns.map(column => String(column.width))) },
+  })
+  const Table = createSharedDataTable({ NDataTable: DataTable,
+    getComputedStyle: () => ({ paddingLeft: '14px', paddingRight: '14px' }),
+    ResizeObserver: class { constructor(callback) { observer = callback } observe() {} disconnect() { disconnected = true } },
+  })
+  const renderer = Vue.createRenderer({
+    createElement: () => ({ get clientWidth() { return availableWidth }, querySelectorAll: () => contents = measurements.map(([key, width, controls]) => ({
+      dataset: { fitColumn: key }, textContent: '模型接口错误 '.repeat(100),
+      querySelector: () => controls ? {} : null,
+      classList: { contains: () => key === 'c2', toggle() {} },
+      closest: () => ({}), getBoundingClientRect: () => ({ width }),
+    })) }),
+    createComment: () => ({}), createText: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {},
+    parentNode: () => null, nextSibling: () => null, patchProp() {},
+  })
+  const rows = ref([{ id: 1 }]), loading = ref(false)
+  const app = renderer.createApp({ render: () => h(Table, {
+    columns: [{ key: 'c0', title: '文件名', width: 1000 }, { key: 'c1', title: '汇总', width: 600 }, { key: 'c2', title: '操作', ellipsis: false }],
+    items: rows.value, rowKey: row => row.id, paginate: false, summary: true, loading: loading.value,
+  }, { c0: () => '完整文件名', c2: () => h('button', '操作'), 'summary-c1': () => '完整汇总内容' }) })
+  app.mount({})
+  try {
+    await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [360, 350, 550])
+    assert.equal(received.columns[2].minWidth, 550, 'wide controls remain fully usable')
+    const error = contents.find(content => content.dataset.fitColumn === 'c2' && !content.querySelector())
+    assert.equal(error.title, error.textContent.trim())
+    assert.equal(received.scrollX, 1260)
+    assert.ok(received.columns[0].ellipsis.tooltip)
+    received.onUnstableColumnResize(630, 630, received.columns[0])
+    measurements = [['c0', 20], ['c1', 40], ['c2', 30, true]]
+    rows.value = [{ id: 2 }]
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [630, 70, 60])
+    loading.value = true
+    await Vue.nextTick()
+    measurements = [['c0', 0], ['c1', 0], ['c2', 0, true]]
+    observer()
+    assert.equal(received.columns[1].width, 70, 'loading does not shrink the visible data')
+    loading.value = false
+    rows.value = []
+    measurements = [['c0', 32], ['c1', 24], ['c2', 24]]
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.deepEqual(received.columns.map(column => column.width), [630, 54, 54])
+    received.onUnstableColumnResize(180, 180, received.columns[2])
+    availableWidth = 1202
+    observer()
+    await Vue.nextTick(); await Vue.nextTick()
+    assert.equal(received.columns[0].width, 630)
+    assert.equal(received.columns[2].width, 180, 'an operation column can be resized')
+    assert.equal(received.columns.reduce((sum, column) => sum + column.width, 0), 1200)
+  } finally { app.unmount() }
+  assert.equal(disconnected, true)
+})
+
+test('welding column definitions provide bounded widths for every field', () => {
+  for (const [kind, fields] of Object.entries(weldingColumns)) {
+    for (const [key] of fields) {
+      const layout = weldingColumnLayout[key]
+      assert.ok(layout, `${kind}.${key}`)
+      assert.ok(Number(layout.width ?? layout.minWidth) > 0, `${kind}.${key} must have a valid native width`)
+    }
+  }
+  assert.equal(weldingColumnLayout.quality_reasons.width, 200)
+  assert.equal(weldingColumnLayout.project_name.minWidth, 180)
+})
+
+test('workshop columns keep short names and program codes bounded and reserve confirmation controls explicitly', () => {
+  const script = parse(source('views/WorkshopView.vue')).descriptor.scriptSetup.content
+  const result = Vue.ref({ items: [{ program_no: 'OP-027', confirmed_by: null }] })
+  const table = scriptFunction('computed', 'isWorker', 'result', `${script.slice(script.indexOf('const taskTableColumns ='), script.indexOf('</script>'))}; return { taskTableColumns, workerTableColumns }`)(computed, { value: false }, result)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
+  assert.equal(table.workerTableColumns.find(column => column.key === 'c2').width, 96)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 116)
+  result.value.items = [{ program_no: 'long'.repeat(100), confirmed_by: '张三' }]
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c5').width, 160)
+  assert.equal(table.taskTableColumns.value.find(column => column.key === 'c10').width, 400)
+})
+
+test('independent welding home waits for its catalog, keeps successful data on failure and ignores late disabled-source results', async () => {
+  const selection = reactive({ id: 'welding', items: [] })
+  const route = reactive({ query: {} })
+  const calls = [], cleanup = [], scope = Vue.effectScope()
+  const bindings = { ...Vue, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, deviceSelection: selection, selectedLineType, parseWeldingRouteQuery,
+    useRoute: () => route, useRouter: () => ({ push() {} }), reportToday: () => '2026-09-06', formatChineseDate,
+    useReportChartTheme: () => ({ colors: ref({}), vars: ref({}) }), onBeforeUnmount: fn => cleanup.push(fn),
+    getLatestWeldingAnalysis: async () => null,
+    getWeldingReport: (kind, query, signal, force, options) => new Promise((resolve, reject) => calls.push({ kind, query, signal, options, resolve, reject })),
+  }
+  const script = parse(source('views/WeldingHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; return { load, report, error, displayDate, preparing, reportQuery, trendTitle };`)
+  const home = scope.run(() => setup(...Object.values(bindings)))
+  assert.equal(home.displayDate.value, '2026年09月06日')
+  assert.equal(calls.length, 0)
+  selection.items = [{ id: 'welding', type: 'welding', enabled: true }]
+  await Vue.nextTick()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].kind, 'dashboard')
+  assert.equal(calls[0].query.start, '2026-08-31')
+  assert.equal(calls[0].query.page_size, 10)
+  calls[0].options.onPreparing()
+  assert.equal(home.preparing.value, true)
+  calls[0].resolve({ today: { job_count: 0 }, meta: {} })
+  await settle()
+  assert.equal(home.preparing.value, false)
+  route.query = { unrelated: 'navigation-state' }
+  await Vue.nextTick()
+  assert.equal(calls.length, 1, 'unrelated URL changes must not reset a successful homepage or restart polling')
+  assert.equal(home.report.value.today.job_count, 0)
+  const failed = home.load(true)
+  await home.load(true)
+  assert.equal(calls.length, 2, 'refresh clicks in flight share the existing feedback')
+  calls[1].reject(new Error('source unavailable'))
+  await failed
+  assert.equal(home.report.value.today.job_count, 0)
+  assert.equal(home.error.value, 'source unavailable')
+  const late = home.load(true)
+  selection.items.push({ id: 'welding-other', type: 'welding', enabled: true })
+  selection.id = 'welding-other'
+  route.query = { start: '2026-08-01', end: '2026-08-03', device_no: '0', unrelated: 'navigation-state' }
+  await Vue.nextTick()
+  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(calls[3].options.lineId, 'welding-other')
+  calls[3].resolve({ today: { job_count: 3 }, query: calls[3].query, meta: {} })
+  await settle()
+  calls[2].resolve({ today: { job_count: 999 }, meta: {} })
+  await late
+  assert.equal(home.report.value.today.job_count, 3)
+  assert.equal(home.trendTitle.value, '区间生产趋势')
+  assert.deepEqual(home.reportQuery.value, { start: '2026-08-01', end: '2026-08-03', device_no: '0' })
+  selection.items[1].enabled = false
+  await Vue.nextTick()
+  assert.equal(home.report.value, null)
+  assert.equal(calls.length, 4)
+  cleanup.forEach(fn => fn()); scope.stop()
+})
+
+
+test('welding paginated details use ten rows without an internal height limit or a query-only button palette', async t => {
+  for (const kind of ['daily', 'parts', 'jobs', 'equipment']) {
+    for (const size of [undefined, '20', '50', 'bad']) {
+      assert.equal(parseWeldingRouteQuery({ page_size: size }, kind, '2026-10-30').page_size, 10)
+    }
+  }
+  const table = source('components/WeldingTable.vue')
+  assert.doesNotMatch(table, /:page-sizes|@page-size/)
+  assert.match(table, /:max-height="paginate \? null : undefined"/)
+  const styles = parse(source('views/WeldingReportView.vue')).descriptor.styles[0].content
+  assert.doesNotMatch(styles, /--n-color(?:-hover|-focus|-pressed)?:/)
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ part: { id: 2 }, items: [], total: 0 }))
+  await getWeldingPart(2, 3)
+  const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost')
+  assert.equal(url.searchParams.get('page'), '3')
+  assert.equal(url.searchParams.get('page_size'), '10')
+})
+
+test('welding details render zero identifiers, missing measurements and escaped source values', async () => {
+  const html = await renderComponent('components/WeldingRecord', { kind: 'jobs', row: {
+    id: 7, device_no: 0, robot_no: 0, serial_number: '<script>source</script>',
+    weld_length_m: null, working_hours: 0, state_label: '完成', quality_reasons: [],
+  } })
+  for (const text of ['作业基础信息', '工艺与作业产出', '完成', '&lt;script&gt;source&lt;/script&gt;', '0.000']) assert.ok(html.includes(text), text)
+  assert.ok(!html.includes('<script>source</script>'))
+  assert.match(html, /<dd[^>]*>0<\/dd>/)
+  assert.ok(html.includes('未记录'))
+  const empty = await renderComponent('components/WeldingTable', { kind: 'jobs', items: [], total: 0 })
+  assert.ok(empty.includes('暂无数据'))
+})
+
+test('two welding instances use distinct cache entries and explicit request scopes', async (t) => {
+  setDeviceCatalog({ default_device_id: 'welding', items: [
+    { id: 'welding', name: '一号焊接', type: 'welding' },
+    { id: 'weld-2', name: '二号焊接', type: 'welding' },
+  ] })
+  const scopes = []
+  const original = globalThis.fetch
+  globalThis.fetch = async (_url, options) => {
+    scopes.push(options.headers['X-Production-Line'])
+    return new Response(JSON.stringify({ success: true, data: { line: scopes.at(-1) } }), { headers: { 'Content-Type': 'application/json' } })
+  }
+  t.onTestFinished(() => { globalThis.fetch = original })
+  const query = { start: '2026-10-01', end: '2026-10-02' }
+  assert.equal((await getWeldingReport('daily', query)).line, 'welding')
+  selectDevice('weld-2')
+  assert.equal((await getWeldingReport('daily', query)).line, 'weld-2')
+  selectDevice('welding')
+  assert.equal((await getWeldingReport('daily', query)).line, 'welding')
+  assert.deepEqual(scopes, ['welding', 'weld-2'])
+})

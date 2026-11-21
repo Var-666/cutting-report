@@ -5,7 +5,7 @@ import vueParser from 'vue-eslint-parser'
 export default defineConfig(
   globalIgnores(['dist/', 'src/api/generated/', 'src/vendor/']),
   {
-    files: ['src/**/*.ts', 'src/**/*.vue', 'vite.config.ts', 'uno.config.ts'],
+    files: ['src/**/*.ts', 'src/**/*.vue', 'vite.config.ts', 'vitest.config.ts', 'uno.config.ts'],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
