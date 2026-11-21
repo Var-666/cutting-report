@@ -7,8 +7,8 @@ from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRe
 
 
 def statistics_page(request: Request, report_type: str, query: dict, *, refresh: bool = False) -> dict | None:
-    provider = getattr(device_state(request), 'report_provider', None)
-    if provider is None or getattr(provider, 'snapshot_service', None) is None:
+    provider = device_state(request).report_provider
+    if provider.snapshot_service is None:
         return None
     try:
         return provider.page(report_type, query, force=refresh)

@@ -98,12 +98,10 @@ class WorkerProcess:
         context = database_context(self.runtime)
         status["device_ids"] = list(context.lines)
         status["sql_resources"] = context.database_sources.capacity.status(context.database_sources.configs())
-        diagnostics = getattr(self.runtime, "configuration_diagnostics", None)
-        if diagnostics is not None:
-            try:
-                status["configuration"] = diagnostics.observed(self.owner)
-            except (OSError, ValueError, RuntimeError):
-                status["configuration"] = {"error": "配置快照暂不可用"}
+        try:
+            status["configuration"] = self.runtime.configuration_diagnostics.observed(self.owner)
+        except (OSError, ValueError, RuntimeError):
+            status["configuration"] = {"error": "配置快照暂不可用"}
         if not self.repository.renew(self.lease_name, self.owner, ttl=self.LEASE_SECONDS, status=status):
             raise ExecutionLeaseLost("Worker 租约失效，停止提交新任务")
         self._next_heartbeat = monotonic() + 5

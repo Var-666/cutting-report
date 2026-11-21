@@ -17,6 +17,8 @@ from app.api.energy import router
 from app.models.domain import to_primitive
 from app.services.energy_api import EnergyApiError
 from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
+from app.services.query_service import QueryService
+from tests.line_fixtures import cutting_settings, source_client
 from app.workers.energy_history_worker import EnergyHistoryWorker
 from tests.energy_fixtures import record, GAS, ELECTRIC, MeterStub, sparse_november_readings
 
@@ -76,7 +78,8 @@ def test_month_includes_configured_machine_daily_cutting_time(tmp_path, state_da
                 "work_time_seconds": Decimal("1800"),
                 "task_count": 3,
             },
-        }
+        },
+        fetch_equipment_range_metrics=lambda *_args, **_kwargs: pytest.fail('month should use month metrics'),
     )
 
     month = energy.get_month("2026-08")
@@ -104,6 +107,7 @@ def test_twelve_month_summary_uses_one_metrics_query_and_saved_energy(tmp_path, 
         }
 
     energy.query_service = SimpleNamespace(
+        fetch_equipment_month_metrics=lambda *_args, **_kwargs: pytest.fail('range should use one range query'),
         fetch_equipment_range_metrics=fetch_metrics,
     )
     result = energy.get_monthly_range(date(2025, 9, 1), DAY)
@@ -116,6 +120,45 @@ def test_twelve_month_summary_uses_one_metrics_query_and_saved_energy(tmp_path, 
     assert result["rows"][-1]["work_time_seconds"] == 1800
     assert result["rows"][-1]["electricity"]["value"] == 864
     assert result["total_task_count"] == 3
+
+
+def test_month_and_full_month_range_keep_cutting_and_meter_totals(tmp_path, state_database):
+    energy, _ = service(tmp_path, state_database)
+    settings = cutting_settings(project_root=tmp_path, data_source_mode="demo")
+    energy.query_service = QueryService(settings, client=source_client(settings))
+    energy.get_day(DAY)
+
+    month = energy.get_month("2026-08")
+    full_range = energy.get_monthly_range(date(2026, 8, 1), date(2026, 8, 31))
+
+    row, = full_range["rows"]
+    assert row["task_count"] == month["total_task_count"] > 0
+    assert row["work_time_seconds"] == month["total_work_time_seconds"] > 0
+    assert row["gas"]["value"] == month["summary"]["gas"]["value"] == 96
+    assert row["electricity"]["value"] == month["summary"]["electricity"]["value"] == 864
+
+
+@pytest.mark.parametrize("monthly", [False, True])
+def test_meter_observation_keeps_daily_and_backfill_totals(tmp_path, state_database, monkeypatch, monthly):
+    energy, client = service(tmp_path, state_database)
+    original = client.fetch_observed
+    calls = []
+
+    def observe(ids, start, end, *, force=False, monthly=False):
+        calls.append((force, monthly))
+        return original(ids, start, end, force=force, monthly=monthly)
+
+    monkeypatch.setattr(client, "fetch_observed", observe)
+    if monthly:
+        assert energy.sync_month(DAY, force=True) == 1
+    else:
+        energy.get_day(DAY, force=True)
+
+    assert calls == [(True, monthly)]
+    saved = energy.repository.get_day(energy.day_source_key(DAY), DAY.isoformat())
+    assert saved["summary"]["gas"]["value"] == 96
+    assert saved["summary"]["electricity"]["value"] == 864
+    assert saved["summary"]["gas"]["complete_count"] == 24
 
 
 def test_month_backfill_persists_available_days_from_one_range_fetch(tmp_path, state_database):

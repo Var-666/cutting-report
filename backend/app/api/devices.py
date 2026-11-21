@@ -16,7 +16,7 @@ router = APIRouter(prefix='/api/v1/devices', tags=['devices'], dependencies=[Dep
 def device_state(request: Request) -> DeviceRuntime:
     context = runtime_state(request)
     runtimes = context.lines
-    values = request.query_params.getlist('device_id') if hasattr(request.query_params, 'getlist') else [request.query_params.get('device_id')]
+    values = request.query_params.getlist('device_id')
     if len(values) != 1 or not values[0]:
         raise HTTPException(status_code=422, detail='必须明确指定唯一的 device_id')
     device_id = values[0]

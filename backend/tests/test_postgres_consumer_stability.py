@@ -119,6 +119,9 @@ def _stress_consumer(cfg, stopped, ready, go, release, events, results):
                 metrics['loop_errors'] += 1
                 raise
             stopped.wait(.1)
+        # The report thread can still poll PostgreSQL after its last job completes.
+        worker.report_worker.stop()
+        assert not any(thread.is_alive() for thread in worker.report_worker._threads())
         with worker.runtime.database.connect() as conn:
             metrics['idle_in_transaction'] = conn.execute("SELECT count(*) AS n FROM pg_stat_activity WHERE pid=ANY(%s) AND state='idle in transaction' AND xact_start<clock_timestamp()-interval '1 second'", (list(backend_pids),)).fetchone()['n']
         metrics['backend_pids'] = sorted(backend_pids)

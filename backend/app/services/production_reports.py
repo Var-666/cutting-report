@@ -13,6 +13,7 @@ from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.services.report_cache_policy import report_refresh_seconds
 
 if TYPE_CHECKING:
+    from app.services.database_runtime import DatabaseServices
     from app.services.leadership_report_service import LeadershipReportService
 
 
@@ -193,21 +194,19 @@ class CuttingReportProvider:
                  report_refresh_seconds(self.settings)) for kind, query in queries]
 
 
-def report_provider(context, line_id: str) -> ProductionReportProvider[Any]:
-    shared = getattr(context, 'shared_reports', {})
-    if line_id in shared:
-        return shared[line_id]
+def report_provider(context: DatabaseServices, line_id: str) -> ProductionReportProvider[Any]:
+    if line_id in context.shared_reports:
+        return context.shared_reports[line_id]
     if not context.catalog.get(line_id).enabled:
         raise ValueError("产线已停用")
-    service = context.lines.get(line_id)
-    provider = getattr(service, 'report_provider', None)
-    if provider is None:
+    line = context.lines.get(line_id)
+    if line is None:
         raise ValueError('产线没有登记报表服务')
-    return provider
+    return line.report_provider
 
 
-def report_providers(context) -> Iterator[tuple[str, ProductionReportProvider[Any]]]:
+def report_providers(context: DatabaseServices) -> Iterator[tuple[str, ProductionReportProvider[Any]]]:
     for line_id, line in context.lines.items():
-        if line.config.enabled and line.report_provider is not None:
+        if line.config.enabled:
             yield line_id, line.report_provider
-    yield from getattr(context, 'shared_reports', {}).items()
+    yield from context.shared_reports.items()

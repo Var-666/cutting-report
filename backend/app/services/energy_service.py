@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.core.operations_logging import data_quality
 from app.models.domain import EquipmentRecord
-from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy_with_freshness
+from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyReadingSource
 from app.services.equipment_service import mock_energy, sort_equipment_records
 
 logger = logging.getLogger(__name__)
@@ -221,7 +221,7 @@ class EnergyResult:
 
 
 class EquipmentEnergyService:
-    def __init__(self, settings: Settings, client=None):
+    def __init__(self, settings: Settings, client: EnergyReadingSource | None = None):
         self.settings = settings
         self.client = client or EnergyApiClient(settings)
 
@@ -299,7 +299,7 @@ class EquipmentEnergyService:
                             cfg.energy_allow_interpolation, policy)
             source_key = sha256(json.dumps(source_scope, default=str, sort_keys=True).encode()).hexdigest()
             try:
-                readings, fresh = read_energy_with_freshness(self.client, ids, first - padding, last + padding, force=force)
+                readings, fresh = self.client.fetch_observed(ids, first - padding, last + padding, force=force)
                 series = make_series(readings, ids, cfg.timezone)
             except EnergyApiError as exc:
                 observe_task_energy(cfg, source_key, usable, cutoff, first.date(), last.date())

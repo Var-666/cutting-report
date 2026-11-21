@@ -13,12 +13,20 @@ from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime, timedelta
 from http.client import HTTPException as HttpClientError
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from app.config import Settings
 from app.core.report_deadline import ensure_time_remaining, remaining_seconds
+
+
+class EnergyReadingSource(Protocol):
+    def fetch_observed(
+        self, ids: tuple[str, ...], start: datetime, end: datetime, *,
+        force: bool = False, monthly: bool = False,
+    ) -> tuple[list[dict], bool]: ...
 
 
 class EnergyApiError(RuntimeError):
@@ -207,11 +215,3 @@ class EnergyApiClient:
             collected.extend(rows)
             cursor = stop
         return deepcopy(collected), fresh
-
-
-def read_energy_with_freshness(client, ids, start, end, *, force=False, monthly=False):
-    observed = getattr(client, 'fetch_observed', None)
-    if observed is not None:
-        return observed(ids, start, end, force=force, monthly=monthly)
-    fetch = getattr(client, 'fetch_month', client.fetch) if monthly else client.fetch
-    return fetch(ids, start, end, force=force), True

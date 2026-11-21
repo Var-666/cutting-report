@@ -3,7 +3,7 @@ from datetime import date
 from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.workloads import query_requests
-from app.api.devices import device_state, device_settings
+from app.api.devices import device_state
 from app.api.auth import require_admin, require_user, require_worker
 from app.database.sqlserver import SqlServerConfigurationError
 from app.database.workshop_errors import (
@@ -32,13 +32,10 @@ def _envelope(request: Request, data: object) -> dict:
 
 def _service(request: Request) -> WorkshopService:
     runtime = device_state(request)
-    # Embedded callers can still supply the historical combined repository.
-    reports = getattr(runtime, 'workshop', None)
-    confirmations = runtime.confirmations if hasattr(runtime, 'confirmations') else reports
-    return WorkshopService(reports, confirmations, device_settings(request),
-                           query_service=getattr(runtime, 'query_service', None),
-                           range_report_service=getattr(runtime, 'range_report_service', None),
-                           report_provider=getattr(runtime, 'report_provider', None))
+    return WorkshopService(runtime.workshop, runtime.confirmations, runtime.settings,
+                           query_service=runtime.query_service,
+                           range_report_service=runtime.range_report_service,
+                           report_provider=runtime.report_provider)
 
 
 def _invoke(operation, *, value_error_status=None, **kwargs):

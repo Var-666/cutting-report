@@ -39,6 +39,11 @@ def payload(cfg):
     return database.DatabaseConfigurationRequest.model_validate(values)
 
 
+def test_missing_application_runtime_fails_with_an_assembly_error():
+    with pytest.raises(RuntimeError, match="应用运行时未装配"):
+        application_state(request_for(FastAPI()))
+
+
 def test_report_cache_save_hotloads_all_lines_and_preserves_inflight_snapshot(environment):
     from app.models.configuration_contracts import ReportCacheConfiguration
     cfg, runtime = environment
