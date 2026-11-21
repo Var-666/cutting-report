@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
 import type { ProductionLine } from '../types/devices'
 import type { ProductionOverview } from '../api/productionOverview.ts'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -34,7 +35,7 @@ export function useProductionOverview(lines: () => ProductionLine[]) {
       const job = queue.shift()!
       if (!current(job.row)) continue
       active += 1
-      void load(job.row, job.mode).finally(() => { active -= 1; pump() })
+      load(job.row, job.mode).finally(() => { active -= 1; pump() }).catch(reportAsyncError)
     }
     if (!disposed && !active && !queue.length) refreshingAll.value = false
   }

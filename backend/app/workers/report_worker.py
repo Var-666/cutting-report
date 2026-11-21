@@ -98,17 +98,13 @@ class ReportWorker:
             progress = dict(self._progress)
             queue = dict(self._queue)
             observed_at = self._queue_observed_at
-        details = {}
-        for name, thread in (("report", self.thread),):
-            if thread is None:
-                continue
-            stage, stamp = progress.get(name, ("starting", now))
-            age = max(0, now - stamp)
-            threshold = self.settings.worker_stall_timeout_seconds
-            if stage == "idle":
-                threshold = max(threshold, self.settings.worker_poll_seconds * 2)
-            details[name] = {"stage": stage, "progress_age_seconds": round(age, 1),
-                             "stalled": thread.is_alive() and age >= threshold}
+        stage, stamp = progress.get("report", ("starting", now))
+        age = max(0, now - stamp)
+        threshold = self.settings.worker_stall_timeout_seconds
+        if stage == "idle":
+            threshold = max(threshold, self.settings.worker_poll_seconds * 2)
+        details = {"report": {"stage": stage, "progress_age_seconds": round(age, 1),
+                              "stalled": self.thread.is_alive() and age >= threshold}}
         queue["observation_age_seconds"] = round(max(0, now - observed_at), 1) if observed_at is not None else None
         return {
             "report_alive": self.thread.is_alive(),
@@ -182,7 +178,8 @@ class ReportWorker:
                 raise
             except ExecutionLeaseLost:
                 raise
-            except Exception as exc:
+            # Every failed pipeline stage must move the claimed job out of its active status.
+            except Exception as exc:  # noqa: BLE001
                 stage = getattr(exc, "report_stage", None)
                 code, message = {
                     "querying": ("REPORT_QUERY_FAILED", "查询生产数据失败，请联系管理员"),

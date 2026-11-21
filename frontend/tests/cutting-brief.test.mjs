@@ -93,7 +93,7 @@ test('welding analysis uses only the matching report snapshot for indicators', a
   const weldingReport = {
     data_version: 'current', query: { start: '2026-08-18', end: '2026-08-20' }, daily: [],
     summary: { job_count: 4, weld_length_m: 12.3, involved_part_count: 3, working_hours: 1 },
-    meta: { notices: ['按作业结束时间计入生产日。'] },
+    meta: { notices: ['按作业结束时间计入生产日。'], pending_metrics: {} },
   }
   const input = { ...analysis, brief: null, facts: [], overview: '焊接生产概况。' }
   for (const matches of [true, false]) {

@@ -24,11 +24,12 @@ const schedules = ref<AutomationSchedule[]>([])
 const updatingScheduleIds = reactive(new Set<string>())
 const scheduleSearch = ref('')
 const appliedScheduleSearch = ref('')
-const visibleSchedules = computed(() => schedules.value.filter(item => item.name?.toLocaleLowerCase().includes(appliedScheduleSearch.value.toLocaleLowerCase())))
+const visibleSchedules = computed(() => schedules.value.filter(item => item.name.toLocaleLowerCase().includes(appliedScheduleSearch.value.toLocaleLowerCase())))
 function searchSchedules() { appliedScheduleSearch.value = scheduleSearch.value.trim() }
 function clearScheduleSearch() { scheduleSearch.value = ''; appliedScheduleSearch.value = '' }
 let loadSequence = 0
 let disposed = false
+const isDisposed = () => disposed
 const loading = ref(false)
 const message = ref('')
 const error = ref('')
@@ -49,7 +50,7 @@ const {
   deliverySearch, appliedDeliverySearch, searchDeliveries, clearDeliverySearch,
   resolutionDirty, resolutionSaving, pageCount, loadDeliveries, changeDeliveryPage, retry,
   openDelivery, deliveryResolved, pauseDeliveries,
-} = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed: () => disposed, confirm })
+} = useAutomationDeliveries({ message, error, refresh: loadAll, isDisposed, confirm })
 const scheduleHasDraft = computed(() => scheduleDirty.value || Boolean(recipientDraft.value.trim()))
 const hasUnsavedChanges = computed(() => configurationDirty.value || scheduleHasDraft.value)
 const panelBusy = computed(() => saving.value || configurationSaving.value)
@@ -98,13 +99,13 @@ async function toggleSchedule(item: AutomationSchedule) {
   error.value = ''
   try {
     const saved = await setAutomationScheduleEnabled(id, { enabled })
-    if (disposed) return
+    if (isDisposed()) return
     const current = schedules.value.find(schedule => schedule.schedule_id === id)
     if (current) Object.assign(current, { enabled: saved.enabled, next_run_at: saved.next_run_at })
     message.value = saved.enabled ? '定时任务已恢复' : '定时任务已暂停'
     await loadAll()
   } catch (caught) {
-    if (!disposed) error.value = toError(caught).message
+    if (!isDisposed()) error.value = toError(caught).message
   } finally {
     updatingScheduleIds.delete(id)
   }
@@ -112,7 +113,7 @@ async function toggleSchedule(item: AutomationSchedule) {
 
 const smtp = computed(() => {
   if (!status.value) return { label: loading.value ? '正在读取' : '状态未知', type: 'default' as const }
-  if (!status.value.smtp?.enabled) return { label: '发送已停用', type: 'default' as const }
+  if (!status.value.smtp.enabled) return { label: '发送已停用', type: 'default' as const }
   return status.value.smtp.configured
     ? { label: '已配置', type: 'success' as const }
     : { label: '待配置', type: 'warning' as const }
@@ -133,7 +134,7 @@ const deliveryLabels: Record<string, string> = {
 const scheduleLabels: Record<string, string> = { ...deliveryLabels, queued: '等待生成报表' }
 
 async function loadAll() {
-  if (disposed) return
+  if (isDisposed()) return
   const sequence = ++loadSequence
   loading.value = true
   error.value = ''
@@ -143,13 +144,13 @@ async function loadAll() {
       listAutomationSchedules(),
       loadDeliveries(),
     ])
-    if (disposed || sequence !== loadSequence) return
+    if (isDisposed() || sequence !== loadSequence) return
     status.value = statusData
     schedules.value = scheduleData.items
     restoreExecutions(scheduleData.items)
   } catch (caught) {
     const exception = toError(caught)
-    if (!disposed && sequence === loadSequence) error.value = exception.message
+    if (!isDisposed() && sequence === loadSequence) error.value = exception.message
   } finally {
     if (sequence === loadSequence) loading.value = false
   }

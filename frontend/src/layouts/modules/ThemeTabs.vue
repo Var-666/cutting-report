@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../../api/browserObservations.ts'
+
 import { selectedLineType } from '../../utils/productionLines.ts'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -40,7 +42,7 @@ function close(id: string) {
   const index = tabs.value.findIndex(tab => tab.id === id)
   const fallback = tabs.value[index - 1]?.path || homePath.value
   paths.value = paths.value.filter(item => idByPath(item) !== id)
-  if (activeId.value === id) router.push(fallback)
+  if (activeId.value === id) router.push(fallback).catch(reportAsyncError)
 }
 function middleClick(event: MouseEvent, id: string) {
   if (event.button !== 1 || !theme.tab.closeTabByMiddleClick) return

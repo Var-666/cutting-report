@@ -4,8 +4,8 @@ export function navigationSection(path: string) {
   if (path === '/admin/home') return 'home'
   if (path === '/admin/automation') return 'automation'
   if (path === '/admin/pdm-statistics') return 'pdm'
-  if (path === '/admin/operations' || path?.startsWith('/admin/operations/')) return 'operations'
-  if (path === '/admin/settings' || path?.startsWith('/admin/settings/')) return 'settings'
+  if (path === '/admin/operations' || path.startsWith('/admin/operations/')) return 'operations'
+  if (path === '/admin/settings' || path.startsWith('/admin/settings/')) return 'settings'
   return 'line'
 }
 export function adminMenus(routes: readonly RouteRecordRaw[], parent = '/admin', line = 'cutting'): AdminMenu[] {
@@ -22,7 +22,7 @@ export function adminMenus(routes: readonly RouteRecordRaw[], parent = '/admin',
       }]
     }
     return route.name && route.meta?.title
-      ? [{ key: route.name, label: route.meta?.title || '', icon: route.meta?.icon }]
+      ? [{ key: route.name, label: route.meta.title || '', icon: route.meta.icon }]
       : []
   })
 }

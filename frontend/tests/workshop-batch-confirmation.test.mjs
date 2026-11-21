@@ -25,7 +25,7 @@ test('batch confirmation sends all selected task ids in one request', async () =
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options })
-    return { ok: true, json: async () => ({ success: true, data: { confirmed_count: 2, items: [] } }) }
+    return Response.json({ success: true, data: { confirmed_count: 2, items: [] } })
   }
 
   await confirmWorkshopTasks(['task-1', 'task-2'], '2026-09-11')
@@ -43,7 +43,7 @@ test('task revisions accompany confirmation so a rebuilt scope cannot use an old
   let sent
   globalThis.fetch = async (url, options) => {
     sent = JSON.parse(options.body)
-    return { ok: true, json: async () => ({ success: true, data: { items: [] } }) }
+    return Response.json({ success: true, data: { items: [] } })
   }
   await confirmWorkshopTasks(['A', 'B'], '2026-09-30', { A: 2, B: 1 })
   assert.deepEqual(sent.snapshot_revisions, { A: 2, B: 1 })
@@ -89,7 +89,7 @@ test('workshop keeps confirmation corrections while the source correction entry 
   assert.match(correctionSource, /await revokeWorkshopTask\(row.task_id/)
 })
 
-const response = data => ({ ok: true, json: async () => ({ success: true, data }) })
+const response = data => Response.json({ success: true, data })
 
 test('confirmation workflow retains selected revisions and keeps confirmed rows confirmed after a stale refresh', async t => {
   const originalWindow = globalThis.window

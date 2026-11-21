@@ -55,7 +55,7 @@ def configuration_diagnostics(request: Request) -> dict:
     try:
         worker = application_state(request).worker_status_reader.status()
         data = application_state(request).configuration_diagnostics.report(worker)
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # Do not expose parser exceptions, paths, raw inputs or credentials.
         raise HTTPException(status_code=503, detail="配置诊断暂不可用，请稍后重试") from None
     return {"success": True, "data": data, "request_id": request.state.request_id}

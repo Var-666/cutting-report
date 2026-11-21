@@ -12,7 +12,7 @@ const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 const period = { start_date: '2026-11-01', end_date: '2026-11-03', machine_ip: '10.0.0.2' }
 const days = [{ date: '2026-11-01', sent_count: 0, completed_count: 0 }, { date: '2026-11-02', sent_count: 12, completed_count: 0 }, { date: '2026-11-03', sent_count: 0, completed_count: 0 }]
-const response = data => ({ ok: true, json: async () => ({ success: true, data }) })
+const response = data => Response.json({ success: true, data })
 function state() {
   const pageActive = ref(true)
   const busy = ref(false)

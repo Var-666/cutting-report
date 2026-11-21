@@ -67,7 +67,7 @@ def save_report_cache_configuration(payload: ReportCacheConfiguration, request: 
         raise HTTPException(status_code=500, detail='统计缓存配置保存失败，当前运行配置未改变') from None
     except ValueError:
         raise HTTPException(status_code=422, detail='统计缓存配置无效，当前运行配置未改变') from None
-    except Exception:
+    except (OSError, RuntimeError):
         raise HTTPException(status_code=503, detail='统计缓存配置暂无法加载，当前运行配置未改变') from None
     return {'success': True, 'data': {'saved': True, 'restart_required': False,
         'path': 'data/settings.env', 'message': '统计缓存配置已保存并热加载，各业务的新操作使用统一规则。'},
@@ -196,7 +196,7 @@ def _save_configuration(payload, request: Request) -> dict:
         raise HTTPException(status_code=500, detail="配置保存失败，请检查 data 目录的写入权限。") from None
     except ValueError:
         raise HTTPException(status_code=422, detail="数据库配置无效，请核对启用的数据源、连接参数及密码。") from None
-    except Exception:
+    except (OSError, RuntimeError):
         raise HTTPException(status_code=503, detail="数据库配置暂无法加载，当前运行配置未改变。") from None
     return {
         "success": True,
@@ -338,10 +338,9 @@ def test_connection(payload: ConnectionTestRequest, request: Request) -> dict:
     started = perf_counter()
     try:
         client = SqlServerClient(temporary_config, capacity=runtime_state(request).database_sources.capacity, probe=True)
-        with client.connect() as connection:
-            with cancellable_cursor(connection) as cursor:
-                cursor.execute("SELECT 1 AS connection_ok")
-                row = cursor.fetchone()
+        with client.connect() as connection, cancellable_cursor(connection) as cursor:
+            cursor.execute("SELECT 1 AS connection_ok")
+            row = cursor.fetchone()
         if row is None or int(row[0]) != 1:
             raise RuntimeError("数据库未返回预期结果")
     except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
@@ -419,7 +418,7 @@ def _source_result(request: Request, action) -> dict:
         raise
     except ValueError:
         raise HTTPException(status_code=422, detail='数据源配置无效，请核对 ID、连接参数及密码') from None
-    except Exception:
+    except (OSError, RuntimeError):
         raise HTTPException(status_code=503, detail='数据源配置暂不可用，已保留原运行配置') from None
     return {'success': True, 'data': data, 'request_id': request.state.request_id}
 

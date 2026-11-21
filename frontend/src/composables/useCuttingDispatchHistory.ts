@@ -7,6 +7,7 @@ import { listCuttingDispatches, getCuttingDispatchTrend } from '../api/dispatch'
 import { toError } from '../utils/errors'
 
 export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: Ref<boolean>; isBusy: () => boolean }) {
+  const isPageActive = () => pageActive.value
   let historyTimer: number | null = null
   let historyController: AbortController | null = null
   let trendController: AbortController | null = null
@@ -36,7 +37,7 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   const historyPageCount = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
 
   async function loadHistory({ signal, page: targetPage = historyPage.value, silent = false }: { signal?: AbortSignal; page?: number; silent?: boolean } = {}) {
-    if (!pageActive.value || signal?.aborted || (silent && (historyController || isBusy()))) return
+    if (!isPageActive() || signal?.aborted || (silent && (historyController || isBusy()))) return
     historyController?.abort()
     const controller = new AbortController()
     historyController = controller
@@ -45,22 +46,23 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
     if (!silent) historyLoading.value = true
     if (!silent) historyError.value = ''
     const filters = { ...historyFilters.value }
+    const isCurrent = () => !controller.signal.aborted && isPageActive() && historyController === controller
     try {
       let data = await listCuttingDispatches({ ...filters, page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
-      if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
+      if (!isCurrent()) return
       const lastPage = Math.max(1, Math.ceil(data.total / historyPageSize))
       if (targetPage > lastPage) {
         targetPage = lastPage
         data = await listCuttingDispatches({ ...filters, page: targetPage, pageSize: historyPageSize }, { signal: controller.signal })
       }
-      if (controller.signal.aborted || !pageActive.value || historyController !== controller) return
+      if (!isCurrent()) return
       historyError.value = ''
       histories.value = data.items
       historyTotal.value = data.total
       historyPage.value = data.page
     } catch (caught) {
       const error = toError(caught)
-      if (error.name !== 'AbortError' && !controller.signal.aborted && pageActive.value && historyController === controller) {
+      if (error.name !== 'AbortError' && isCurrent()) {
         historyError.value = error.message
       }
     } finally {
@@ -78,7 +80,7 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   }
 
   async function loadTrend({ signal, silent = false }: { signal?: AbortSignal; silent?: boolean } = {}) {
-    if (!pageActive.value || signal?.aborted || (silent && (trendController || isBusy()))) return
+    if (!isPageActive() || signal?.aborted || (silent && (trendController || isBusy()))) return
     trendController?.abort()
     const controller = new AbortController()
     trendController = controller
@@ -88,13 +90,13 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
     if (!silent) trendError.value = ''
     try {
       const data = await getCuttingDispatchTrend({ ...trendFilters.value }, { signal: controller.signal })
-      if (!controller.signal.aborted && pageActive.value && trendController === controller) {
+      if (!controller.signal.aborted && isPageActive() && trendController === controller) {
         trend.value = data
         trendError.value = ''
       }
     } catch (caught) {
       const error = toError(caught)
-      if (error.name !== 'AbortError' && !controller.signal.aborted && pageActive.value && trendController === controller) trendError.value = error.message
+      if (error.name !== 'AbortError' && !controller.signal.aborted && isPageActive() && trendController === controller) trendError.value = error.message
     } finally {
       signal?.removeEventListener('abort', abort)
       if (trendController === controller) {
@@ -116,7 +118,7 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   }
 
   async function applyHistoryFilters(filters: DispatchTrendFilters) {
-    if (!pageActive.value || isBusy()) return
+    if (!isPageActive() || isBusy()) return
     trendFilters.value = { ...filters }
     trend.value = null
     resetRows(filters)
@@ -124,13 +126,13 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   }
 
   async function selectHistoryDay(day: string, dateType: 'sent' | 'completed' = 'sent') {
-    if (!pageActive.value || isBusy() || trendLoading.value || !trend.value?.items.some(item => item.date === day)) return
+    if (!isPageActive() || isBusy() || trendLoading.value || !trend.value?.items.some(item => item.date === day)) return
     resetRows({ ...trendFilters.value, start_date: day, end_date: day, date_type: dateType })
     await loadHistory()
   }
 
   async function clearHistoryFilters() {
-    if (!pageActive.value || isBusy()) return
+    if (!isPageActive() || isBusy()) return
     trendFilters.value = defaultPeriod()
     trend.value = null
     resetRows({})
@@ -138,10 +140,10 @@ export function useCuttingDispatchHistory({ pageActive, isBusy }: { pageActive: 
   }
 
   function startHistoryPolling() {
-    if (!pageActive.value || historyTimer !== null) return
+    if (!isPageActive() || historyTimer !== null) return
     historyTimer = window.setTimeout(async () => {
       historyTimer = null
-      if (!pageActive.value) return
+      if (!isPageActive()) return
       if (!document.hidden) await Promise.allSettled([loadHistory({ silent: true }), loadTrend({ silent: true })])
       startHistoryPolling()
     }, 5000)

@@ -143,9 +143,7 @@ class WorkshopReportRepository(WorkshopScopeRepository):
             "report_id": row["report_id"],
             "report_date": row["report_date"],
             "source_mode": row["source_mode"],
-            "scope_machine_no": (
-                row["scope_machine_no"] if "scope_machine_no" in row.keys() else None
-            ),
+            "scope_machine_no": row["scope_machine_no"],
             "item_count": int(row["item_count"]),
             "confirmed_count": int(row["confirmed_count"]),
             "generated_by_id": row["generated_by_id"],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -11,8 +12,9 @@ import unicodedata
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from app.services.file_source import FileSourceError, normalize_relative_path
 from app.core.process_lock import FileLock
+from app.database.sqlserver import sqlserver_driver_errors
+from app.services.file_source import FileSourceError, normalize_relative_path
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +64,7 @@ def build_catalog_path(pdm, raw):
         return fallback
     try:
         catalogs = pdm.list_catalogs(project_id)
-    except Exception:
+    except (OSError, RuntimeError, *sqlserver_driver_errors()):
         return fallback
     by_id = {str(item.get("catalog_id") or ""): item for item in catalogs}
     current = by_id.get(catalog_id)
@@ -295,10 +297,8 @@ class FileDownloadService:
             try:
                 path = self._path(item)
                 path.unlink(missing_ok=True)
-                try:
+                with suppress(OSError):
                     path.parent.rmdir()
-                except OSError:
-                    pass
                 deleted_at = self.now()
                 item.update(
                     file_deleted_at=deleted_at,
@@ -338,10 +338,8 @@ class FileDownloadService:
                         path.unlink()
                     else:
                         result["missing"] += 1
-                    try:
+                    with suppress(OSError):
                         path.parent.rmdir()
-                    except OSError:
-                        pass
                     deleted_at = reference.isoformat(timespec="seconds")
                     item.update(
                         file_deleted_at=deleted_at,

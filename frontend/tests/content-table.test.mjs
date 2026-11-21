@@ -3,6 +3,21 @@ import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
 import { contentFit, contentTable, contentWidthUnits, distributeColumnWidths, tableColumnWeight } from '../src/directives/contentTable.ts'
 
+function mountTable(table, binding = {}) {
+  const style = { setProperty() {} }
+  table.dataset ??= {}
+  table.style ??= style
+  table.children ??= []
+  table.insertBefore ??= (node) => table.children.unshift(node)
+  table.ownerDocument ??= { defaultView: null, createElement: tag => ({
+    tagName: tag.toUpperCase(), dataset: {}, style, children: [], appendChild(child) { this.children.push(child) },
+  }) }
+  for (const section of [table.tHead, ...table.tBodies, table.tFoot]) {
+    for (const row of section?.rows ?? []) for (const cell of row.cells) cell.style ??= style
+  }
+  contentTable.mounted(table, binding)
+}
+
 test('report, welding, dispatch and settings columns share compact and flexible width rules', () => {
   for (const label of ['序号', '工程号', '船号', '分段名', '任务数', '长度(m)', '切割时长', '累计作业用时(h)', '源表速度(mm/min)', '参与工件数', '操作', '焊接类型', '状态', '版本', '魔盒UUID', '工件流水号', '机器人', '输入 token', '日期', '月份', '年月', '统计周期', '报告周期', '任务开始', '生成时间', '下次执行', '设备']) {
     assert.equal(tableColumnWeight(label), 0, label)
@@ -42,11 +57,11 @@ test('new rows reclassify a column; summary rows cannot distort sizing', () => {
   const summary = { cells: [cell('跨列汇总不应该影响单列'), cell('100', 2)] }
   const classes = new Set()
   const table = { classList: { add: (name) => classes.add(name) }, tHead: { rows: [{ cells: [header] }] }, tBodies: [{ rows: [row, summary] }] }
-  contentTable.mounted(table)
+  mountTable(table)
   assert.equal(header.dataset.contentFit, 'compact')
   assert.ok(classes.has('content-table'))
   row.cells[0].textContent = 'new-long-project-code-12345'
-  contentTable.updated(table)
+  contentTable.updated(table, {})
   assert.equal(header.dataset.contentFit, 'text')
   assert.equal(row.cells[0].dataset.contentFit, 'text')
   assert.deepEqual(summary.cells[0].dataset, {})
@@ -102,7 +117,7 @@ test('native tables preserve numeric widths and allocate remaining space to text
     tBodies: [{ rows: [{ cells: rowCells }] }],
   }
 
-  contentTable.mounted(table)
+  mountTable(table)
   assert.ok(headers.every((header) => header.dataset.contentFit === 'compact'))
   assert.ok(rowCells.every((cell) => cell.dataset.contentFit === 'compact'))
   assert.equal(minimumWidth, '900px')
@@ -138,23 +153,23 @@ test('symmetric track padding follows allocated width on headers, data and total
     tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }, { cells: [empty] }] }], tFoot: { rows: [{ cells: totals }] } }
   const padding = row => row.map(item => item.style.values['--content-extra-pad'])
 
-  contentTable.mounted(table)
+  mountTable(table)
   for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), ['66px', '215px', '0px', '0px', '0px', '0px'])
   assert.deepEqual(headers.map(item => item.dataset.contentAlign), ['left', 'left', 'right', 'center', 'center', 'left'])
   assert.equal(empty.style.values['--content-extra-pad'], '999px', 'merged empty rows must not be treated as a column')
 
   cells[5].textContent = '0'
-  contentTable.updated(table)
+  contentTable.updated(table, {})
   assert.equal(padding(headers)[5], '66px', 'zero is valid data, not a missing-value placeholder')
   assert.equal(padding(cells)[5], '66px')
   assert.equal(padding(totals)[5], '66px')
 
   table.parentElement.clientWidth = 600
-  contentTable.updated(table)
+  contentTable.updated(table, {})
   for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), ['6px', '35px', '0px', '0px', '0px', '6px'])
 
   for (const item of [...cells, ...totals]) item.textContent = '--'
-  contentTable.updated(table)
+  contentTable.updated(table, {})
   for (const row of [headers, cells, totals]) assert.deepEqual(padding(row), headers.map(() => '0px'))
 })
 
@@ -180,7 +195,7 @@ test('cached tables disconnect and restore exactly one ResizeObserver', () => {
   }
 
   try {
-    contentTable.mounted(table, { value: true })
+    mountTable(table, { value: true })
     assert.equal(observers.filter((observer) => observer.connected).length, 1)
     contentTable.updated(table, { value: true, oldValue: true })
     assert.equal(observers.filter((observer) => observer.connected).length, 1)
@@ -276,13 +291,13 @@ test('explicit field alignment reaches headings, placeholders and totals with sa
   const totals = [cell('汇总'), cell('12345:59:59'), cell('--'), cell('--')]
   const empty = cell('暂无数据'); empty.colSpan = 4
   const table = { dataset: { contentColumns: 'left right center actions' }, classList: { add() {} }, tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }, { cells: [empty] }] }], tFoot: { rows: [{ cells: totals }] } }
-  contentTable.mounted(table)
+  mountTable(table)
   for (const row of [headers, cells, totals]) assert.deepEqual(row.map(c => c.dataset.contentAlign), ['left', 'right', 'center', 'center'])
   assert.equal(cells[3].dataset.contentAction, 'true')
   assert.equal(cells[0].title, '现有的完整船号说明')
   assert.equal(cells[1].title, '--')
   cells[1].textContent = '99999:59:59'
-  contentTable.updated(table)
+  contentTable.updated(table, {})
   assert.equal(cells[1].title, '99999:59:59')
   assert.equal(totals[1].title, '12345:59:59')
   assert.deepEqual(empty.dataset, {})
@@ -313,6 +328,6 @@ test('action tracks reserve the complete button group including padding and marg
     ownerDocument: { createElement, defaultView: { getComputedStyle: () => ({ paddingLeft: '12px', paddingRight: '12px', marginLeft: '4px', marginRight: '4px' }) } },
     tHead: { rows: [{ cells: headers }] }, tBodies: [{ rows: [{ cells }] }],
   }
-  contentTable.mounted(table)
+  mountTable(table)
   assert.ok(minimumWidth >= 864, 'two long identifiers plus the complete action group must fit without clipping')
 })

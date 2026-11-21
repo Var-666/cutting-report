@@ -66,7 +66,7 @@ export function useEnergyReportCharts({ taskDay, monthlyReport, taskChartRows, s
     }
     if (renderSummary && periodChartElement && monthlyReport.value) {
       periodChart ||= init(periodChartElement, chartTheme.darkMode.value ? 'dark' : undefined)
-      const rows = summaryChartRows.value.map((row) => ({ electricity: row.electricity?.value, gas: row.gas?.value }))
+      const rows = summaryChartRows.value.map((row) => ({ electricity: row.electricity.value, gas: row.gas.value }))
       const labels = summaryChartRows.value.map((row) => row.report_date)
       periodChart.setOption(chartOption(rows, labels), true)
     }

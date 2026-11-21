@@ -23,12 +23,19 @@ export function reportApiFailure(url: string, status: number, requestId?: string
   if (status >= 500 && important.test(url)) submit('api', requestId)
 }
 
+function reportPromiseRejection(error: unknown) {
+  if (!(error instanceof Error && (error.name === 'AbortError' || 'status' in error))) submit('promise')
+}
+
+export function reportAsyncError(error: unknown) {
+  reportPromiseRejection(error)
+  console.error(error)
+}
+
 export function observeBrowserErrors() {
   observing = true
   const error = () => submit('javascript')
-  const rejection = (event: PromiseRejectionEvent) => {
-    if (!(event.reason instanceof Error && (event.reason.name === 'AbortError' || 'status' in event.reason))) submit('promise')
-  }
+  const rejection = (event: PromiseRejectionEvent) => reportPromiseRejection(event.reason)
   window.addEventListener('error', error)
   window.addEventListener('unhandledrejection', rejection)
   return {

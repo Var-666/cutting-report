@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { DatabaseSourceRequestWritable, DatabaseSourceView, ConnectionTestResult } from '../api/generated/types.gen'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NButton, NCheckbox, NInput, NInputNumber, NDrawer, NDrawerContent, NPopconfirm, NTag } from 'naive-ui'
@@ -84,7 +86,7 @@ async function save() {
     dirty.value = false
     draft.value.password = ''
     showEditor.value = false
-    globalThis.window?.$message?.success('数据源已保存')
+    globalThis.window.$message?.success('数据源已保存')
     await load()
   } catch (caught) { editorError.value = toError(caught).message }
   finally { busy.value = false }
@@ -107,18 +109,19 @@ async function testConnection(source?: DatabaseSourceView) {
 async function toggle(source: DatabaseSourceView) {
   const enabled = !source.enabled
   const action = enabled ? '启用数据源' : '停用数据源'
-  if (busy.value) return
+  const isBusy = () => busy.value
+  if (isBusy()) return
   if (source.references.length && !await confirm({
     title: `${action}？`,
     content: `“${source.name}”的连接状态将影响以下引用：${source.references.join('、')}。`,
     positiveText: action,
   })) return
-  if (busy.value) return
+  if (isBusy()) return
   busy.value = true
   error.value = ''
   try {
     await setDatabaseSourceEnabled(source.id, enabled)
-    globalThis.window?.$message?.success(enabled ? '数据源已启用' : '数据源已停用')
+    globalThis.window.$message?.success(enabled ? '数据源已启用' : '数据源已停用')
     await load()
   }
   catch (caught) { error.value = toError(caught).message }
@@ -130,7 +133,7 @@ async function remove(source: DatabaseSourceView) {
   error.value = ''
   try {
     await deleteDatabaseSource(source.id)
-    globalThis.window?.$message?.success('数据源已删除')
+    globalThis.window.$message?.success('数据源已删除')
     await load()
     return true
   } catch (caught) {
@@ -138,7 +141,7 @@ async function remove(source: DatabaseSourceView) {
     return false
   } finally {
     busy.value = false
-    if (!sources.value.some(item => item.id === source.id)) void nextTick(() => addButton.value?.$el?.focus())
+    if (!sources.value.some(item => item.id === source.id)) nextTick(() => addButton.value?.$el?.focus()).catch(reportAsyncError)
   }
 }
 onMounted(load)

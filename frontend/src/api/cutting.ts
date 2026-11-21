@@ -9,8 +9,10 @@ import { getDeviceId } from './deviceContext.ts'
 
 export type MyConfirmedTasksQuery = NonNullable<MyConfirmedTasksApiV1WorkshopMyConfirmedTasksGetData['query']>
 export function listMyConfirmedTasks(query: MyConfirmedTasksQuery, { signal }: ReadOptions = {}) {
-  const parameters = new URLSearchParams()
-  for (const [key, value] of Object.entries(query)) if (value != null) parameters.set(key, String(value))
+  const { start_date, end_date, page, page_size } = query
+  const parameters = new URLSearchParams({ start_date, end_date })
+  if (page != null) parameters.set('page', String(page))
+  if (page_size != null) parameters.set('page_size', String(page_size))
   return request<MyConfirmedTasks>(`/api/v1/workshop/my-confirmed-tasks?${parameters}`, { signal })
 }
 

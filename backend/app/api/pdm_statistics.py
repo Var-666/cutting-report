@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from psycopg import Error as PostgresError
 
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state, request_settings
@@ -8,7 +9,7 @@ from app.api.workloads import snapshot_requests
 from app.core.request_cancellation import SqlRequestCancelled
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
-from app.database.sqlserver import SqlServerConfigurationError
+from app.database.sqlserver import SqlServerConfigurationError, sqlserver_driver_errors
 from app.models.contracts import ApiEnvelope
 from app.models.pdm_statistics import PdmBranchOptions, PdmOptionsQuery, PdmOverviewReport, PdmStatisticsQuery, PdmStatisticsReport
 from app.services.pdm_statistics import PdmStatisticsService, PDM_STATISTICS_SCOPE
@@ -16,6 +17,7 @@ from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRe
 
 router = APIRouter(prefix='/api/v1/pdm-statistics', tags=['pdm-statistics'], dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
+QUERY_ERRORS = (PostgresError, OSError, RuntimeError)
 
 
 def service(request: Request) -> PdmStatisticsService:
@@ -48,7 +50,7 @@ def options(payload: PdmOptionsQuery, request: Request, refresh: bool = False):
     current = service(request)
     try:
         data = current.options(payload, force=refresh)
-    except Exception as exc:
+    except (*QUERY_ERRORS, *sqlserver_driver_errors()) as exc:
         query_error(exc)
     return {'success': True, 'data': data, 'request_id': request.state.request_id}
 
@@ -58,7 +60,7 @@ def report(payload: PdmStatisticsQuery, request: Request, refresh: bool = False)
     current = service(request)
     try:
         data = current.report(payload, force=refresh)
-    except Exception as exc:
+    except (*QUERY_ERRORS, *sqlserver_driver_errors()) as exc:
         query_error(exc)
     return {'success': True, 'data': data, 'request_id': request.state.request_id}
 
@@ -68,6 +70,6 @@ def overview(request: Request, refresh: bool = False):
     current = service(request)
     try:
         data = current.overview(force=refresh)
-    except Exception as exc:
+    except (*QUERY_ERRORS, *sqlserver_driver_errors()) as exc:
         query_error(exc)
     return {'success': True, 'data': data, 'request_id': request.state.request_id}

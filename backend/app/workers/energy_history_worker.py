@@ -108,7 +108,8 @@ class EnergyHistoryWorker:
             delay = report_ttl(self.settings, month, today=self.service.now().date())
             if month == self.service.now().date().replace(day=1):
                 delay = report_refresh_seconds(self.settings)
-        except Exception as exc:
+        # Every failed claimed sync must be rescheduled, including unexpected service errors.
+        except Exception as exc:  # noqa: BLE001
             repeated = claim["attempt_count"] >= 2
             event(logger, logging.ERROR if repeated else logging.WARNING, '能耗历史同步失败',
                   error_code='ENERGY_HISTORY_SYNC_FAILED', incident=repeated, exc_info=True,

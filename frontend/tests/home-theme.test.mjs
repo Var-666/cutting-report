@@ -52,6 +52,8 @@ function mountHome(overrides = {}) {
     init: () => { const chart = { options: [], setOption(value) { this.options.push(value) }, resizeCount: 0, resize() { this.resizeCount++ }, dispose() {} }; charts.push(chart); return chart },
     ...overrides,
   }
+  const getLeadershipReport = bindings.getLeadershipReport
+  bindings.getLeadershipReport = async (...args) => ({ snapshot: {}, ...await getLeadershipReport(...args) })
   const source = parse(read('views/AdminHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
   const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
   const setup = scriptFunction(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend, overviewPreparing, electricity }`)

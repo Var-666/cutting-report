@@ -1,5 +1,6 @@
 import type { ApiError } from '../types/api'
 import { throwIfAborted } from '../utils/abort'
+import { toError } from '../utils/errors'
 import { reportCache, REPORT_VIEW_CACHE_TTL } from './reportCache'
 import { getDeviceId } from './deviceContext'
 
@@ -56,14 +57,14 @@ export function readReport<T>(key: string, load: (signal: AbortSignal, refresh: 
       try { return await load(sharedSignal, refresh, scope) }
       catch (caught) {
         throwIfAborted(sharedSignal)
-        const error = caught as ApiError
-        if (error?.status !== 503) throw caught
+        const error: ApiError = toError(caught)
+        if (error.status !== 503) throw error
         if (error.code && RETRYABLE_CAPACITY_ERRORS.has(error.code) && capacityRetries < 2) {
           capacityRetries++
           await waitForReportPoll(sharedSignal, Math.min(10_000, Math.max(REPORT_POLL_INTERVAL, error.retryAfterMs || 0)))
           continue
         }
-        if (error.code !== 'snapshot_refresh_busy' || preparationChecks >= REPORT_POLL_LIMIT) throw caught
+        if (error.code !== 'snapshot_refresh_busy' || preparationChecks >= REPORT_POLL_LIMIT) throw error
         preparationChecks++
         refresh = false
         onPreparing?.()

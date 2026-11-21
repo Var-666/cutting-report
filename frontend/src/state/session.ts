@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
 import type { User } from '../types/auth'
 import type { SystemHealth } from '../types/system'
 import { resetDeviceContext } from '../api/deviceContext.ts'
@@ -24,8 +25,8 @@ function preloadDeviceReports(user: User | null, generation: number) {
   if (!user) { stopReportPreload(); return }
   // Validate the remembered device before any production report warmup starts.
   loadDevices({ includeLines: user.role === 'admin' }).then(() => {
-    if (generation === sessionGeneration && deviceSelection.ready) startReportPreload(user)
-  })
+    if (generation === sessionGeneration && deviceSelection.ready) return startReportPreload(user)
+  }).catch(reportAsyncError)
 }
 
 function refreshSystemInfo(generation: number) {

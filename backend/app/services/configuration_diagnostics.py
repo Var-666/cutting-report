@@ -65,10 +65,9 @@ def safe_value(value, key=""):
         "ENERGY_GAS_UNIT", "ENERGY_ELECTRICITY_UNIT", "ENERGY_GAS_FACTOR", "ENERGY_ELECTRICITY_FACTOR",
         "ENERGY_SAMPLING_CHANGE_AT", "FILE_SOURCE_MODE",
     }
-    if key in visible:
-        # Only validated, credential-free formats are displayed as text.
-        if isinstance(value, str) and re.fullmatch(r"[\w./:+³-]{1,80}", value):
-            return value
+    # Only validated, credential-free formats are displayed as text.
+    if key in visible and isinstance(value, str) and re.fullmatch(r"[\w./:+³-]{1,80}", value):
+        return value
     return "已配置" if value else "未配置"
 
 
@@ -103,9 +102,9 @@ def validate_values(settings: Settings, values: dict) -> set[str]:
         raw = values.get(key)
         if isinstance(value, bool) and raw is not None and raw.strip().lower() not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
             invalid.add(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            if not math.isfinite(value) or value < 0 or (key.endswith("_PORT") and not 1 <= value <= 65535):
-                invalid.add(key)
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and (not math.isfinite(value) or value < 0 or (key.endswith("_PORT") and not 1 <= value <= 65535))):
+            invalid.add(key)
     try:
         validate_automation_settings(settings)
     except ValidationError as exc:

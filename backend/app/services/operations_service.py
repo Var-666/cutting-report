@@ -6,6 +6,8 @@ from queue import Empty
 from threading import Event, Lock, Thread
 from time import monotonic, time
 
+from psycopg import Error as PostgresError
+
 from app.core.operations_logging import event, log_request_id, prune_logs, safe_id
 from app.database.operations import OperationsRepository, fingerprint
 from app.models.operations import LogFilters
@@ -85,7 +87,7 @@ class OperationsService:
         states = []
         try:
             web = self.coordination.worker_status('web') if available else {}
-        except Exception:
+        except (PostgresError, OSError):
             web = {}
         entries = [(role, None, worker.get('roles', {}).get(role, {})) for role in ('scheduler', 'worker', 'automation')]
         entries.insert(0, ('web', None, web))
@@ -116,8 +118,9 @@ class OperationsService:
             try:
                 monitors = self.monitors.list()
                 work, _ = self._work(now)
-            except Exception:
-                pass
+            except (PostgresError, OSError):
+                # Leave unavailable PostgreSQL sections unset while serving the rest of the dashboard.
+                event(logger, logging.WARNING, '运维状态读取失败', error_code='OPERATIONS_READ_FAILED', exc_info=True)
         return dict(observed_at=now, roles=states, postgres='healthy' if available else 'abnormal' if available is False else 'unknown',
                     consumers_ready=worker.get('consumer_running_count'), consumers_expected=self.settings.consumer_replicas,
                     monitors=monitors, work=work)
@@ -128,8 +131,9 @@ class OperationsService:
         if runtime['postgres'] == 'healthy':
             try:
                 count, recent, recurring = self.repository.summary()
-            except Exception:
-                pass
+            except (PostgresError, OSError):
+                # Leave unavailable PostgreSQL sections unset while serving the rest of the dashboard.
+                event(logger, logging.WARNING, '运维状态读取失败', error_code='OPERATIONS_READ_FAILED', exc_info=True)
         # Concurrent dashboard requests share the result of one bounded file scan.
         if monotonic() >= self._next_totals and self._totals_lock.acquire(blocking=False):
             try:
@@ -262,7 +266,7 @@ class OperationsCollector:
     def _attempt(self, stage, operation, *args):
         try:
             operation(*args)
-        except Exception:
+        except (PostgresError, OSError):
             if stage not in self._failed:
                 event(logger, logging.WARNING, '运维状态采集或事件写入失败', error_code='OPERATIONS_WRITE_FAILED',
                       stage=stage, exc_info=True)
@@ -279,8 +283,8 @@ class OperationsCollector:
         configuration = 'unknown'
         try:
             configuration = self.service.diagnostics.load_state()
-        except Exception:
-            pass
+        except (OSError, ValueError, RuntimeError):
+            event(logger, logging.WARNING, '配置快照暂不可用', error_code='OPERATIONS_CONFIGURATION_READ_FAILED', exc_info=True)
         if not self.service.coordination.renew('web', self.owner, ttl=30,
                                                status={'configuration': {'load_state': configuration}}):
             self.owner = None
@@ -328,5 +332,5 @@ class OperationsCollector:
             if self.owner:
                 try:
                     self.service.coordination.release('web', self.owner)
-                except Exception:
-                    pass
+                except (PostgresError, OSError):
+                    event(logger, logging.WARNING, '运维租约释放失败', error_code='OPERATIONS_RELEASE_FAILED', exc_info=True)

@@ -5,6 +5,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { parse } from '@vue/compiler-sfc'
 import { selectedLineType } from '../src/utils/productionLines.ts'
+import { incidentLevels } from '../src/components/operations/presentation.ts'
 import * as Vue from 'vue'
 
 function descriptor(name, folder = 'views') {
@@ -28,7 +29,7 @@ test('incident filters default to errors and above while explicit levels and log
       const cleanup = []
       const bindings = { ...Vue, defineProps: () => ({ mode }), useRoute: () => ({ query, fullPath: '/fixture' }),
         onBeforeUnmount: callback => cleanup.push(callback), deviceSelection: { items: [] },
-        roles: {}, incidentStatus: {},
+        roles: {}, incidentStatus: {}, incidentLevels,
         operations: {
           incidents: async query => { requests.push(query); return { items: [], total: 0, page: 1, page_size: 10 } },
           logs: async query => { requests.push(query); return { items: [], coverage_warnings: [], next_cursor: null } },
@@ -675,10 +676,10 @@ for (const method of ['saveDatabaseConfiguration', 'saveWeldingConfiguration', '
     const originalFetch = globalThis.fetch
     try {
       await reportCache.read('database-runtime-test', () => 'old')
-      globalThis.fetch = async () => ({ ok: false, json: async () => ({ detail: '保存失败' }) })
+      globalThis.fetch = async () => Response.json({ detail: '保存失败' }, { status: 500 })
       await assert.rejects(mutate(), /保存失败/)
       assert.equal(await reportCache.read('database-runtime-test', () => 'unexpected'), 'old')
-      globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: { restart_required: false } }) })
+      globalThis.fetch = async () => Response.json({ success: true, data: { restart_required: false } })
       await mutate()
       assert.equal(await reportCache.read('database-runtime-test', () => 'new'), 'new')
     } finally { globalThis.fetch = originalFetch; reportCache.clear() }

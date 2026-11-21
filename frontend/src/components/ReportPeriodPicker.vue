@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { createActivationBinding } from '../utils/activationTimer.ts'
 import { formatChineseDate } from '../utils/dateDisplay'
@@ -114,7 +116,7 @@ function closePanel({ focus = false } = {}) {
   if (!open.value) return
   open.value = false
   validationError.value = ''
-  if (focus) nextTick(() => trigger.value?.$el.focus())
+  if (focus) nextTick(() => trigger.value?.$el.focus()).catch(reportAsyncError)
 }
 
 function selectPreset(item: { start: string; end: string }) {

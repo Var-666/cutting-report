@@ -77,13 +77,13 @@ def fetch_all(config: DatabaseSourceConfig, sql: str, parameters: tuple[Any, ...
 def main() -> None:
     from app.config import Settings
     from app.core.sql_capacity import SqlCapacity
-    from app.database.sqlserver import SqlServerClient
+    from app.database.sqlserver import SqlServerClient, sqlserver_driver_errors
     try:
         config, sql, parameters = pickle.load(sys.stdin.buffer)
         with inherited_sql_permit(), operation_deadline(config.connect_timeout + config.query_timeout):
             result = SqlServerClient(config, capacity=SqlCapacity(Settings())).fetch_all(sql, parameters)
         response = (True, result)
-    except Exception as exc:
+    except (pickle.PickleError, EOFError, OSError, RuntimeError, *sqlserver_driver_errors()) as exc:
         # ODBC exception text can contain credentials; do not forward it across the boundary.
         response = (False, type(exc).__name__)
     pickle.dump(response, sys.stdout.buffer, protocol=pickle.HIGHEST_PROTOCOL)

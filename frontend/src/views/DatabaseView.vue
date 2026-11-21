@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { ConnectionTestResult, DatabaseConfiguration, DatabaseSource, DatabaseStatus, SaveResult, SqlConnection, WeldingConnection } from '../types/configuration'
 
 import { toError } from '../utils/errors'
@@ -88,7 +90,7 @@ watch(configurationLine, () => {
   testResult.value = null
   testError.value = ''
   testSource.value = weldingScope.value ? 'welding' : 'sqlserver'
-  if (configurationLine.value) { void loadConfiguration(); void loadStatus() }
+  if (configurationLine.value) { loadConfiguration().catch(reportAsyncError); loadStatus().catch(reportAsyncError) }
 })
 watch(testIsWelding, () => { testResult.value = null; testError.value = '' })
 
@@ -177,18 +179,20 @@ async function saveConfiguration(weldingOnly = false, edited: ConnectionEditor |
   configurationSaving.value = true
   configurationError.value = ''
   configurationResult.value = null
+  const currentConfiguration = () => databaseConfiguration.value
   try {
-    if (!databaseConfiguration.value) return false
-    const weldingProfile = edited?.key === 'welding' ? edited.profile : databaseConfiguration.value.welding
+    const settings = currentConfiguration()
+    if (!settings) return false
+    const weldingProfile = edited?.key === 'welding' ? edited.profile : settings.welding
     const payload: DatabaseConfiguration = {
-      production: databaseConfiguration.value.production, worker: databaseConfiguration.value.worker, file: databaseConfiguration.value.file,
-      data_source_mode: databaseConfiguration.value.data_source_mode,
-      worker_database_auth_enabled: databaseConfiguration.value.worker_database_auth_enabled,
-      file_database_enabled: databaseConfiguration.value.file_database_enabled,
+      production: settings.production, worker: settings.worker, file: settings.file,
+      data_source_mode: settings.data_source_mode,
+      worker_database_auth_enabled: settings.worker_database_auth_enabled,
+      file_database_enabled: settings.file_database_enabled,
       welding: weldingProfile ? { ...weldingProfile, password: weldingProfile.password || null } : null,
     }
     for (const source of configurationSources) {
-      const value = edited && edited.key === source.key ? edited.profile : databaseConfiguration.value[source.key]
+      const value = edited && edited.key === source.key ? edited.profile : settings[source.key]
       payload[source.key] = {
         host: value.host,
         port: value.port,
@@ -201,17 +205,19 @@ async function saveConfiguration(weldingOnly = false, edited: ConnectionEditor |
       }
     }
     const result = weldingOnly && payload.welding ? await saveWeldingConfiguration(payload.welding, line) : await saveDatabaseConfiguration(payload, line)
-    if (line !== configurationLine.value) return false
+    const saved = currentConfiguration()
+    if (!saved || line !== configurationLine.value) return false
     configurationResult.value = result
     for (const source of configurationSources) {
-      const value = databaseConfiguration.value[source.key]
+      const value = saved[source.key]
       if (value.password) value.password_configured = true
       value.password = ''
     }
     hasUnsavedChanges.value = false
     await Promise.all([loadStatus(), loadConfiguration()])
-    if (keepSharedDraft && databaseConfiguration.value && line === configurationLine.value) {
-      Object.assign(databaseConfiguration.value, {
+    const reloaded = currentConfiguration()
+    if (keepSharedDraft && reloaded && line === configurationLine.value) {
+      Object.assign(reloaded, {
         data_source_mode: payload.data_source_mode,
         worker_database_auth_enabled: payload.worker_database_auth_enabled,
         file_database_enabled: payload.file_database_enabled,
@@ -252,8 +258,8 @@ async function runConnectionTest() {
 
 onMounted(async () => {
   await loadDevices({ includeLines: true })
-  configurationLine.value = (deviceSelection.items.find(line => line.type === 'cutting') || deviceSelection.items[0])?.id || ''
-  if (!configurationLine.value) void loadStatus()
+  configurationLine.value = (deviceSelection.items.find(line => line.type === 'cutting') ?? deviceSelection.items.at(0))?.id || ''
+  if (!configurationLine.value) loadStatus().catch(reportAsyncError)
 })
 async function selectConfigurationLine(id: string) {
   if (id === configurationLine.value || configurationSaving.value || testing.value) return

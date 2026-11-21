@@ -28,7 +28,7 @@ export function useEnergyReportData({ taskDay, monthlyReport, summaryPeriodStart
     gas_record_count: 0,
     electricity_record_count: 0,
   })
-  const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope?.join(' / ') || deviceSelection.id))
+  const equipmentScopeLabel = computed(() => formatDeviceDisplay(taskDay.value?.equipment_scope.join(' / ') || deviceSelection.id))
   const energyConnected = computed(() => taskDay.value?.energy_connected !== false)
   const configurationError = computed(() => taskDay.value?.configuration_error || '')
   const energyCoverage = computed(() => {

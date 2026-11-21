@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from './api/browserObservations.ts'
+
 import { RouterView } from 'vue-router'
 import { NConfigProvider, NDialogProvider, NMessageProvider, darkTheme, zhCN, dateZhCN, enUS, dateEnUS, useMessage, useThemeVars } from 'naive-ui'
 import { computed, defineComponent, nextTick, onBeforeUnmount, watch, watchEffect } from 'vue'
@@ -28,7 +30,7 @@ watch(() => app.isMobile, mobile => {
     theme.setThemeLayout('vertical')
   } else {
     const backup = localStg.get('backupThemeSettingBeforeIsMobile')
-    if (backup) { theme.setThemeLayout(backup.layout); nextTick(() => { app.siderCollapse = backup.siderCollapse }); localStg.remove('backupThemeSettingBeforeIsMobile') }
+    if (backup) { theme.setThemeLayout(backup.layout); nextTick(() => { app.siderCollapse = backup.siderCollapse }).catch(reportAsyncError); localStg.remove('backupThemeSettingBeforeIsMobile') }
   }
 }, { immediate: true, flush: 'sync' })
 const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')

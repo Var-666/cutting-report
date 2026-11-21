@@ -2,6 +2,7 @@ import type { ReadOptions } from '../types/api'
 import { request } from './client.ts'
 import { createReport, getReportStatus } from './cutting.ts'
 import { throwIfAborted } from '../utils/abort.ts'
+import { toError } from '../utils/errors.ts'
 import { waitForReportPoll } from './reportRequests.ts'
 
 export function createReportKey() {
@@ -40,9 +41,10 @@ export async function waitForReport(reportId: string, { signal, deviceId, onStat
     let job
     try {
       job = await getReportStatus(reportId, { signal, deviceId })
-    } catch (error) {
+    } catch (caught) {
       throwIfAborted(signal)
-      const status = (error as { status?: number })?.status
+      const error = toError(caught)
+      const status = error.status
       if (status && status < 500 && status !== 408 && status !== 429) throw error
       onStatus('暂时无法读取进度，正在重新连接…')
       await waitForReportPoll(signal)

@@ -59,7 +59,7 @@ class SchedulerProcess:
         status = {'scheduler_alive': True, 'stalled_workers': []}
         try:
             status['configuration'] = self.runtime.configuration_diagnostics.observed(self.owner)
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             status['configuration'] = {'error': '配置快照暂不可用'}
         if not self.repository.renew('scheduler', self.owner, ttl=self.LEASE_SECONDS, status=status):
             raise ExecutionLeaseLost('Scheduler 租约失效')

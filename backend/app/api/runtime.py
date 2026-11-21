@@ -35,8 +35,6 @@ def request_settings(request: Request) -> Settings:
         settings = context.settings
     except AttributeError:
         raise RuntimeError("请求运行时未装配配置快照") from None
-    if settings is None:
-        raise RuntimeError("请求运行时未装配配置快照")
     return settings
 
 

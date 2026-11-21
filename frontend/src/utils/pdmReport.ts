@@ -40,7 +40,7 @@ export function pdmReportRegion(section: PdmReportSection, filters: PdmFilters, 
   const queried = !!report && report.group_by === section.groupBy
   const panels = queried ? pdmPanelResults(report, applied, options).filter(panel => section.groupBy === 'summary'
     ? panel.table.key === section.key : panel.table.key.startsWith(`${section.key}:`)) : []
-  return { section, filters: applied, panels, queried, ...(queried && report?.meta ? { meta: report.meta } : {}),
+  return { section, filters: applied, panels, queried, ...(queried ? { meta: report.meta } : {}),
     omittedGroups: queried ? unassignedPdmGroups(report).find(item => item.value === section.kind)?.total ?? 0 : 0 }
 }
 

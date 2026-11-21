@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { PropType } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type { EChartsType as ECharts } from 'echarts/core'
@@ -149,9 +151,9 @@ onMounted(() => {
     topChart?.resize()
   })
   if (root.value) resizeObserver.observe(root.value)
-  refreshCharts()
+  refreshCharts().catch(reportAsyncError)
 })
-onActivated(() => { pageActive.value = true; refreshCharts() })
+onActivated(() => { pageActive.value = true; refreshCharts().catch(reportAsyncError) })
 onDeactivated(() => { pageActive.value = false })
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()

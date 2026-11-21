@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NSpin, NTag } from 'naive-ui'
@@ -98,7 +100,7 @@ async function refresh() {
     }
   }
 }
-watch(() => statusOnly, () => { overview.value = null; status.value = null; void refresh() }, { immediate: true })
+watch(() => statusOnly, () => { overview.value = null; status.value = null; refresh().catch(reportAsyncError) }, { immediate: true })
 onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
 </script>
 

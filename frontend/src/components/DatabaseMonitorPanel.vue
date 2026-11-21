@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { NAlert, NButton, NForm, NFormItem, NInput, NInputNumber, NModal } from 'naive-ui'
 import DatabaseMonitorTable from './DatabaseMonitorTable.vue'
@@ -50,10 +52,11 @@ async function load(targetPage = page.value) {
   if (!active || controller) return
   const requestController = new AbortController()
   controller = requestController
+  const requestIsCurrent = () => active && controller === requestController && !requestController.signal.aborted
   loading.value = true
   try {
     const [targets, history] = await Promise.all([listDatabaseMonitors({ signal: controller.signal }), listDatabaseMonitorIncidents(targetPage, { signal: controller.signal })])
-    if (!active || controller !== requestController || requestController.signal.aborted) return
+    if (!requestIsCurrent()) return
     items.value = targets.items
     timezone.value = targets.timezone
     incidents.value = history.items
@@ -62,7 +65,7 @@ async function load(targetPage = page.value) {
     now.value = Date.now() / 1000
     error.value = ''
   } catch (caught) {
-    if (active && !requestController.signal.aborted) error.value = toError(caught).message
+    if (requestIsCurrent()) error.value = toError(caught).message
   } finally {
     if (controller === requestController) { controller = null; loading.value = false }
   }
@@ -93,7 +96,7 @@ async function save() {
     await saveDatabaseMonitor({ ...draft.value, port: draft.value.port, enabled: existing?.enabled ?? true }, editingId.value)
     dirty.value = false
     showEditor.value = false
-    globalThis.window?.$message?.success('监控目标已保存')
+    globalThis.window.$message?.success('监控目标已保存')
     controller?.abort()
     controller = null
     await load()
@@ -118,7 +121,7 @@ async function remove(item: DatabaseMonitor) {
   operationError.value = ''
   try {
     await deleteDatabaseMonitor(item.monitor_id)
-    globalThis.window?.$message?.success('监控目标已删除')
+    globalThis.window.$message?.success('监控目标已删除')
     controller?.abort(); controller = null
     await load()
     return true
@@ -128,7 +131,7 @@ async function remove(item: DatabaseMonitor) {
   } finally {
     busy.value = false
     if (!items.value.some(target => target.monitor_id === item.monitor_id)) {
-      void nextTick(() => addButton.value?.$el?.focus())
+      nextTick(() => addButton.value?.$el?.focus()).catch(reportAsyncError)
     }
   }
 }

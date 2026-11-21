@@ -112,7 +112,7 @@ async function copyLog() {
   if (!log) return
   try {
     await navigator.clipboard.writeText(JSON.stringify(log, null, 2))
-    globalThis.window?.$message?.success('日志已复制')
+    globalThis.window.$message?.success('日志已复制')
   } catch { error.value = '复制失败，可展开结构化字段后手动复制。' }
 }
 </script>

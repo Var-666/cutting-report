@@ -1,4 +1,6 @@
 <script setup lang="ts" generic="T extends string | number | boolean = string">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { ChangeEvent } from '../types/api'
 import type { SelectInst, SelectProps } from 'naive-ui'
 import type { ObjectDirective } from 'vue'
@@ -55,7 +57,7 @@ function syncAccessibility(el: HTMLElement) {
   }
 }
 const vSelectAccessibility: ObjectDirective<HTMLElement> = { mounted: syncAccessibility, updated: syncAccessibility }
-function syncActiveOption() { void nextTick(() => { if (root.value) syncAccessibility(root.value) }) }
+function syncActiveOption() { nextTick(() => { if (root.value) syncAccessibility(root.value) }).catch(reportAsyncError) }
 const optionProps: SelectProps['nodeProps'] = option => ({
   id: `${menuId}-option-${option.value}`, role: 'option',
   'aria-selected': option.value === selectedValue.value, 'aria-disabled': Boolean(option.disabled),

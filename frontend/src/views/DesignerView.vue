@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { useDesignerQueryPreview } from '../composables/useDesignerQueryPreview'
 import type { DesignerDefinition, DesignerResource, DesignerResources, QueryTask, ReportTemplate } from '../types/designer'
 import { toError } from '../utils/errors'
@@ -47,11 +49,12 @@ const hasUnsavedChanges = computed(() => isDirty('query-tasks') || isDirty('temp
 const canDiscard = useUnsavedChanges(hasUnsavedChanges, '离开将丢弃尚未保存的报表设计。', saving)
 const confirm = useConfirm()
 let disposed = false
+const isDisposed = () => disposed
 onBeforeUnmount(() => { disposed = true })
 
 watch(activeTab, (tab) => {
   if (route.query.tab === tab) return
-  router.replace({ query: { ...route.query, tab } })
+  router.replace({ query: { ...route.query, tab } }).catch(reportAsyncError)
 })
 watch(() => route.query.tab, (tab) => {
   if (tabs.some((item) => item.id === tab)) activeTab.value = tab
@@ -68,7 +71,7 @@ function moveTab(event: KeyboardEvent, index: number) {
     : event.key === 'End' ? tabs.length - 1
       : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
   activeTab.value = tabs[nextIndex].id
-  nextTick(() => document.getElementById(`designer-tab-${tabs[nextIndex].id}`)?.focus())
+  nextTick(() => document.getElementById(`designer-tab-${tabs[nextIndex].id}`)?.focus()).catch(reportAsyncError)
 }
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
@@ -134,7 +137,7 @@ async function loadResources() {
       listDesignerResources('templates', adminToken.value),
       listDesignerResources('definitions', adminToken.value),
     ])
-    if (disposed) return
+    if (isDisposed()) return
     queryTasks.value = queries.items
     templates.value = templateData.items
     definitions.value = definitionData.items
@@ -153,7 +156,7 @@ async function mayReplaceDraft(resource: keyof DesignerResources) {
   return await canDiscard(`替换当前${resourceLabels[resource]}将丢弃该草稿的修改。`, isDirty(resource))
 }
 async function chooseQuery(item?: QueryTask) {
-  if (!await mayReplaceDraft('query-tasks') || disposed || saving.value) return
+  if (!await mayReplaceDraft('query-tasks') || isDisposed() || saving.value) return
   queryDraft.value = item ? clone(item) : blankQuery()
   markSaved('query-tasks')
   queryValidation.value = null
@@ -162,7 +165,7 @@ async function chooseQuery(item?: QueryTask) {
   notice.value = ''
 }
 async function chooseTemplate(item?: ReportTemplate, copy = false) {
-  if (!await mayReplaceDraft('templates') || disposed || saving.value) return
+  if (!await mayReplaceDraft('templates') || isDisposed() || saving.value) return
   templateDraft.value = item && !copy ? clone(item) : blankTemplate(item ?? null)
   if (copy) savedDrafts.templates = JSON.stringify(blankTemplate())
   else markSaved('templates')
@@ -170,7 +173,7 @@ async function chooseTemplate(item?: ReportTemplate, copy = false) {
   notice.value = ''
 }
 async function chooseDefinition(item?: DesignerDefinition) {
-  if (!await mayReplaceDraft('definitions') || disposed || saving.value) return
+  if (!await mayReplaceDraft('definitions') || isDisposed() || saving.value) return
   definitionDraft.value = item ? clone(item) : blankDefinition()
   markSaved('definitions')
   error.value = ''
@@ -183,7 +186,7 @@ async function saveResource(resource: keyof DesignerResources, draft: DesignerRe
   try {
     const id = String(Reflect.get(draft, idKey) || '')
     const saved = await saveDesignerResource(resource, draft, id, adminToken.value)
-    if (disposed) return
+    if (isDisposed()) return
     if (resource === 'query-tasks' && 'sql_text' in saved) queryDraft.value = clone(saved)
     if (resource === 'templates' && 'config' in saved) templateDraft.value = clone(saved)
     if (resource === 'definitions' && 'visual_config' in saved) definitionDraft.value = clone(saved)
@@ -198,17 +201,18 @@ async function saveResource(resource: keyof DesignerResources, draft: DesignerRe
 
 async function removeResource(resource: keyof DesignerResources, draft: DesignerResource, idKey: string) {
   const id = String(Reflect.get(draft, idKey) || '')
-  if (!id || draft.is_builtin || loading.value || saving.value) return
+  const isSaving = () => saving.value
+  if (!id || draft.is_builtin || loading.value || isSaving()) return
   const name = JSON.parse(savedDrafts[resource])?.name || draft.name
   if (!await confirm({
     title: `删除${resourceLabels[resource]}？`,
     content: `将删除“${name}”。仍被其他设计引用的资源受系统限制。${isDirty(resource) ? '删除成功后，当前草稿也会丢弃。' : ''}`,
     positiveText: `删除${resourceLabels[resource]}`, type: 'error',
-  }) || disposed || saving.value || drafts[resource].value !== draft) return
+  }) || isDisposed() || isSaving() || drafts[resource].value !== draft) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     await deleteDesignerResource(resource, id, adminToken.value)
-    if (disposed) return
+    if (isDisposed()) return
     notice.value = '删除成功'
     if (resource === 'query-tasks') queryDraft.value = blankQuery()
     if (resource === 'templates') templateDraft.value = blankTemplate()

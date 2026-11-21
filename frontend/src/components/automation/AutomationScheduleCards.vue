@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NButton, NEmpty, NTag } from 'naive-ui'
 import AppIcon from '../AppIcon.vue'
 import AutomationRunProgress from './AutomationRunProgress.vue'
@@ -6,11 +7,12 @@ import { formatChineseDateTime as formatDateTime } from '../../utils/dateDisplay
 import type { AutomationExecution, AutomationSchedule } from '../../types/automation'
 import { formatDeviceDisplay } from '../../utils/deviceDisplay'
 
-defineProps<{
+const props = defineProps<{
   schedules: AutomationSchedule[]; searching?: boolean; runningScheduleIds?: string[]; cancellableScheduleIds?: string[]
   updatingScheduleIds?: ReadonlySet<string>
-  executions?: Record<string, AutomationExecution>; reportLabels: Record<string, string>; scheduleLabels: Record<string, string>
+  executions?: Partial<Record<string, AutomationExecution>>; reportLabels: Record<string, string>; scheduleLabels: Record<string, string>
 }>()
+const cards = computed(() => props.schedules.map(item => ({ item, execution: props.executions?.[item.schedule_id] })))
 const emit = defineEmits<{
   run: [item: AutomationSchedule]; cancel: [execution: AutomationExecution]; edit: [item: AutomationSchedule]
   toggle: [item: AutomationSchedule]; remove: [item: AutomationSchedule]
@@ -26,7 +28,7 @@ function scheduleText(item: AutomationSchedule) {
 <template>
   <NEmpty v-if="!schedules.length" class="schedule-empty" :description="searching ? '未找到匹配的定时任务' : '尚未创建定时任务'" />
   <div v-else class="schedule-grid" aria-label="定时任务列表">
-    <article v-for="item in schedules" :key="item.schedule_id" class="schedule-card" :class="{ 'schedule-card--disabled': !item.enabled }" :aria-label="item.name">
+    <article v-for="{ item, execution } in cards" :key="item.schedule_id" class="schedule-card" :class="{ 'schedule-card--disabled': !item.enabled }" :aria-label="item.name">
       <header class="card-heading">
         <span class="card-icon"><AppIcon name="calendar" :size="20" tone="current" /></span>
         <div class="card-title">
@@ -49,8 +51,8 @@ function scheduleText(item: AutomationSchedule) {
         <div><dt>SMTP 已接收</dt><dd>{{ item.sent_count || 0 }}</dd></div>
         <div><dt>发送失败</dt><dd :class="{ 'card-failed': item.failed_count }">{{ item.failed_count || 0 }}</dd></div>
       </dl>
-      <AutomationRunProgress v-if="executions?.[item.schedule_id]" :execution="executions[item.schedule_id]"
-        :cancellable="cancellableScheduleIds?.includes(item.schedule_id)" @cancel="emit('cancel', executions[item.schedule_id])" />
+      <AutomationRunProgress v-if="execution" :execution="execution"
+        :cancellable="cancellableScheduleIds?.includes(item.schedule_id)" @cancel="emit('cancel', execution)" />
       <p v-else class="last-status">{{ scheduleLabels[item.last_status || ''] || item.last_status || '尚未执行' }}</p>
       <footer class="card-actions">
         <NButton type="primary" :disabled="runningScheduleIds?.includes(item.schedule_id)" @click="emit('run', item)">

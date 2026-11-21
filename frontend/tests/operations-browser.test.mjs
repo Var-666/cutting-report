@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { observeBrowserErrors, reportApiFailure } from '../src/api/browserObservations.ts'
+import { observeBrowserErrors, reportApiFailure, reportAsyncError } from '../src/api/browserObservations.ts'
 import { operations } from '../src/api/operations.ts'
 import { incidentExplanation, incidentLogQuery, operationFeature, operationLocation, operationMessage, operationSource, operationStages, stamp } from '../src/components/operations/presentation.ts'
 
@@ -59,11 +59,18 @@ test('browser observations upload allowlisted summaries once and do not retry', 
   reportApiFailure('/api/v1/operations/browser', 503)
   reportApiFailure('/api/v1/reports?token=private-token', 502, 'web_a1')
   reportApiFailure('/api/v1/reports', 502, 'web_second')
+  const logged = t.mock.method(console, 'error', () => {})
+  const failure = new Error('private async error details')
+  const cancelled = new DOMException('cancelled', 'AbortError')
+  await Promise.reject(cancelled).catch(reportAsyncError)
+  await Promise.reject(failure).catch(reportAsyncError)
+  assert.deepEqual(logged.mock.calls.map(call => call.arguments), [[cancelled], [failure]])
   await Promise.resolve()
   assert.deepEqual(calls, [
     { url: '/api/v1/operations/browser', body: { kind: 'vue' } },
     { url: '/api/v1/operations/browser', body: { kind: 'javascript' } },
     { url: '/api/v1/operations/browser', body: { kind: 'api', request_id: 'web_a1' } },
+    { url: '/api/v1/operations/browser', body: { kind: 'promise' } },
   ])
 })
 

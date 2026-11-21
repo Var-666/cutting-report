@@ -8,10 +8,11 @@ const props = defineProps({
   tone: { type: String, default: '' },
 })
 
-const palettes: Record<string, string[]> = {
+const defaultPalette = ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)']
+const palettes: Partial<Record<string, string[]>> = {
   current: ['currentColor', 'currentColor'],
   muted: ['var(--text-color-2)', 'var(--text-color-3)'],
-  blue: ['rgb(var(--primary-color))', 'rgb(var(--primary-color) / .65)'],
+  blue: defaultPalette,
   teal: ['rgb(var(--info-color))', 'rgb(var(--info-color) / .65)'],
   green: ['rgb(var(--success-color))', 'rgb(var(--success-color) / .65)'],
   amber: ['rgb(var(--warning-color))', 'rgb(var(--warning-color) / .65)'],
@@ -21,7 +22,7 @@ const palettes: Record<string, string[]> = {
   light: ['var(--theme-on-primary-color)', 'var(--theme-on-primary-color)'],
 }
 
-const iconTones: Record<string, string> = {
+const iconTones: Partial<Record<string, string>> = {
   home: 'sky', report: 'blue', bell: 'amber', send: 'violet', settings: 'teal',
   calendar: 'blue', tasks: 'sky', ruler: 'teal', clock: 'violet', factory: 'green',
   zap: 'amber', wind: 'sky', trend: 'teal', activity: 'violet', file: 'teal',
@@ -31,7 +32,7 @@ const iconTones: Record<string, string> = {
   'chevron-right': 'blue', database: 'teal', user: 'sky', logout: 'red',
 }
 
-const palette = computed(() => palettes[props.tone || iconTones[props.name]] || palettes.blue)
+const palette = computed(() => palettes[props.tone || iconTones[props.name] || 'blue'] ?? defaultPalette)
 const gradientId = `app-icon-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 const gradientPaint = computed(() => `url(#${gradientId})`)
 const iconStyle = computed(() => ({

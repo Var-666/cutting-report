@@ -35,13 +35,13 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
     }
   })
   const monthlyRecords = computed(() => monthlyReport.value?.monthly_records || [])
-  const total = computed(() => (report.value?.snapshot?.stale && !report.value.snapshot.data_as_of ? null : report.value?.current_month_total) || {
+  const total = computed(() => (report.value?.snapshot.stale && !report.value.snapshot.data_as_of ? null : report.value?.current_month_total) || {
     task_count: null,
     cut_length_m: null,
     groove_length_m: null,
     work_time_seconds: null,
   })
-  const monthlyTotal = computed(() => (monthlyReport.value?.snapshot?.stale && !monthlyReport.value.snapshot.data_as_of ? null : monthlyReport.value?.twelve_month_total) || {
+  const monthlyTotal = computed(() => (monthlyReport.value?.snapshot.stale && !monthlyReport.value.snapshot.data_as_of ? null : monthlyReport.value?.twelve_month_total) || {
     task_count: null,
     cut_length_m: null,
     groove_length_m: null,
@@ -60,12 +60,12 @@ export function useLeadershipReportData({ report, monthlyReport, appliedPeriodSt
     return new Intl.NumberFormat('zh-CN', {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
-    }).format(Number(value || 0))
+    }).format(Number(value))
   }
 
   function formatDuration(value: unknown) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
-    const totalSeconds = Math.max(0, Math.round(Number(value || 0)))
+    const totalSeconds = Math.max(0, Math.round(Number(value)))
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
     const seconds = totalSeconds % 60

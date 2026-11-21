@@ -11,7 +11,7 @@ const selectedDefinitionQuery = computed(() => props.queryTasks.find((item) => i
 const definitionFields = computed(() => selectedDefinitionQuery.value?.columns || [])
 function addMetric() {
   if (!definitionDraft.value) return
-  const field = definitionFields.value.find((item) => item.type === 'number') || definitionFields.value[0]
+  const field = definitionFields.value.find((item) => item.type === 'number') ?? definitionFields.value.at(0)
   if (field) definitionDraft.value.visual_config.metrics.push({ field: field.field, label: field.label, aggregation: 'sum', unit: field.unit })
 }
 function removeMetric(index: number) {

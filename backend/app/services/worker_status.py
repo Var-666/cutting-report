@@ -4,6 +4,8 @@ import logging
 from threading import Lock
 from time import monotonic
 
+from psycopg import Error as PostgresError
+
 from app.core.operations_logging import event
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import PostgresDatabase
@@ -38,7 +40,8 @@ def role_health(settings, role):
             status = CoordinationRepository(database).worker_status(role)
         print(json.dumps({k:v for k,v in status.items() if k!='configuration'},ensure_ascii=False))
         return 0 if role_ready(role,status) else 1
-    except Exception: return 1
+    except (PostgresError, OSError):
+        return 1
 
 
 class WorkerStatusReader:
@@ -71,7 +74,7 @@ class WorkerStatusReader:
                         'automation_alive':role_ready('automation',roles['automation']),
                         'email_alive':bool(roles['automation'].get('email_alive')) and roles['automation']['state']=='running',
                         'scheduler_alive':role_ready('scheduler',roles['scheduler'])}
-                except Exception:
+                except (PostgresError, OSError):
                     if self._cached.get('database_available') is not False:
                         event(logger, logging.ERROR, 'PostgreSQL 状态库不可用', error_code='POSTGRES_UNAVAILABLE',
                               incident=True, exc_info=True)

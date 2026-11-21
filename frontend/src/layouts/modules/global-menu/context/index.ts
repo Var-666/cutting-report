@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../../../../api/browserObservations.ts'
 import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 type RouteKey = string;
@@ -57,7 +58,7 @@ function useMixMenu() {
     setActiveFirstLevelMenuKey(key);
 
     if (!isActiveFirstLevelMenuHasChildren.value || allMenus.value.find(menu => menu.key === key)?.routeName) {
-      routerPushByKeyWithMetaQuery(key);
+      routerPushByKeyWithMetaQuery(key)?.catch(reportAsyncError);
     }
   }
 
@@ -91,7 +92,7 @@ function useMixMenu() {
     setActiveSecondLevelMenuKey(key);
 
     if (!isActiveSecondLevelMenuHasChildren.value) {
-      routerPushByKeyWithMetaQuery(key);
+      routerPushByKeyWithMetaQuery(key)?.catch(reportAsyncError);
     }
   }
 
@@ -107,10 +108,6 @@ function useMixMenu() {
     }
 
     const secondLevelFirstMenu = secondLevelMenus.value[0];
-
-    if (!secondLevelFirstMenu) {
-      return null;
-    }
 
     function findDeepest(menu: App.Global.Menu): RouteKey {
       if (!menu.children?.length) {

@@ -75,7 +75,7 @@ class LlmConfigurationService:
             if self.runtime is not None:
                 try:
                     prepared = self.runtime.prepare(merged)
-                except Exception:
+                except (OSError, ValueError, RuntimeError):
                     raise RuntimeSettingsSaveError("模型配置暂无法应用，保留当前模型") from None
             try:
                 write_runtime_env(path, values)
@@ -97,14 +97,16 @@ class LlmConfigurationService:
         if not key:
             raise ValueError("请先填写模型接口密钥")
         try:
-            with httpx.Client(timeout=15, follow_redirects=False) as client:
-                with client.stream("GET", payload.base_url + "/models", headers={"Authorization": "Bearer " + key}) as response:
-                    response.raise_for_status()
-                    content = bytearray()
-                    for chunk in response.iter_bytes():
-                        content.extend(chunk)
-                        if len(content) > 1_048_576:
-                            raise ModelCatalogError("模型列表超过容量限制，请手工输入模型 ID")
+            with (
+                httpx.Client(timeout=15, follow_redirects=False) as client,
+                client.stream("GET", payload.base_url + "/models", headers={"Authorization": "Bearer " + key}) as response,
+            ):
+                response.raise_for_status()
+                content = bytearray()
+                for chunk in response.iter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 1_048_576:
+                        raise ModelCatalogError("模型列表超过容量限制，请手工输入模型 ID")
             body = json.loads(content)
             rows = body.get("data") if isinstance(body, dict) else None
             if not isinstance(rows, list) or any(

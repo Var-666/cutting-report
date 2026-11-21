@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { AnalysisRequest, AnalysisResult, LeadershipReport } from '../types/reports'
 import type { PropType } from 'vue'
 
@@ -127,6 +129,7 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
   requestController = new AbortController()
   const signal = requestController.signal
   const sequence = ++requestSequence
+  const requestIsCurrent = () => !signal.aborted && sequence === requestSequence
   activeRequestKey = targetKey
   loading.value = true
   readingLatest.value = latestOnly
@@ -147,13 +150,13 @@ async function loadAnalysis(force = false, targetKey = requestKey()) {
       reportType: props.reportType,
       reportDate: props.reportDate,
     }, { signal }) : await generate()
-    if (signal.aborted || scope !== queryScope() || sequence !== requestSequence) return
+    if (!requestIsCurrent() || scope !== queryScope()) return
     if (latestOnly) checkedCacheScope = scope
     if (latestOnly && !result && !analysis.value && props.ready) {
       readingLatest.value = false
       result = await generate()
     }
-    if (activationTimer.isActive() && !signal.aborted && sequence === requestSequence && targetKey === requestKey()) {
+    if (activationTimer.isActive() && requestIsCurrent() && targetKey === requestKey()) {
       if (result?.status === 'success' && result.mode === 'model' && (!latestOnly || !analysis.value?.generated_at || !result.generated_at
           || result.generated_at >= analysis.value.generated_at)) analysis.value = result
       if (props.ready) displayedRequestKey = targetKey
@@ -184,7 +187,7 @@ function pollLatestAnalysis() {
       || loading.value || sourceCheckController) return
   if (nextAnalysisRetryAt && Date.now() < nextAnalysisRetryAt) return
   if (!props.versionCheckEnabled && (!nextAnalysisRetryAt || Date.now() < nextAnalysisRetryAt)) return
-  void loadAnalysis(false)
+  loadAnalysis(false).catch(reportAsyncError)
 }
 
 function scheduleAutomaticAnalysis() {
@@ -210,7 +213,7 @@ function scheduleAutomaticAnalysis() {
     loading.value = false
     readingLatest.value = false
     if (scope !== displayedScope) error.value = ''
-    if (canPrefetch && !analysis.value && checkedCacheScope !== scope) void loadAnalysis(false, targetKey)
+    if (canPrefetch && !analysis.value && checkedCacheScope !== scope) loadAnalysis(false, targetKey).catch(reportAsyncError)
     return
   }
   if (targetKey === displayedRequestKey || (loading.value && targetKey === activeRequestKey)) return
@@ -222,7 +225,7 @@ function scheduleAutomaticAnalysis() {
   activeRequestKey = ''
   loading.value = false
   if (scope !== displayedScope) nextAnalysisRetryAt = 0
-  void loadAnalysis(false, targetKey)
+  loadAnalysis(false, targetKey).catch(reportAsyncError)
 }
 
 function reloadAnalysis() {
@@ -277,7 +280,7 @@ function pauseAnalysis() {
 onActivated(() => {
   activationTimer.activate()
   scheduleAutomaticAnalysis()
-  if (!sourceCheckTimer) sourceCheckTimer = window.setInterval(() => { void revalidateSource() }, SOURCE_CHECK_INTERVAL_MS)
+  if (!sourceCheckTimer) sourceCheckTimer = window.setInterval(() => { revalidateSource().catch(reportAsyncError) }, SOURCE_CHECK_INTERVAL_MS)
   if (!resultCheckTimer) resultCheckTimer = window.setInterval(pollLatestAnalysis, RESULT_CHECK_INTERVAL_MS)
 })
 onDeactivated(pauseAnalysis)

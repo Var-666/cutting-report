@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { computed, reactive, shallowRef, watch, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { NAlert, NButton, NDatePicker, NInput, NSelect, NTag } from 'naive-ui'
@@ -125,7 +127,7 @@ function apply(value: [number, number] | null = range.value) {
   logPage.value = null
   logIndex.value = 0
   cursors.value = [null]
-  void load(1)
+  load(1).catch(reportAsyncError)
   return true
 }
 
@@ -158,8 +160,8 @@ function refresh() {
     applied.value = { ...applied.value, start: isLogs.value ? new Date(start).toISOString() : undefined,
       end: new Date(end).toISOString() }
     cursors.value = [null]
-    void load(1)
-  } else void load(isLogs.value ? logIndex.value + 1 : incidentPage.value?.page ?? 1)
+    load(1).catch(reportAsyncError)
+  } else load(isLogs.value ? logIndex.value + 1 : incidentPage.value?.page ?? 1).catch(reportAsyncError)
 }
 
 async function exportLogs() {
@@ -197,7 +199,7 @@ function close() {
   incidentId.value = null
   selectedLog.value = null
 }
-function changed() { void load(incidentPage.value?.page ?? 1) }
+function changed() { load(incidentPage.value?.page ?? 1).catch(reportAsyncError) }
 
 watch(() => [mode, route.fullPath], () => {
   close()

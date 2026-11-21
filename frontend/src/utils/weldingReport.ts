@@ -92,8 +92,8 @@ export function weldingKpis(kind: WeldingReportKind, report: WeldingReport | nul
     equipment: [['device_count', '参与作业设备数', '台'], ['robot_station_count', '活跃设备机器人工位数', '组'], ['weld_length_m', '累计焊接长度', 'm'], ['output_per_hour', '单位作业用时产出', 'm/h']],
   } satisfies Record<WeldingReportKind, [keyof WeldingReport['summary'] | 'ambiguous_part_count', string, string][]>
   return definitions[kind].map(([key, title, unit]) => {
-    const pending = Boolean(report?.meta?.pending_metrics?.[key])
-    const value = key === 'ambiguous_part_count' ? report?.meta?.ambiguous_part_count : data?.[key]
+    const pending = Boolean(report?.meta.pending_metrics[key])
+    const value = key === 'ambiguous_part_count' ? report?.meta.ambiguous_part_count : data?.[key]
     return { key, title, unit, value: pending ? '待核实' : value ?? null, pending }
   })
 }

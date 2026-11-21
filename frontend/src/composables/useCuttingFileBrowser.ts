@@ -14,6 +14,8 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
   notice: Ref<string>
   showNotice: (message: string, type?: string) => void
 }) {
+  const isPageActive = () => pageActive.value
+  const canPush = () => systemStatus.value?.can_push === true
   let querySequence = 0
   let directoryController: AbortController | null = null
   const projectsLoaded = ref(false)
@@ -106,7 +108,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
   }
 
   async function toggleCatalogFiles(selected: boolean) {
-    if (loading.value || isDispatching() || !systemStatus.value?.can_push || !selectedProject.value || !selectedCatalog.value) return
+    if (loading.value || isDispatching() || !canPush() || !selectedProject.value || !selectedCatalog.value) return
     const sequence = ++querySequence
     const signal = beginDirectoryRequest()
     loading.value = true
@@ -126,7 +128,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
               page: filePage,
               pageSize: 100,
             }, { signal })
-            if (signal.aborted || !pageActive.value || sequence !== querySequence) return
+            if (signal.aborted || !isPageActive() || sequence !== querySequence) return
             if (!data.items.length && files.length < data.total) throw new Error('文件列表发生变化，请重新查询后全选。')
             files.push(...data.items)
             fileTotal = data.total
@@ -135,7 +137,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
         }
         catalogSelectionRows.value = files
       }
-      if (!systemStatus.value?.can_push) return
+      if (!canPush()) return
       const next = new Map(selectedFiles.value)
       let skipped = 0
       for (const file of selectableRows.value) {
@@ -192,8 +194,8 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
     let projectToOpen = null
     try {
       const data = await listCuttingProjects('', 1000, { signal })
-      if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-      projectOptions.value = data.items || []
+      if (signal.aborted || !isPageActive() || sequence !== querySequence) return
+      projectOptions.value = data.items
       projectsLoaded.value = true
       if (!projectOptions.value.some((project) => String(project.project_id) === selectedProjectId.value)) {
         selectedProjectId.value = projectOptions.value[0] ? String(projectOptions.value[0].project_id) : ''
@@ -249,8 +251,8 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
     catalogLoading.value = true
     try {
       const data = await listCuttingCatalogs(project.project_id, { signal })
-      if (signal.aborted || !pageActive.value || sequence !== querySequence) return
-      let roots = data.tree || []
+      if (signal.aborted || !isPageActive() || sequence !== querySequence) return
+      let roots = data.tree
       // PDM may repeat the project itself as a catalog root. The project is
       // already the first visible node, so begin with its real child folders.
       if (roots.length === 1 && roots[0].children?.length
@@ -270,8 +272,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
 
   function toggleProject(project: CuttingProject) {
     if (selectedProject.value?.project_id !== project.project_id || !catalogTree.value.length) {
-      selectProject(project)
-      return
+      return selectProject(project)
     }
     projectExpanded.value = !projectExpanded.value
   }
@@ -309,7 +310,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
         page: targetPage,
         pageSize,
       }, { signal })
-      if (signal.aborted || !pageActive.value || sequence !== querySequence) return
+      if (signal.aborted || !isPageActive() || sequence !== querySequence) return
       rows.value = data.items
       total.value = data.total
       page.value = targetPage
@@ -329,7 +330,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
   }
 
   async function refreshVisibleFileStatuses() {
-    if (!selectedProject.value || !selectedCatalog.value || !pageActive.value) return
+    if (!selectedProject.value || !selectedCatalog.value || !isPageActive()) return
     const sequence = querySequence
     const data = await listCuttingFiles({
       projectId: selectedProject.value.project_id,
@@ -338,7 +339,7 @@ export function useCuttingFileBrowser({ pageActive, systemStatus, isDispatching,
       page: page.value,
       pageSize,
     }, { force: true })
-    if (!pageActive.value || sequence !== querySequence) return
+    if (!isPageActive() || sequence !== querySequence) return
     const statuses = new Map(data.items.map((row) => [fileKey(row), row.dispatch_status]))
     rows.value = rows.value.map((row) => statuses.has(fileKey(row))
       ? { ...row, dispatch_status: statuses.get(fileKey(row)) }

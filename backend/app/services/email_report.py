@@ -34,10 +34,13 @@ def render_email_report(pdf_path: Path, output_path: Path) -> None:
                 for part in range(math.ceil(height / 2048)):
                     top, bottom = part * 2048, min(height, (part + 1) * 2048)
                     cid = f"report-page-{len(images) + 1}@cutting-report"
-                    with closing(page.render(scale=2, crop=(0, height - bottom, 0, top))) as bitmap:
-                        with bitmap.to_pil() as image, BytesIO() as content:
-                            image.save(content, format="PNG")
-                            images[cid] = base64.b64encode(content.getvalue()).decode("ascii")
+                    with (
+                        closing(page.render(scale=2, crop=(0, height - bottom, 0, top))) as bitmap,
+                        bitmap.to_pil() as image,
+                        BytesIO() as content,
+                    ):
+                        image.save(content, format="PNG")
+                        images[cid] = base64.b64encode(content.getvalue()).decode("ascii")
                     rows.append(
                         '<tr><td style="padding:0;border:0;font-size:0;line-height:0;">'
                         f'<img src="cid:{cid}" alt="{title}，连续内容 {len(images)}" '

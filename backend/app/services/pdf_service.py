@@ -10,7 +10,7 @@ import signal
 import subprocess
 import threading
 from tempfile import TemporaryDirectory
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from hashlib import file_digest
 from time import monotonic
 
@@ -94,7 +94,7 @@ class PdfService:
         operation_timeout_seconds: float | None = None,
         coordination_path: Path | None = None,
     ) -> None:
-        if isinstance(max_waiters, bool) or not isinstance(max_waiters, int) or not 0 <= max_waiters <= 100:
+        if isinstance(max_waiters, bool) or not 0 <= max_waiters <= 100:
             raise ValueError("PDF 最大等待数量必须在 0 到 100 之间")
         if not 0 < queue_timeout_seconds <= 300:
             raise ValueError("PDF 排队期限必须在 0 到 300 秒之间")
@@ -338,12 +338,10 @@ class PdfService:
             return
         pid = getattr(process, "pid", None)
         if pid and os.name == "posix":
-            try:
+            with suppress(OSError):
                 os.killpg(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
         elif pid and os.name == "nt" and process.is_alive():
-            try:
+            with suppress(OSError, subprocess.SubprocessError):
                 subprocess.run(
                     ["taskkill", "/PID", str(pid), "/T", "/F"],
                     check=False,
@@ -351,8 +349,6 @@ class PdfService:
                     stderr=subprocess.DEVNULL,
                     timeout=5,
                 )
-            except (OSError, subprocess.SubprocessError):
-                pass
         if process.is_alive():
             process.terminate()
             process.join(timeout=5)
@@ -360,10 +356,8 @@ class PdfService:
         # run, including processes that ignored SIGTERM. Cleanup the owned
         # session regardless of the root's current liveness.
         if pid and os.name == "posix":
-            try:
+            with suppress(OSError):
                 os.killpg(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
         if process.is_alive():
             process.kill()
             process.join(timeout=1)

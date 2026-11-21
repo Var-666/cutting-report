@@ -60,7 +60,7 @@ class LogPage(Items[LogRecord]):
 
 
 class TimeFilters(BaseModel):
-    start: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC) - timedelta(days=1))
+    start: AwareDatetime | None = None
     end: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     level: Level | None = None
     component: str | None = Field(None, max_length=128)
@@ -76,6 +76,7 @@ class TimeFilters(BaseModel):
 
 
 class LogSelection(TimeFilters):
+    start: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC) - timedelta(days=1))
     role: Role | None = None
     instance_id: str | None = Field(None, max_length=128)
     resource_id: str | None = Field(None, max_length=128)
@@ -111,7 +112,6 @@ class LogFilters(LogSelection):
 
 
 class IncidentFilters(TimeFilters):
-    start: AwareDatetime | None = None
     status: IncidentStatus | None = None
     min_level: Literal['ERROR'] | None = Field(None, description='ERROR 及以上，包括 ERROR 和 CRITICAL')
     page: int = Field(1, ge=1, le=300)

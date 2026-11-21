@@ -1,3 +1,5 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
+import { toError } from '../utils/errors.ts'
 import { lineHome, selectedLineType } from '../utils/productionLines.ts'
 import { navigationSection } from '../router/menus.ts'
 import { onMounted, ref } from 'vue'
@@ -21,7 +23,7 @@ export function useDeviceSelection() {
           const failure = await router.replace(lineHome(deviceSelection.items, id))
           if (failure && !isNavigationFailure(failure, NavigationFailureType.duplicated)) changeDevice(previous)
         }
-        catch (error) { changeDevice(previous); throw error }
+        catch (error) { changeDevice(previous); throw toError(error) }
         return
       }
       const query = navigationSection(route.path) === 'line' ? deviceSwitchQuery(route.name) : null
@@ -32,6 +34,6 @@ export function useDeviceSelection() {
       changeDevice(id)
     } finally { switching.value = false }
   }
-  onMounted(() => { if (!deviceSelection.error) void loadDevices() })
+  onMounted(() => { if (!deviceSelection.error) loadDevices().catch(reportAsyncError) })
   return { deviceSelection, switching, switchDevice, enterLine: (id: string) => switchDevice(id, true), loadDevices }
 }

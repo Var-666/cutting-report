@@ -56,7 +56,7 @@ export function formatTableDateValue(value: unknown, fallback = '--') {
 export function sortReportPeriods<T extends { report_date?: string | null; period_start?: string | null }>(rows: T[], direction = 'asc') {
   const factor = direction === 'desc' ? -1 : 1
   return [...rows].sort((left, right) => (
-    String(left?.report_date || left?.period_start || '')
-      .localeCompare(String(right?.report_date || right?.period_start || '')) * factor
+    String(left.report_date || left.period_start || '')
+      .localeCompare(String(right.report_date || right.period_start || '')) * factor
   ))
 }

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { EChartsType as ECharts } from 'echarts/core'
 import type { EChartsOption } from 'echarts'
 import type { UsageReport } from '../types/usage'
@@ -131,16 +133,16 @@ function query() {
     return
   }
   applied.value = { ...draft }
-  void load()
+  load().catch(reportAsyncError)
 }
 
 function changeGranularity(value: string) {
   draft.granularity = value
   applied.value = { ...applied.value, granularity: value }
-  void load()
+  load().catch(reportAsyncError)
 }
 
-onMounted(() => { void load() })
+onMounted(() => { load().catch(reportAsyncError) })
 onBeforeUnmount(() => {
   disposed = true
   sequence += 1

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from time import monotonic
 from uuid import uuid4
 
+from psycopg import Error as PostgresError
+
 from app.core.operations_logging import event
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
@@ -131,7 +133,7 @@ class AutomationService:
                 )
                 if run and self._create_report_job(run, now):
                     count += 1
-            except Exception as exc:
+            except (PostgresError, OSError, ValueError) as exc:
                 event(logger, logging.ERROR, '自动计划入队失败', error_code='AUTOMATION_SCHEDULE_FAILED',
                       resource_id=schedule['schedule_id'], line_id=schedule.get('device_id'), stage='scheduling',
                       error_type=type(exc).__name__)
@@ -224,7 +226,7 @@ class AutomationService:
                 elif item["report_status"] == "failed":
                     self.report_failed(item["report_id"], item["error_message"] or "报表生成失败", now)
                     recovered += 1
-            except Exception as exc:
+            except (PostgresError, OSError, ValueError) as exc:
                 event(logger, logging.ERROR, '自动计划恢复失败', error_code='AUTOMATION_RECOVERY_FAILED',
                       run_id=item['run_id'], report_id=item['report_id'], stage='recovery', error_type=type(exc).__name__)
         return recovered
@@ -300,7 +302,8 @@ class AutomationService:
             message_id = self.email_service.send(
                 delivery, attachment, settings_snapshot=runtime_settings, report_path=path
             )
-        except Exception as exc:
+        # Any error after SMTP dispatch leaves the delivery outcome uncertain and must prevent a resend.
+        except Exception as exc:  # noqa: BLE001
             elapsed = max(0, monotonic() - started)
             now += timedelta(seconds=elapsed)
             delay = min(

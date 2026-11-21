@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { AnalysisBrief, AnalysisFact, BriefFinding, BusinessReference, LeadershipPeriodRecord, LeadershipReport } from '../api/generated/types.gen'
 import { computed, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -67,7 +69,7 @@ const metrics = computed(() => {
   const report = isLeadership ? props.leadershipReport : null
   const rows = report ? [...report.daily_records].sort((a, b) => a.period_start.localeCompare(b.period_start)) : []
   const sampleDays = rows.filter(row => row.task_count > 0).length
-  const icons: Record<string, string> = isLeadership ? {} : reportMetricIcons[kind]
+  const icons: Partial<Record<string, string>> = isLeadership ? {} : reportMetricIcons[kind]
   return ids.flatMap(id => {
     const fact = factById.value.get(id)
     if (!fact) return []
@@ -81,7 +83,7 @@ const metrics = computed(() => {
 })
 const summaryLines = computed(() => props.brief.summary.split(/\n+/).map(line => line.trim()).filter(Boolean))
 const periodNotice = computed(() => props.brief.data_quality.find(item => item.includes('当前统计周期尚未结束')))
-const findingStyles: Record<string, { label: string; icon: string; tone: string }> = {
+const findingStyles: Partial<Record<string, { label: string; icon: string; tone: string }>> = {
   C_comparison: { label: '生产规模变化', icon: 'trend', tone: 'info' },
   C_project: { label: '工程任务分布', icon: 'grid', tone: 'info' },
   C_project_missing: { label: '工程信息缺口', icon: 'alert', tone: 'warning' },
@@ -104,7 +106,7 @@ const linkedFindings = computed(() => findings.value.filter(item => item.finding
 const recordCount = computed(() => new Set(linkedFindings.value.flatMap(({ finding }) =>
   finding.references.map(reference => `${reference.kind}:${reference.id}`))).size)
 const evidenceRows = computed(() => linkedFindings.value.map(({ finding }) => {
-  const first = finding.references[0]
+  const first = finding.references.at(0)
   const project = finding.references.length === 1 && first?.kind === 'project'
     ? props.leadershipReport?.project_distribution.find(row => row.project_name === first.id) : undefined
   const tasks = finding.references.filter(reference => reference.kind === 'task').length
@@ -145,7 +147,7 @@ function openTask(reference: BusinessReference) {
   const location = analysisTaskLocation(reference, getDeviceId())
   if (!location) return
   selected.value = null
-  void router.push(location)
+  router.push(location).catch(reportAsyncError)
 }
 </script>
 

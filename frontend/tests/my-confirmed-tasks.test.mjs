@@ -8,7 +8,7 @@ import { renderComponent } from './vue-component-helpers.mjs'
 const fetchBefore = globalThis.fetch
 beforeEach(() => setDeviceCatalog({ default_device_id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }] }))
 afterEach(() => { globalThis.fetch = fetchBefore; resetDeviceContext() })
-const response = data => ({ ok: true, json: async () => ({ success: true, data }) })
+const response = data => Response.json({ success: true, data })
 const data = (page = 1, total = 12, task = 'mine') => ({ items: [{ task_id: task }], total, page, page_size: 10,
   start_date: '2026-11-01', end_date: '2026-11-02' })
 

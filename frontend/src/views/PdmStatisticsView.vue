@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
 import { NAlert, NButton } from 'naive-ui'
 import PdmCompletionCards from '../components/pdm/PdmCompletionCards.vue'
@@ -94,7 +96,7 @@ async function loadOverview(mode: ReportReadMode = 'read') {
     if (controller === overviewController) overviewLoading.value = false
   }
 }
-onMounted(() => { void loadOverview(); void loadPanels() })
+onMounted(() => { loadOverview().catch(reportAsyncError); loadPanels().catch(reportAsyncError) })
 onBeforeUnmount(() => {
   panelsController?.abort(); panelsController = undefined
   overviewController?.abort(); overviewController = undefined

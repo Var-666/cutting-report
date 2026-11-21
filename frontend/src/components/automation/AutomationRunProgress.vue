@@ -5,7 +5,7 @@ import type { AutomationExecution } from '../../types/automation'
 
 const props = defineProps<{ execution: AutomationExecution; cancellable?: boolean }>()
 const emit = defineEmits<{ cancel: [] }>()
-const stages: Record<string, { label: string; completed: number }> = {
+const stages: Partial<Record<string, { label: string; completed: number }>> = {
   submitting: { label: '正在提交任务…', completed: 0 },
   queued: { label: '已提交，等待后台准备报表…', completed: 1 },
   generating: { label: '正在生成报表…', completed: 1 },

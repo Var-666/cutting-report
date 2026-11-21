@@ -260,7 +260,7 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
       })
       const createdItems = []
       for (const [index, item] of pushBatch.items.entries()) {
-        const result = created.items?.[index]
+        const result = created.items.at(index)
         if (result && String(result.document_id) !== item.documentId) {
           item.status = 'failed'
           item.error = '任务创建结果与所选文件不一致，请核对派发记录'
@@ -304,7 +304,7 @@ export function useCuttingDispatchBatch({ selectedFiles, clearSelectedFiles, dis
           machine_ip: dispatchForm.machineIp,
           items: [batchRequestItem(item)],
         })
-        if (!applyCreationResult(item, created.items?.[0])) return
+        if (!applyCreationResult(item, created.items.at(0))) return
       }
       await executeBatchItem(item)
     } catch (caught) {

@@ -1,14 +1,24 @@
 /** The storage type */
 export type StorageType = 'local' | 'session';
 
+function isStorageRestricted(error: unknown) {
+  return error instanceof DOMException && (error.name === 'SecurityError' || error.name === 'QuotaExceededError');
+}
+
 export function createStorage<T extends object>(type: StorageType, storagePrefix: string) {
   const memory = new Map<string, string>();
   let stg: Storage | undefined;
-  try { stg = type === 'session' ? window.sessionStorage : window.localStorage; } catch {}
+  if (typeof window !== 'undefined') {
+    try { stg = type === 'session' ? window.sessionStorage : window.localStorage; }
+    catch (error) {
+      if (!isStorageRestricted(error)) throw new Error('读取浏览器存储失败', { cause: error });
+    }
+  }
 
   function access(action: (target: Storage) => void) {
     if (!stg) return;
-    try { action(stg); } catch {
+    try { action(stg); } catch (error) {
+      if (!isStorageRestricted(error)) throw new Error('访问浏览器存储失败', { cause: error });
       // Stay in memory until reload so recovered storage keeps its saved preferences.
       stg = undefined;
     }
@@ -41,20 +51,13 @@ export function createStorage<T extends object>(type: StorageType, storagePrefix
         else memory.set(name, value);
       });
       const json = memory.get(name);
-      if (json) {
-        let storageData: T[K] | null = null;
-
-        try {
-          storageData = JSON.parse(json);
-        } catch {}
-
-        // storageData may be `false` if it is boolean type
-        if (storageData !== null) {
-          return storageData as T[K];
-        }
+      if (!json) return null;
+      try {
+        return JSON.parse(json) as T[K] | null;
+      } catch (error) {
+        if (error instanceof SyntaxError) return null;
+        throw new Error('解析浏览器存储失败', { cause: error });
       }
-
-      return null;
     },
     remove(key: keyof T) {
       const name = `${storagePrefix}${key as string}`;
@@ -75,11 +78,16 @@ export const localStg = createStorage<StorageType.Local>("local", storagePrefix)
 export const sessionStg = createStorage<StorageType.Session>("session", storagePrefix);
 
 // Preserve the theme selected before the official store was installed.
-if (!localStg.get('themeSettings')) {
+if (typeof window !== 'undefined' && !localStg.get('themeSettings')) {
   try {
-    const legacy = JSON.parse(window.localStorage.getItem('cutting-theme') || 'null');
-    if (legacy && /^#[0-9a-f]{6}$/i.test(legacy.color)) {
-      localStg.set('themeSettings', { themeColor: legacy.color, themeScheme: legacy.dark === true ? 'dark' : 'light' });
+    const legacy: unknown = JSON.parse(window.localStorage.getItem('cutting-theme') || 'null');
+    if (legacy && typeof legacy === 'object' && 'color' in legacy
+        && typeof legacy.color === 'string' && /^#[0-9a-f]{6}$/i.test(legacy.color)) {
+      localStg.set('themeSettings', { themeColor: legacy.color, themeScheme: 'dark' in legacy && legacy.dark === true ? 'dark' : 'light' });
     }
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof SyntaxError) && !isStorageRestricted(error)) {
+      throw new Error('迁移主题设置失败', { cause: error });
+    }
+  }
 }

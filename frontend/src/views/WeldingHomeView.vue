@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { WeldingReport, WeldingJobRow } from '../types/welding'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -114,7 +116,7 @@ async function load(force = false, background = false) {
       if (pollCount >= REPORT_POLL_LIMIT) error.value = '等待生产数据更新超时。'
       else {
         pollCount += 1
-        timer = setTimeout(() => { void load(false, true) }, REPORT_POLL_INTERVAL)
+        timer = setTimeout(() => { load(false, true).catch(reportAsyncError) }, REPORT_POLL_INTERVAL)
       }
     }
   } catch (caught) {
@@ -128,7 +130,7 @@ async function copy(value: string) {
   catch { notice.value = '复制失败，请选择流水号后手动复制' }
 }
 function goToPart() {
-  if (detailJob.value?.serial_number) router.push({ name: 'welding-parts', query: { ...reportQuery.value, serial_number: detailJob.value.serial_number } })
+  if (detailJob.value?.serial_number) router.push({ name: 'welding-parts', query: { ...reportQuery.value, serial_number: detailJob.value.serial_number } }).catch(reportAsyncError)
 }
 watch([() => deviceSelection.id, () => line.value?.source_key, () => sourceEnabled.value,
   () => line.value?.type, () => JSON.stringify(query.value)], () => {
@@ -137,7 +139,7 @@ watch([() => deviceSelection.id, () => line.value?.source_key, () => sourceEnabl
   detailJob.value = null
   notice.value = ''
   error.value = ''
-  void load()
+  load().catch(reportAsyncError)
 }, { immediate: true })
 onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); controller?.abort() })
 </script>

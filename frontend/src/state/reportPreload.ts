@@ -13,7 +13,8 @@ import { parseWeldingRouteQuery } from '../utils/weldingRouteState.ts'
 export const reportPreload = reactive({ identity: '', items: [] as { key: string; label: string; status: string }[] })
 let generation = 0
 let completion: Promise<PromiseSettledResult<void>[]> | null = null
-const weldingPages: Record<string, WeldingReportKind> = { '/admin/welding/home': 'dashboard',
+const browser: { location?: Location } = globalThis
+const weldingPages: Partial<Record<string, WeldingReportKind>> = { '/admin/welding/home': 'dashboard',
   '/admin/welding/reports/daily': 'daily', '/admin/welding/reports/jobs': 'jobs',
   '/admin/welding/reports/parts': 'parts', '/admin/welding/reports/equipment': 'equipment' }
 
@@ -27,7 +28,7 @@ export function stopReportPreload() {
 
 export function startReportPreload(
   user: User | null,
-  { pathname = globalThis.location?.pathname || '/admin/home' } = {},
+  { pathname = browser.location?.pathname || '/admin/home' } = {},
 ) {
   if (!user?.user_id || !['admin', 'worker'].includes(user.role)) {
     stopReportPreload()
@@ -44,10 +45,10 @@ export function startReportPreload(
   const active = () => run === generation
   const lineType = selectedLineType(getDevices(), getDeviceId())
   const weldingKind = weldingPages[pathname]
-  const weldingFilters = Object.fromEntries(new URLSearchParams(globalThis.location?.search || ''))
+  const weldingFilters = Object.fromEntries(new URLSearchParams(browser.location?.search || ''))
   const jobs: { key: string; label: string; load: () => Promise<unknown> }[] = lineType === 'welding'
     ? weldingKind ? [{ key: 'welding', label: '焊接报表', load: () => getWeldingReport(weldingKind, parseWeldingRouteQuery(weldingFilters, weldingKind, today)) }] : []
-    : lineType === 'cutting' ? [{ key: 'workshop', label: '车间报表', load: async () => {
+    : [{ key: 'workshop', label: '车间报表', load: async () => {
     const reportDate = user.role === 'worker'
       ? (await getLatestWorkshopProductionDate(today)).report_date || today
       : today
@@ -55,7 +56,7 @@ export function startReportPreload(
     return user.role === 'worker'
       ? listWorkshopTasks({ reportDate, sortMode: 'worker' }, { warmup: true })
       : listWorkshopRangeTasks({ startDate: reportDate, endDate: reportDate })
-  } }] : []
+  } }]
   if (user.role === 'admin' && lineType === 'cutting') {
     jobs.unshift({ key: 'leadership', label: '领导报表', load: () => getLeadershipReport(month) })
     jobs.push({ key: 'equipment', label: '设备报表', load: async () => {

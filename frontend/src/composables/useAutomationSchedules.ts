@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
 import type { Ref } from 'vue'
 import type { ConfirmOptions } from './useConfirm'
 import type { AutomationExecution, AutomationSchedule, SchedulePayload } from '../types/automation'
@@ -16,14 +17,17 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   const saving = ref(false)
   const editingId = ref('')
   const scheduleError = ref('')
-  const executions = reactive<Record<string, AutomationExecution>>({})
-  const runningScheduleIds = computed(() => Object.values(executions).filter(isRunning).map(item => item.schedule_id))
-  const cancellableScheduleIds = computed(() => Object.values(executions).filter(canCancel).map(item => item.schedule_id))
+  const executions = reactive<Partial<Record<string, AutomationExecution>>>({})
+  const activeExecutions = () => Object.values(executions).filter(item => item !== undefined)
+  const runningScheduleIds = computed(() => activeExecutions().filter(isRunning).map(item => item.schedule_id))
+  const cancellableScheduleIds = computed(() => activeExecutions().filter(canCancel).map(item => item.schedule_id))
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const removing = new Set<string>()
   const controllers = new Map<string, AbortController>()
   let active = true
+  const isActive = () => active
   let disposed = false
+  const isDisposed = () => disposed
 
   function isRunning(execution: AutomationExecution) {
     return !['sent', 'failed', 'unknown', 'cancelled', 'submission_failed'].includes(execution.status)
@@ -34,25 +38,25 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   function schedulePoll(execution: AutomationExecution) {
-    if (!active || !execution.run_id || !isRunning(execution) || execution.cancelling) return
+    if (!isActive() || !execution.run_id || !isRunning(execution) || execution.cancelling) return
     const id = execution.schedule_id
     clearTimeout(timers.get(id))
-    timers.set(id, setTimeout(() => { timers.delete(id); void pollExecution(execution) }, 2000))
+    timers.set(id, setTimeout(() => { timers.delete(id); pollExecution(execution).catch(reportAsyncError) }, 2000))
   }
 
   async function pollExecution(execution: AutomationExecution) {
-    if (!active || !execution.run_id) return
+    if (!isActive() || !execution.run_id) return
     const id = execution.schedule_id
     const controller = new AbortController()
     controllers.set(id, controller)
     try {
       const run = await getAutomationRun(execution.run_id, { signal: controller.signal })
-      if (!active || controller.signal.aborted || executions[id] !== execution) return
+      if (!isActive() || controller.signal.aborted || executions[id] !== execution) return
       const changed = execution.status !== run.status
       Object.assign(execution, { status: run.status, last_error: run.last_error, monitoring_error: '' })
       if (changed) await refresh()
     } catch (caught) {
-      if (active && !controller.signal.aborted && executions[id] === execution) {
+      if (isActive() && !controller.signal.aborted && executions[id] === execution) {
         execution.monitoring_error = `进度暂时读取失败：${toError(caught).message}。正在重新读取，请勿重复执行。`
       }
     } finally {
@@ -73,14 +77,14 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   onDeactivated(pauseExecutions)
   onActivated(() => {
     active = true
-    Object.values(executions).forEach(schedulePoll)
+    activeExecutions().forEach(schedulePoll)
   })
   onBeforeUnmount(() => { disposed = true; pauseExecutions() })
   const recipientInputVisible = ref(false)
   const recipientDraft = ref('')
   const recipientError = ref('')
   const emptyForm = (): Omit<Required<SchedulePayload>, 'weekday'> & { weekday: number } => ({
-    device_id: deviceSelection.items.find(line => !line.type || line.type === 'cutting')?.id || '',
+    device_id: deviceSelection.items.find(line => line.type === 'cutting')?.id || '',
     name: '每日车间报表',
     report_type: 'workshop',
     frequency: 'daily',
@@ -196,13 +200,13 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     message.value = ''
     try {
       await saveAutomationSchedule(payload(), editingId.value)
-      if (disposed) return false
+      if (isDisposed()) return false
       message.value = editingId.value ? '定时任务已更新' : '定时任务已创建'
       resetForm()
       await refresh()
       return true
     } catch (caught) {
-      if (!disposed) scheduleError.value = toError(caught).message
+      if (!isDisposed()) scheduleError.value = toError(caught).message
       return false
     } finally {
       saving.value = false
@@ -210,7 +214,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   }
 
   async function runNow(item: AutomationSchedule) {
-    if (disposed || runningScheduleIds.value.includes(item.schedule_id)) return
+    if (isDisposed() || runningScheduleIds.value.includes(item.schedule_id)) return
     const execution = reactive<AutomationExecution>({
       schedule_id: item.schedule_id, schedule_name: item.name, status: 'submitting',
     })
@@ -219,13 +223,13 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     message.value = ''
     try {
       const run = await runAutomationSchedule(item.schedule_id)
-      if (disposed) return
+      if (isDisposed()) return
       Object.assign(execution, { run_id: run.run_id, status: run.status, last_error: run.last_error })
       schedulePoll(execution)
       message.value = `已提交“${item.name}”，报表生成后将自动发送。`
       await refresh()
     } catch (caught) {
-      if (!disposed) {
+      if (!isDisposed()) {
         execution.status = 'submission_failed'
         execution.last_error = `提交未确认：${toError(caught).message}。请先查看发送记录，避免重复执行。`
       }
@@ -247,7 +251,7 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
   async function cancelExecution(execution: AutomationExecution) {
     const id = execution.schedule_id
     const runId = execution.run_id
-    if (!runId || !canCancel(execution) || execution.cancelling || disposed) return
+    if (!runId || !canCancel(execution) || execution.cancelling || isDisposed()) return
     execution.cancelling = true
     clearTimeout(timers.get(id))
     timers.delete(id)
@@ -257,12 +261,12 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
     message.value = ''
     try {
       const result = await cancelAutomationRun(runId)
-      if (disposed) return
+      if (isDisposed()) return
       Object.assign(execution, { status: result.status, last_error: result.last_error, monitoring_error: '' })
       message.value = `已取消“${execution.schedule_name}”的本次发送。`
       await refresh()
     } catch (caught) {
-      if (!disposed) error.value = toError(caught).message
+      if (!isDisposed()) error.value = toError(caught).message
     } finally {
       execution.cancelling = false
       schedulePoll(execution)
@@ -271,20 +275,21 @@ export function useAutomationSchedules({ hasUnsavedChanges, message, error, refr
 
   async function remove(item: AutomationSchedule) {
     const id = item.schedule_id
-    if (saving.value || disposed || removing.has(id)) return
+    const isSaving = () => saving.value
+    if (isSaving() || isDisposed() || removing.has(id)) return
     removing.add(id)
     try {
       if (!await confirm({
         title: '删除定时任务？', content: `“${item.name}”将不再按计划运行。历史发送记录会保留。`,
         positiveText: '删除定时任务', type: 'error',
-      }) || saving.value || disposed) return
+      }) || isSaving() || isDisposed()) return
       await deleteAutomationSchedule(id)
-      if (disposed) return
+      if (isDisposed()) return
       if (editingId.value === id) resetForm()
       message.value = '定时任务已删除'
       await refresh()
     } catch (caught) {
-      if (!disposed) error.value = toError(caught).message
+      if (!isDisposed()) error.value = toError(caught).message
     } finally {
       removing.delete(id)
     }

@@ -102,7 +102,7 @@ class SourceConnectionError(RuntimeError):
 def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacity) -> dict:
     """Probe only SELECT 1; connection success says nothing about business schemas."""
     from time import perf_counter
-    from app.database.sqlserver import SqlServerClient
+    from app.database.sqlserver import SqlServerClient, sqlserver_driver_errors
     from app.database.mysql import MySqlClient, MySqlUnavailable
     from app.core.request_cancellation import SqlRequestCancelled
 
@@ -122,7 +122,7 @@ def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacit
         raise
     except MySqlUnavailable as exc:
         raise SourceConnectionError(str(exc)) from None
-    except Exception:
+    except (OSError, RuntimeError, *sqlserver_driver_errors()):
         raise SourceConnectionError('连接失败，请核对驱动、地址、端口、账号、证书及网络配置') from None
     finally:
         if client is not None:

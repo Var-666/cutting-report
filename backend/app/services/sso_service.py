@@ -129,9 +129,9 @@ class SsoService:
         for name in ('exp', 'iat'):
             if type(claims[name]) not in (int, float) or not math.isfinite(claims[name]):
                 raise ValueError('Invalid token timestamp')
-        if ('azp' in claims or isinstance(claims['aud'], list) and len(claims['aud']) > 1):
-            if claims.get('azp') != self.settings.sso_client_id:
-                raise ValueError('Invalid authorized party')
+        if (('azp' in claims or isinstance(claims['aud'], list) and len(claims['aud']) > 1)
+                and claims.get('azp') != self.settings.sso_client_id):
+            raise ValueError('Invalid authorized party')
         return claims
 
     def _account(self, users: UserRepository, subject: str) -> dict | None:

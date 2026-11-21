@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from app.core.request_cancellation import SqlRequestCancelled
 from app.core.report_deadline import ReportOperationTimeout
+from app.database.sqlserver import sqlserver_driver_errors
 from app.database.bm_projects import BmProjectRepository
 from app.services.query_cache import QueryCache
 
@@ -27,7 +28,7 @@ class ShipNameService:
                 ttl=self.cache_seconds, force=force)
         except (SqlRequestCancelled, ReportOperationTimeout):
             raise
-        except Exception as exc:
+        except (OSError, RuntimeError, *sqlserver_driver_errors()) as exc:
             # External driver text can contain credentials; keep production and confirmations usable.
             logger.warning('BM ship name lookup unavailable type=%s', type(exc).__name__)
             return None

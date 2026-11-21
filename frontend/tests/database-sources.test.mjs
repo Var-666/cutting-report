@@ -13,6 +13,7 @@ function mount(overrides = {}) {
   let state
   const calls = { save: [], test: [], delete: [], toggle: [], list: 0 }
   const bindings = { computed: Vue.computed, nextTick: Vue.nextTick, ref: Vue.ref, watch: Vue.watch, onMounted: Vue.onMounted,
+    globalThis: { window: {} },
     useConfirm: () => async () => true, useUnsavedChanges: (dirty, _message, busy) => () => !busy.value,
     listDatabaseSources: async () => { calls.list++; return { items: [{ ...row }] } },
     getDatabaseSource: async () => ({ ...row, host: 'latest-host' }),

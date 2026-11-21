@@ -142,10 +142,9 @@ class LeadershipSnapshotRepository(PostgresRepository):
             )
             for snapshot in snapshots
         ]
-        with self.connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.executemany(
-                    """
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.executemany(
+                """
                     INSERT INTO leadership_month_snapshots (
                         report_month, daily_json, project_json, total_json,
                         data_as_of, refreshed_at, expires_at, query_duration_ms,
@@ -162,8 +161,8 @@ class LeadershipSnapshotRepository(PostgresRepository):
                         source_fingerprint = excluded.source_fingerprint,
                         snapshot_version = excluded.snapshot_version
                     """,
-                    rows,
-                )
+                rows,
+            )
 
     @staticmethod
     def _from_row(row) -> LeadershipMonthSnapshot:

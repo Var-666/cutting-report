@@ -39,19 +39,20 @@ let clockTimer: number | null = null
 let requestController: AbortController | null = null
 let requestSequence = 0
 let pageActive = false
+const isPageActive = () => pageActive
 
 const openCount = computed(() => incidentSummary.value.open_count || 0)
 const completedCount = computed(() => reportSummary.value.completed_count || 0)
 const severityLabels: Record<string, string> = { warning: '提示', high: '一般', critical: '严重' }
 const reportStatusLabels: Record<string, string> = { generating: '生成中', completed: '已生成', failed: '生成失败' }
-const monitorReady = computed(() => Boolean(status.value?.enabled && status.value?.worker_running))
-const machineLabel = computed(() => formatDeviceDisplay(status.value?.machine_nos?.join('、')) || '未配置设备')
+const monitorReady = computed(() => Boolean(status.value?.enabled && status.value.worker_running))
+const machineLabel = computed(() => formatDeviceDisplay(status.value?.machine_nos.join('、')) || '未配置设备')
 
 const severityTabs = computed(() => [
   { value: 'all', label: '全部', count: incidentSummary.value.all_total || 0 },
-  { value: 'critical', label: '严重', count: incidentSummary.value.severity_counts?.critical || 0 },
-  { value: 'high', label: '一般', count: incidentSummary.value.severity_counts?.high || 0 },
-  { value: 'warning', label: '提示', count: incidentSummary.value.severity_counts?.warning || 0 },
+  { value: 'critical', label: '严重', count: incidentSummary.value.severity_counts.critical || 0 },
+  { value: 'high', label: '一般', count: incidentSummary.value.severity_counts.high || 0 },
+  { value: 'warning', label: '提示', count: incidentSummary.value.severity_counts.warning || 0 },
 ])
 
 const filteredIncidents = computed(() => incidents.value.map((item) => ({
@@ -88,7 +89,7 @@ function formatBytes(value: number | null | undefined) {
 }
 
 function durationLabel(item: AlarmIncident) {
-  const startValue = item?.first_start_time
+  const startValue = item.first_start_time
   if (!startValue) return '--'
   const start = new Date(startValue).getTime()
   const endValue = item.status === 'closed' ? item.latest_remove_time : currentTime.value
@@ -169,7 +170,7 @@ function stopRefreshTimer() {
 
 function scheduleRefresh() {
   stopRefreshTimer()
-  if (!pageActive) return
+  if (!isPageActive()) return
   refreshTimer = window.setTimeout(async () => {
     refreshTimer = null
     await loadData()
@@ -178,7 +179,7 @@ function scheduleRefresh() {
 }
 
 async function loadData({ incidentPage: targetIncidentPage = incidentPage.value, reportPage: targetReportPage = reportPage.value }: { incidentPage?: number; reportPage?: number } = {}) {
-  if (!pageActive || requestController) return
+  if (!isPageActive() || requestController) return
   const controller = new AbortController()
   const sequence = ++requestSequence
   requestController = controller
@@ -196,7 +197,7 @@ async function loadData({ incidentPage: targetIncidentPage = incidentPage.value,
       listAlarmReports({ limit: 50 }, { signal: controller.signal }),
       listAlarmReportPage({ page: targetReportPage, pageSize: reportPageSize }, { signal: controller.signal }),
     ])
-    if (!pageActive || controller.signal.aborted || sequence !== requestSequence) return
+    if (!isPageActive() || controller.signal.aborted || sequence !== requestSequence) return
     status.value = statusData
     incidents.value = incidentData.items
     incidentPage.value = incidentData.page
@@ -208,7 +209,7 @@ async function loadData({ incidentPage: targetIncidentPage = incidentPage.value,
     currentTime.value = new Date()
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError' && pageActive && sequence === requestSequence) {
+    if (exception.name !== 'AbortError' && isPageActive() && sequence === requestSequence) {
       error.value = exception.message
     }
   } finally {
@@ -222,7 +223,7 @@ async function loadData({ incidentPage: targetIncidentPage = incidentPage.value,
 onMounted(async () => {
   pageActive = true
   await loadData()
-  if (!pageActive) return
+  if (!isPageActive()) return
   scheduleRefresh()
   clockTimer = window.setInterval(() => { currentTime.value = new Date() }, 30_000)
 })
@@ -348,7 +349,7 @@ const reportTableColumns = [
           <div class="alarm-ai-summary">
             <div><span class="alarm-ai-risk" :class="latestAiAnalysis.overall_risk">{{ severityLabels[latestAiAnalysis.overall_risk] || latestAiAnalysis.overall_risk }}</span><strong>最新模型结论</strong></div>
             <p>{{ formatDeviceDisplay(latestAiAnalysis.summary) }}</p>
-            <a v-if="latestAiReport.view_url" :href="latestAiReport.view_url" target="_blank" rel="noopener">查看完整报告</a>
+            <a v-if="latestAiReport?.view_url" :href="latestAiReport.view_url" target="_blank" rel="noopener">查看完整报告</a>
           </div>
           <dl class="alarm-ai-metrics" aria-label="关联告警指标">
             <div v-for="metric in analysisCounts" :key="metric.title" class="alarm-ai-metric" :class="`alarm-ai-metric--${metric.tone}`">

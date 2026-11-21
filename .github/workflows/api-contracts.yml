@@ -83,3 +83,7 @@ jobs:
         working-directory: frontend
       - run: pnpm run api:check
         working-directory: frontend
+      - name: Check Python source with Ruff
+        run: .venv/bin/ruff check backend/app
+      - name: Check Python source with Pyright
+        run: pnpm --dir frontend exec pyright --project ../backend/pyproject.toml --pythonpath ../.venv/bin/python

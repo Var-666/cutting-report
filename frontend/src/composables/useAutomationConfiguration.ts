@@ -28,6 +28,7 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
 
   let savedConfiguration = { ...configuration }
   let disposed = false
+  const isDisposed = () => disposed
   onScopeDispose(() => { disposed = true }, true)
 
   function resetConfiguration() {
@@ -45,25 +46,25 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
   }
 
   async function loadConfiguration() {
-    if (disposed || configurationLoading.value || configurationSaving.value) return
+    if (isDisposed() || configurationLoading.value || configurationSaving.value) return
     configurationLoading.value = true
     configurationError.value = ''
     try {
       const data = await getAutomationConfiguration()
-      if (disposed) return
+      if (isDisposed()) return
       savedConfiguration = { ...configuration, ...data, smtp_password: '' }
       resetConfiguration()
       configurationLoaded.value = true
     } catch (caught) {
       const exception = toError(caught)
-      if (!disposed) configurationError.value = exception.message
+      if (!isDisposed()) configurationError.value = exception.message
     } finally {
-      if (!disposed) configurationLoading.value = false
+      if (!isDisposed()) configurationLoading.value = false
     }
   }
 
   async function submitConfiguration() {
-    if (disposed || configurationSaving.value || configurationLoading.value || !configurationLoaded.value) return
+    if (isDisposed() || configurationSaving.value || configurationLoading.value || !configurationLoaded.value) return
     configurationSaving.value = true
     configurationMessage.value = ''
     configurationError.value = ''
@@ -83,7 +84,7 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
         smtp_use_ssl: configuration.smtp_use_ssl,
         smtp_timeout_seconds: Number(configuration.smtp_timeout_seconds),
       })
-      if (disposed) return
+      if (isDisposed()) return
       if (configuration.smtp_password) configuration.smtp_password_configured = true
       configuration.smtp_password = ''
       savedConfiguration = { ...configuration }
@@ -92,9 +93,9 @@ export function useAutomationConfiguration({ hasUnsavedChanges, refresh }: { has
       await refresh()
     } catch (caught) {
       const exception = toError(caught)
-      if (!disposed) configurationError.value = exception.message
+      if (!isDisposed()) configurationError.value = exception.message
     } finally {
-      if (!disposed) configurationSaving.value = false
+      if (!isDisposed()) configurationSaving.value = false
     }
   }
 

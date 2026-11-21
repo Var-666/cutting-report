@@ -1,6 +1,6 @@
 import type { ProductionLine } from '../types/devices'
 
-const lineTypes: Record<string, { name: string; home: string; icon: string }> = {
+const lineTypes: Partial<Record<string, { name: string; home: string; icon: string }>> = {
   cutting: { name: '切割', home: '/admin/cutting/home', icon: 'laser-cutter' },
   welding: { name: '焊接', home: '/admin/welding/home', icon: 'welding-torch' },
 }
@@ -12,7 +12,7 @@ export function productionLineIcon(type: string) {
 export function productionGroups(items: ProductionLine[]) {
   const groups = new Map<string, { id: string; name: string; items: ProductionLine[] }>()
   for (const item of items) {
-    const type = item.type || 'cutting'
+    const type = item.type
     if (!groups.has(type)) groups.set(type, { id: type, name: item.type_name || lineTypes[type]?.name || type, items: [] })
     groups.get(type)!.items.push(item)
   }

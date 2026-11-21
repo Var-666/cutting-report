@@ -1,6 +1,6 @@
 """Process-local structured logging with bounded, isolated shared-volume files."""
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -252,10 +252,8 @@ class OperationsLogging(logging.Handler):
                 except Empty:
                     continue
                 payload = json.dumps(item, ensure_ascii=True, separators=(',', ':'))
-                try:
+                with suppress(OSError, ValueError):
                     print(payload, file=sys.stdout, flush=True)
-                except (OSError, ValueError):
-                    pass
                 if self.file:
                     self.file.emit(logging.LogRecord('operations', logging.INFO, '', 0, payload, (), None))
         finally:
@@ -294,7 +292,8 @@ def configured_logging(logs_dir, role, instance, retention_days=14):
     event(logger, logging.INFO, '应用进程启动')
     try:
         yield logs
-    except Exception:
+    # Process boundary: log the structured failure and keep raw exceptions out of stderr.
+    except Exception:  # noqa: BLE001
         event(logger, logging.CRITICAL, '应用进程异常退出', error_code='PROCESS_EXIT', exc_info=True)
         # Uvicorn and Python may print the exception after these handlers have stopped.
         raise RuntimeError('应用进程异常退出，请查看 PROCESS_EXIT 运维日志') from None

@@ -1,5 +1,5 @@
 """OS locks shared by the Web and Worker containers' local data volume."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import local
 import os
@@ -12,25 +12,26 @@ class FileLock:
 
     def acquire(self, *, blocking: bool = True) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(self.path, "a+b")
-        try:
-            if os.name == "nt":
-                import msvcrt
-                handle.seek(0)
-                if not handle.read(1):
-                    handle.write(b"0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        except (BlockingIOError, PermissionError, OSError) as exc:
-            handle.close()
-            if not blocking and exc.errno in {11, 13, 35, 36}:
-                return False
-            raise
-        self.handle = handle
+        with ExitStack() as stack:
+            handle = stack.enter_context(self.path.open("a+b"))
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    if not handle.read(1):
+                        handle.write(b"0")
+                        handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            except OSError as exc:
+                if not blocking and exc.errno in {11, 13, 35, 36}:
+                    return False
+                raise
+            self.handle = handle
+            stack.pop_all()  # The lock owns the handle until release().
         return True
 
     def release(self) -> None:

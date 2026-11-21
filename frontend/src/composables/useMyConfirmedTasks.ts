@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
 import type { MyConfirmedTasks } from '../api/generated/types.gen'
 import { ref } from 'vue'
 import { listMyConfirmedTasks } from '../api/cutting'
@@ -19,18 +20,19 @@ export function useMyConfirmedTasks() {
     controller?.abort()
     const request = new AbortController()
     controller = request
+    const isCurrent = () => controller === request && !request.signal.aborted
     loading.value = true
     error.value = ''
     const query = { start_date: period.value.startDate, end_date: period.value.endDate, page, page_size: pageSize }
     try {
       let data = await listMyConfirmedTasks(query, { signal: request.signal })
-      if (request.signal.aborted || controller !== request || !active) return
+      if (!isCurrent()) return
       const lastPage = Math.max(1, Math.ceil(data.total / pageSize))
       if (page > lastPage) data = await listMyConfirmedTasks({ ...query, page: lastPage }, { signal: request.signal })
-      if (!request.signal.aborted && controller === request && active) result.value = data
+      if (isCurrent()) result.value = data
     } catch (caught) {
       const exception = toError(caught)
-      if (exception.name !== 'AbortError' && !request.signal.aborted && controller === request && active) error.value = exception.message
+      if (exception.name !== 'AbortError' && isCurrent()) error.value = exception.message
     } finally {
       if (controller === request) {
         loading.value = false
@@ -55,7 +57,7 @@ export function useMyConfirmedTasks() {
   function activate() {
     if (active) return
     active = true
-    void load()
+    load().catch(reportAsyncError)
   }
 
   return { period, result, loading, error, load, applyPeriod, pause, activate }

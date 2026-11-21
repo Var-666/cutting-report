@@ -1,5 +1,18 @@
  # 项目开发指南
 
+## 交付前静态分析门禁
+
+完成开发依赖安装后，从仓库根目录执行以下命令，交付前必须全部零报错通过。
+
+```bash
+.venv/bin/ruff check backend/app
+pnpm --dir frontend exec pyright --project ../backend/pyproject.toml --pythonpath ../.venv/bin/python
+pnpm --dir frontend run lint
+pnpm --dir frontend run typecheck
+```
+
+禁止用 `# noqa`、`# type: ignore`、`# pyright: ignore`、`eslint-disable`、`@ts-ignore`、`@ts-expect-error` 或 `as any` 绕过检查。确因外部 I/O 边界或已授权的业务降级无法消除的误报，只能逐行豁免明确的规则，并就地注明原因。
+
 ## 项目用途
 
 本项目是面向内网的切割生产智能产报系统，提供领导、车间和设备报表，工人任务确认，智能分析与告警，报表导出与自动发送，以及切割指令文件管理。

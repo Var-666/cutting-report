@@ -23,9 +23,9 @@ function measure() {
   const table = root?.querySelector('table')
   if (!root || !table) return
   const bounds = root.getBoundingClientRect()
-  const rows = Array.from(table.tBodies[0]?.rows || [])
+  const rows = Array.from(table.tBodies.item(0)?.rows || [])
   const groups = rows.flatMap((row, index) => {
-    const cell = row.cells[0]
+    const cell = row.cells.item(0)
     if (cell?.scope !== 'rowgroup') return []
     const first = row.getBoundingClientRect(), last = rows[index + cell.rowSpan - 1].getBoundingClientRect()
     return [{ category: cell.dataset.category || '', top: first.top - bounds.top, height: last.bottom - first.top }]

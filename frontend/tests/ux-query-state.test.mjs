@@ -82,8 +82,11 @@ function alarmQuery(overrides = {}) {
     listAlarmReportPage: async ({ page }) => ({ items: [{ report_id: `r${page}` }], page, total: 20, page_count: 2 }),
     listAlarmReports: async () => [], ...overrides,
   }
+  const { getAlarmStatus, listAlarmIncidentPage } = bindings
+  bindings.getAlarmStatus = async (...args) => ({ machine_nos: [], ...await getAlarmStatus(...args) })
+  bindings.listAlarmIncidentPage = async (...args) => ({ severity_counts: {}, ...await listAlarmIncidentPage(...args) })
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map(match => match[1])
-  return scriptFunction(...Object.keys(bindings), `${script}; pageActive = true; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)(...Object.values(bindings))
+  return scriptFunction(...Object.keys(bindings), `${script}; pageActive = true; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatChineseDateTime, formatDeviceDisplay };`)(...Object.values(bindings))
 }
 
 test('alarm pagination commits page numbers only after success and preserves data on failure', async () => {
@@ -168,7 +171,7 @@ test('home overview failures expose a retry action and successful rereads clear 
     useAppStore: () => ({ reducedMotion: true }), useThemeVars: () => Vue.ref({}), reportToday: () => '2026-11-07',
     cuttingOverviewFreshness, REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll, deviceSelection: { id: 'cutting' },
     ResizeObserver: class { observe() {} disconnect() {} },
-    getLeadershipReport: async () => { reads++; if (fail) throw new Error('生产源离线'); return { current_month_total: { task_count: 7 }, daily_records: [] } },
+    getLeadershipReport: async () => { reads++; if (fail) throw new Error('生产源离线'); return { current_month_total: { task_count: 7 }, snapshot: {}, daily_records: [] } },
     getEnergyMonth: async () => ({ summary: {} }), listReports: async () => ({ items: [], total: 0 }),
     getAlarmStatus: async () => ({}), listAlarmIncidents: async () => [],
     formatChineseDate: String, formatChineseDateTime: String, formatChineseMonth: String, formatDeviceDisplay: String,

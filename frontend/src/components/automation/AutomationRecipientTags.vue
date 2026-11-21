@@ -6,10 +6,10 @@ import type { EmailDelivery } from '../../types/automation'
 const props = defineProps<{ delivery: Pick<EmailDelivery, 'recipients' | 'recipient_results'>; compact?: boolean }>()
 const labels: Record<string, string> = { unknown: '结果待核对', not_accepted: '服务器未接收（人工核对）', refused: '服务器拒收' }
 const tones: Record<string, 'success' | 'warning' | 'error' | undefined> = { accepted: 'success', unknown: 'warning', not_accepted: 'error', refused: 'error' }
-const recipients = computed(() => [...new Set([...props.delivery.recipients, ...Object.keys(props.delivery.recipient_results || {})])].map(address => {
-  const result = props.delivery.recipient_results?.[address]
+const recipients = computed(() => [...new Set([...props.delivery.recipients, ...Object.keys(props.delivery.recipient_results)])].map(address => {
+  const result = props.delivery.recipient_results[address]
   const status = result?.status
-  const detail = status && status !== 'accepted' ? `${labels[status] || status}${result?.code ? ` ${result.code}` : ''}` : ''
+  const detail = result && result.status !== 'accepted' ? `${labels[result.status] || result.status}${result.code ? ` ${result.code}` : ''}` : ''
   const type: 'success' | 'warning' | 'error' | 'default' = tones[status || ''] ?? 'default'
   const title = detail ? `${address} · ${detail}` : address
   return { address, detail, title, type, accessibleLabel: status === 'accepted' ? `${address} · 已接收` : title }

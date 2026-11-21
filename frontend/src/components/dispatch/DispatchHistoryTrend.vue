@@ -63,7 +63,7 @@ function draw() {
       if (params.componentType === 'xAxis') selectChartDay(String(params.value))
       else if (params.componentType === 'series') selectChartDay(params.name, params.seriesName === '加工完成' ? 'completed' : 'sent')
     })
-    chart.getZr().on('click', event => {
+    chart.getZr().on('click', (event: { target?: unknown; offsetX: number; offsetY: number }) => {
       if (event.target || !chart?.containPixel({ gridIndex: 0 }, [event.offsetX, event.offsetY])) return
       const index = Number(chart.convertFromPixel({ xAxisIndex: 0 }, event.offsetX))
       const item = props.trend?.items[index]

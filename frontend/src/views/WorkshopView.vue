@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { NTag } from 'naive-ui'
 import AppReportTable from '../components/AppReportTable.vue'
 import WorkshopCorrectionDialog from '../components/workshop/WorkshopCorrectionDialog.vue'
@@ -285,14 +287,14 @@ async function load(page = 1, { silent = false, ensureReport = true, force = fal
           defaultView: appliedDefaultView,
         })
       }
-      reconcileVisibleTaskSelection(data.items || [])
-      if (!isWorker.value && data.meta?.report_data?.refreshing) {
+      reconcileVisibleTaskSelection(data.items)
+      if (!isWorker.value && data.meta?.report_data.refreshing) {
         const pollController = new AbortController()
         statisticsPollController = pollController
         void pollReportUpdates(data, () => listWorkshopRangeTasks(query, { mode: 'poll', signal: pollController.signal }), updated => {
           if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) {
             result.value = updated
-            reconcileVisibleTaskSelection(updated.items || [])
+            reconcileVisibleTaskSelection(updated.items)
           }
         }, pollController.signal).catch(caught => {
           if (pageActive.value && !pollController.signal.aborted && sequence === requestSequence) {
@@ -328,7 +330,7 @@ function applyTaskFilters() {
   filters.taskId = ''
   defaultReportView.value = false
   clearSelectedTasks()
-  load(1, { force: true, syncRoute: !isWorker.value })
+  load(1, { force: true, syncRoute: !isWorker.value }).catch(reportAsyncError)
 }
 
 function retryReport() {
@@ -478,12 +480,12 @@ onActivated(async () => {
     return
   }
   if (isWorker.value && result.value.report && !loading.value && !batchConfirmation.visible && !batchConfirmation.saving) {
-    load(result.value.page, { silent: true, ensureReport: false, force: true })
+    load(result.value.page, { silent: true, ensureReport: false, force: true }).catch(reportAsyncError)
   } else if (!isWorker.value && routeStateReady && result.value.report && !loading.value) {
     if (defaultReportView.value && !dateQueryDirty.value
         && filters.projectName === appliedRouteState.projectName
-        && filters.confirmationStatus === appliedRouteState.confirmationStatus) initializeReport()
-    else load(result.value.page, { ensureReport: false, useAppliedFilters: true })
+        && filters.confirmationStatus === appliedRouteState.confirmationStatus) initializeReport().catch(reportAsyncError)
+    else load(result.value.page, { ensureReport: false, useAppliedFilters: true }).catch(reportAsyncError)
   }
 })
 onDeactivated(pausePage)

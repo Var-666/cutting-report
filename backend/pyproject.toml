@@ -24,11 +24,30 @@ dependencies = [
 sqlserver = ["pyodbc>=5.2,<6"]
 
 [dependency-groups]
-dev = ["pytest>=8.4,<9", "pytest-cov>=6.2,<7"]
+dev = [
+    "pytest>=8.4,<9",
+    "pytest-cov>=6.2,<7",
+    "ruff>=0.17.6",
+]
 
 [tool.uv]
 package = false
 required-version = "==0.13.6"
+
+[tool.ruff]
+include = ["app/**/*.py", "app/**/*.pyi"]
+
+[tool.ruff.lint]
+select = ["E722", "BLE001", "S110", "S112", "SIM"]
+
+[tool.pyright]
+include = ["app"]
+pythonVersion = "3.12"
+# Keep this gate focused on the checks below without adopting the default rule set.
+typeCheckingMode = "off"
+reportUnnecessaryIsInstance = "error"
+reportUnnecessaryComparison = "error"
+reportUnnecessaryContains = "error"
 
 [tool.pytest.ini_options]
 pythonpath = [".", ".."]

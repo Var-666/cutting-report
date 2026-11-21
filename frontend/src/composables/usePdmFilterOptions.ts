@@ -22,8 +22,7 @@ export function usePdmFilterOptions(draft: Ref<PdmFilters>, visible: Ref<boolean
   watch(() => JSON.stringify([visible.value, scope(), revision.value]), async (_, __, onCleanup) => {
     if (!visible.value) { previousScope = undefined; return }
     const controller = new AbortController()
-    let active = true
-    onCleanup(() => { active = false; controller.abort() })
+    onCleanup(() => controller.abort())
     status.value = 'loading'
     error.value = ''
     const requestedScope = scope()
@@ -32,7 +31,7 @@ export function usePdmFilterOptions(draft: Ref<PdmFilters>, visible: Ref<boolean
     try {
       const submitted = clonePdmFilters(draft.value)[kind]
       function apply(result: PdmBranchOptions) {
-        if (!active) return
+        if (controller.signal.aborted) return
         const next = clonePdmFilters(draft.value)
         const branch = next[kind]
         branch.projects = branch.projects.filter(id => result.projects?.some(option => option.value === id))
@@ -52,7 +51,7 @@ export function usePdmFilterOptions(draft: Ref<PdmFilters>, visible: Ref<boolean
       apply(result)
       await pollReportUpdates(result, () => getPdmOptions(kind, submitted, controller.signal, { mode: 'poll' }), apply, controller.signal)
     } catch (caught) {
-      if (!active) return
+      if (controller.signal.aborted) return
       error.value = caught instanceof Error ? caught.message : String(caught)
       status.value = 'error'
     }

@@ -73,7 +73,7 @@ function applyColumnTracks(table: HTMLTableElement, headers: HTMLTableCellElemen
   if (!headers.length) return
   const units = headers.map((header, index) => {
     const contentUnits = contentWidthUnits((header.textContent || ''), rows.map((row) => (row.cells[index].textContent || '')), header.dataset.contentFit)
-    const view = table.ownerDocument?.defaultView
+    const view = table.ownerDocument.defaultView
     if (header.dataset.contentAction !== 'true' || !view) return contentUnits
     // Button padding and gaps are wider than their labels; reserve their actual width.
     const actionWidths = rows.map((row) => {
@@ -90,7 +90,7 @@ function applyColumnTracks(table: HTMLTableElement, headers: HTMLTableCellElemen
   const availableWidth = table.parentElement?.clientWidth || table.clientWidth || 0
   const weights = headers.map((header, index) => tableColumnWeight(header.textContent || '', header.dataset.contentAlign, rows.map(row => row.cells[index].textContent || '')))
   const tracks = distributeColumnWidths(units, availableWidth, weights)
-  table.style?.setProperty('--content-table-min-width', `${tracks.tableWidth}px`)
+  table.style.setProperty('--content-table-min-width', `${tracks.tableWidth}px`)
   headers.forEach((header, index) => {
     const cells = rows.map(row => row.cells[index])
     const hasData = cells.some(cell => {
@@ -100,11 +100,9 @@ function applyColumnTracks(table: HTMLTableElement, headers: HTMLTableCellElemen
     const extraPad = hasData && header.dataset.contentAction !== 'true' && header.dataset.contentAlign !== 'center'
       ? Math.max(0, Math.floor((tracks.widths[index] - tracks.intrinsicWidths[index] - 16) / 2))
       : 0
-    for (const cell of [header, ...cells]) cell.style?.setProperty('--content-extra-pad', `${extraPad}px`)
+    for (const cell of [header, ...cells]) cell.style.setProperty('--content-extra-pad', `${extraPad}px`)
   })
-  if (!table.ownerDocument) return
-
-  let colgroup = Array.from(table.children || []).find((child) => child.tagName === 'COLGROUP') as HTMLTableColElement | undefined
+  let colgroup = Array.from(table.children).find((child) => child.tagName === 'COLGROUP') as HTMLTableColElement | undefined
   if (!colgroup) {
     colgroup = table.ownerDocument.createElement('colgroup')
     colgroup.dataset.contentTableGenerated = 'true'
@@ -128,7 +126,7 @@ function adaptContent(table: HTMLTableElement) {
   const sections = [...Array.from(table.tBodies), table.tFoot].filter((section): section is HTMLTableSectionElement => Boolean(section))
   const rows = sections.flatMap((section) => Array.from(section.rows))
     .filter((row) => row.cells.length === headers.length && Array.from(row.cells).every((cell) => cell.colSpan === 1))
-  const columns = table.dataset?.contentColumns?.split(' ') || []
+  const columns = table.dataset.contentColumns?.split(' ') || []
   headers.forEach((header, index) => {
     const fit = contentFit((header.textContent || ''), rows.map((row) => (row.cells[index].textContent || '')))
     const column = columns[index] || 'left'
@@ -170,12 +168,12 @@ function stopObserving(table: HTMLTableElement) {
 
 export const contentTable: ObjectDirective<HTMLTableElement, boolean | undefined> = {
   mounted(table, binding) {
-    if (binding?.value === false) return
+    if (binding.value === false) return
     adaptContent(table)
     observeContainer(table)
   },
   updated(table, binding) {
-    if (binding?.value === false) {
+    if (binding.value === false) {
       stopObserving(table)
       return
     }

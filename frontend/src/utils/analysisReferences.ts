@@ -1,7 +1,7 @@
 import type { BusinessReference } from '../api/generated/types.gen'
 
 export function analysisReferenceLabel(reference: BusinessReference) {
-  const label = reference.label?.trim()
+  const label = reference.label.trim()
   if (reference.kind !== 'task' || (label && label !== reference.id)) return label || reference.id || '—'
   const parts = [reference.program_no?.trim() ? `程序 ${reference.program_no.trim()}` : '',
     reference.project_code?.trim() ? `工程 ${reference.project_code.trim()}` : ''].filter(Boolean)

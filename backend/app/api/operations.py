@@ -22,8 +22,8 @@ Admin = Annotated[dict, Depends(require_admin)]
 NDJSON = 'application/x-ndjson'
 
 
-def envelope(request, data):
-    return dict(success=True, data=data, request_id=request.state.request_id)
+def envelope(request: Request, data: object) -> dict[str, object]:
+    return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
 async def read(request, operation, *args):

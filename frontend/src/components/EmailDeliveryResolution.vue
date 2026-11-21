@@ -22,7 +22,7 @@ const audits = ref<EmailResolution[]>([])
 const auditLoading = ref(false)
 const auditError = ref('')
 const pendingRecipients = computed(() => props.delivery.recipients.filter(
-  (address) => props.delivery.recipient_results?.[address]?.status !== 'accepted',
+  (address) => props.delivery.recipient_results[address]?.status !== 'accepted',
 ))
 const dirty = computed(() => Boolean(evidence.value || Object.values(outcomes).some(Boolean)))
 const canDiscard = useUnsavedChanges(
@@ -49,7 +49,7 @@ async function loadAudit() {
   auditError.value = ''
   try {
     const response = await listEmailDeliveryResolutions(props.delivery.delivery_id, { signal: auditController.signal })
-    if (active && generation === auditGeneration) audits.value = response.items || []
+    if (active && generation === auditGeneration) audits.value = response.items
   } catch (caught) {
     const exception = toError(caught)
     if (active && generation === auditGeneration && exception.name !== 'AbortError') auditError.value = exception.message
@@ -98,7 +98,7 @@ onActivated(() => {
   if (!active) {
     active = true
     if (resolved.value) { emit('dirty', false); emit('resolved') }
-    loadAudit()
+    return loadAudit()
   }
 })
 onUnmounted(() => { mounted = false; active = false; auditController?.abort(); emit('dirty', false); emit('saving', false) })

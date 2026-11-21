@@ -14,6 +14,8 @@ from app.config import Settings, consumer_identity
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import periodic_analysis_task
 from app.database.postgres import ExecutionLeaseLost, execution_scope
+from psycopg import Error as PostgresError
+
 from app.core.operations_logging import configured_logging, event, operation_context
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
@@ -100,7 +102,7 @@ class WorkerProcess:
         if diagnostics is not None:
             try:
                 status["configuration"] = diagnostics.observed(self.owner)
-            except Exception:
+            except (OSError, ValueError, RuntimeError):
                 status["configuration"] = {"error": "配置快照暂不可用"}
         if not self.repository.renew(self.lease_name, self.owner, ttl=self.LEASE_SECONDS, status=status):
             raise ExecutionLeaseLost("Worker 租约失效，停止提交新任务")
@@ -164,7 +166,8 @@ class WorkerProcess:
                         self._handle(task)
                 else:
                     self._handle(task)
-            except Exception as exc:
+            # Every claimed job failure must be recorded for its persisted retry policy.
+            except Exception as exc:  # noqa: BLE001
                 error = 'SOURCE_UNVERIFIED' if isinstance(exc, TaskSourceUnavailable) else type(exc).__name__
                 event(logger, logging.ERROR, '后台任务执行失败', error_code='TASK_ATTEMPT_FAILED',
                       stage=stage, exc_info=True, duration_ms=(monotonic() - started) * 1000)
@@ -216,7 +219,7 @@ class WorkerProcess:
                 self.repository.cleanup_completed()
                 try:
                     self.runtime.operations.cleanup(datetime.now(ZoneInfo(self.settings.timezone)), self.settings.retention_cleanup_batch_size)
-                except Exception:
+                except (PostgresError, OSError):
                     event(logger, logging.WARNING, '运维历史清理失败', error_code='OPERATIONS_RETENTION', exc_info=True)
                 return
             if kind == "download_cleanup":

@@ -10,7 +10,7 @@ import { cuttingFileKey, batchItemError, hasNameMismatch, batchStatusLabel, isSt
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 const flush = async () => { await Vue.nextTick(); await new Promise(resolve => setImmediate(resolve)) }
-const response = data => ({ ok: true, json: async () => ({ success: true, data }) })
+const response = data => Response.json({ success: true, data })
 const file = (id, name = 'Z806C080A001.gen') => ({ document_id: id, version_id: 'v1', version: 'V1', normalized_path: `files/${id}.gen`, document_no: name })
 
 const modal = { props: ['show', 'maskClosable', 'closeOnEsc'], emits: ['update:show'], setup: (props, { slots }) => () => props.show ? slots.default?.() : null }

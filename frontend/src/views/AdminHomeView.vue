@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { LeadershipReport, ReportJob } from '../types/reports'
 import type { EnergyMonthReport } from '../types/energy'
 import type { AlarmIncident, AlarmStatus } from '../types/alarms'
@@ -70,7 +72,7 @@ const openAlarms = computed(() => incidents.value.filter((item) => item.status =
 const metricSeries = computed(() => ({
   tasks: dailyRecords.value.map((item) => item.task_count),
   length: dailyRecords.value.map((item) => item.cut_length_m),
-  hours: dailyRecords.value.map((item) => item.work_time_seconds == null ? null : Number(item.work_time_seconds) / 3600),
+  hours: dailyRecords.value.map((item) => Number.isFinite(item.work_time_seconds) ? item.work_time_seconds / 3600 : null),
 }))
 
 const quickLinks = [
@@ -82,7 +84,8 @@ const reportTypeText = { leadership: '领导报表', workshop: '车间报表', e
 const statusText = { pending: '等待中', querying: '查询中', calculating: '统计中', analyzing: '分析中', rendering: '渲染中', completed: '已完成', failed: '失败' }
 const severityText: Record<string, string> = { critical: '严重', high: '高', medium: '一般', low: '提示' }
 
-const workSeconds = computed(() => overview.value && total.value.work_time_seconds != null ? Math.max(0, Math.round(Number(total.value.work_time_seconds))) : null)
+const workSeconds = computed(() => overview.value && Number.isFinite(total.value.work_time_seconds)
+  ? Math.max(0, Math.round(total.value.work_time_seconds)) : null)
 const workHours = computed(() => workSeconds.value == null ? null : Math.floor(workSeconds.value / 3600))
 const workUnit = computed(() => workSeconds.value == null ? '' : `小时 ${String(Math.floor((workSeconds.value % 3600) / 60)).padStart(2, '0')}分`)
 
@@ -132,8 +135,8 @@ function renderCharts() {
       xAxis: { type: 'category', data: rows.map((item) => item.period_start.slice(5)), axisTick: { show: false }, axisLine: { lineStyle: { color: theme.value.borderColor } }, axisLabel: { color: theme.value.textColor3, fontSize: 12 } },
       yAxis: [{ type: 'value', splitNumber: 3, splitLine: { lineStyle: { color: theme.value.dividerColor } }, axisLabel: { color: theme.value.textColor3, fontSize: 12 } }, { type: 'value', splitNumber: 3, splitLine: { show: false }, axisLabel: { show: false } }],
       series: [
-        { name: '切割长度（米）', type: 'bar', barMaxWidth: 28, data: rows.map(item => item.cut_length_m == null ? null : Number(item.cut_length_m).toFixed(1)), itemStyle: { borderRadius: [2, 2, 0, 0] } },
-        { name: '设备工时（小时）', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, data: rows.map(item => item.work_time_seconds == null ? null : (Number(item.work_time_seconds) / 3600).toFixed(1)), lineStyle: { width: 2 }, areaStyle: { opacity: .06 } },
+        { name: '切割长度（米）', type: 'bar', barMaxWidth: 28, data: rows.map(item => Number.isFinite(item.cut_length_m) ? item.cut_length_m.toFixed(1) : null), itemStyle: { borderRadius: [2, 2, 0, 0] } },
+        { name: '设备工时（小时）', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, data: rows.map(item => Number.isFinite(item.work_time_seconds) ? (item.work_time_seconds / 3600).toFixed(1) : null), lineStyle: { width: 2 }, areaStyle: { opacity: .06 } },
       ],
     }, true)
   } else if (trendChart) { trendChart.dispose(); trendChart = null }
@@ -206,7 +209,7 @@ async function loadDashboard(retry = false) {
     (signal, readMode) => getEnergyMonth(month, { signal, mode: readMode }),
     data => {
       energy.value = data
-      if (data.meta?.report_data?.refresh_failed && !reportIsRefreshing(data)) throw new Error('能耗未更新')
+      if (data.meta?.report_data.refresh_failed && !reportIsRefreshing(data)) throw new Error('能耗未更新')
       return reportIsRefreshing(data)
     }))
   if (shouldRead('history', historyLoading)) pending.push(readModule('history', historyLoading, 'read',
@@ -221,7 +224,7 @@ async function loadDashboard(retry = false) {
 watch([theme, () => app.reducedMotion, trendElement, statusElement, overview, energy], renderCharts, { flush: 'post' })
 
 onMounted(() => {
-  loadDashboard()
+  loadDashboard().catch(reportAsyncError)
 })
 onBeforeUnmount(() => {
   requests.forEach(controller => controller.abort())

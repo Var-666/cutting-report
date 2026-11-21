@@ -85,8 +85,8 @@ export function useWorkshopCorrection({ isWorker, user, filters, rowDate, showCo
         listWorkshopConfirmationAudits({ reportDate: rowDate(row), taskId: row.task_id }),
       ])
       if (sequence !== loadSequence) return
-      correction.workers = users.items || []
-      correction.audits = auditResult.items || []
+      correction.workers = users.items
+      correction.audits = auditResult.items
     } catch (caught) {
       const exception = toError(caught)
       if (sequence === loadSequence) correction.error = exception.message

@@ -1,13 +1,13 @@
 import type { AlarmReport } from '../types/alarms'
 function reportTime(report: AlarmReport) {
-  const value = Date.parse(report?.completed_at || report?.created_at || '')
+  const value = Date.parse(report.completed_at || report.created_at)
   return Number.isFinite(value) ? value : 0
 }
 
 function hasDisplayableAnalysis(report: AlarmReport) {
-  const analysis = report?.analysis
-  return report?.status === 'completed'
-    && report?.model_status === 'model'
+  const analysis = report.analysis
+  return report.status === 'completed'
+    && report.model_status === 'model'
     && analysis
     && typeof analysis.summary === 'string'
     && Array.isArray(analysis.findings)
@@ -17,9 +17,8 @@ function hasDisplayableAnalysis(report: AlarmReport) {
 }
 
 export function latestModelAlarmReport(reports: AlarmReport[]) {
-  return (Array.isArray(reports) ? reports : [])
-    .filter(hasDisplayableAnalysis)
-    .sort((left, right) => reportTime(right) - reportTime(left))[0] || null
+  return reports.filter(hasDisplayableAnalysis)
+    .sort((left, right) => reportTime(right) - reportTime(left)).at(0) ?? null
 }
 
 export function alarmConfidencePercent(value: unknown) {

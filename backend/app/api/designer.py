@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 from psycopg import IntegrityError
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -48,16 +48,17 @@ def _require_admin_token(token: str | None, request: Request) -> None:
         raise HTTPException(status_code=403, detail="管理员令牌无效")
 
 
-def _translate_write_error(exc: Exception) -> None:
+WRITE_ERRORS = (PermissionError, KeyError, IntegrityError, ValueError)
+
+
+def _translate_write_error(exc: PermissionError | KeyError | IntegrityError | ValueError) -> NoReturn:
     if isinstance(exc, PermissionError):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, KeyError):
         raise HTTPException(status_code=404, detail="配置不存在") from exc
     if isinstance(exc, IntegrityError):
         raise HTTPException(status_code=409, detail="配置编码已存在，请更换编码") from exc
-    if isinstance(exc, ValueError):
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    raise exc
+    raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/published-definitions")
@@ -92,7 +93,7 @@ def create_query_task(payload: QueryTaskUpsert, request: Request, token: AdminTo
         item = application_state(request).definitions.save_query_task(payload.model_dump())
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -105,7 +106,7 @@ def update_query_task(query_task_id: str, payload: QueryTaskUpsert, request: Req
         item = application_state(request).definitions.save_query_task(payload.model_dump(), query_task_id)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -115,7 +116,7 @@ def delete_query_task(query_task_id: str, request: Request, token: AdminToken = 
     _require_admin_token(token, request)
     try:
         application_state(request).definitions.delete_query_task(query_task_id)
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})
 
@@ -155,7 +156,7 @@ def create_template(payload: TemplateUpsert, request: Request, token: AdminToken
     _require_admin_token(token, request)
     try:
         item = application_state(request).definitions.save_template(payload.model_dump())
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -165,7 +166,7 @@ def update_template(template_id: str, payload: TemplateUpsert, request: Request,
     _require_admin_token(token, request)
     try:
         item = application_state(request).definitions.save_template(payload.model_dump(), template_id)
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -175,7 +176,7 @@ def delete_template(template_id: str, request: Request, token: AdminToken = None
     _require_admin_token(token, request)
     try:
         application_state(request).definitions.delete_template(template_id)
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})
 
@@ -191,7 +192,7 @@ def create_definition(payload: DefinitionUpsert, request: Request, token: AdminT
     _require_admin_token(token, request)
     try:
         item = application_state(request).definitions.save_definition(payload.model_dump())
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -201,7 +202,7 @@ def update_definition(definition_id: str, payload: DefinitionUpsert, request: Re
     _require_admin_token(token, request)
     try:
         item = application_state(request).definitions.save_definition(payload.model_dump(), definition_id)
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, item)
 
@@ -211,6 +212,6 @@ def delete_definition(definition_id: str, request: Request, token: AdminToken = 
     _require_admin_token(token, request)
     try:
         application_state(request).definitions.delete_definition(definition_id)
-    except Exception as exc:
+    except WRITE_ERRORS as exc:
         _translate_write_error(exc)
     return _envelope(request, {"deleted": True})

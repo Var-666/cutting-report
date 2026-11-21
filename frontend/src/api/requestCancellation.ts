@@ -1,12 +1,13 @@
-function fallbackRequestId() {
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+function randomRequestId() {
+  // getRandomValues is available on the HTTP intranet.
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 export function createRequestCancellation(
   signal?: AbortSignal | null,
   {
     fetchImpl = globalThis.fetch,
-    createId = () => globalThis.crypto?.randomUUID?.() || fallbackRequestId(),
+    createId = randomRequestId,
   }: { fetchImpl?: typeof fetch; createId?: () => string } = {},
 ) {
   if (!signal) {

@@ -176,7 +176,8 @@ class RequestWorkload:
                 error = None
                 try:
                     result = await to_thread.run_sync(execute, limiter=self._threads)
-                except Exception as exc:
+                # Propagate endpoint exceptions outside the AnyIO group to keep their HTTP mapping.
+                except Exception as exc:  # noqa: BLE001
                     error = exc
                 finally:
                     group.cancel_scope.cancel()

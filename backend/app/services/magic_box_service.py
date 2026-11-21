@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.database.magic_box import CONFIG_KEYS, MagicBoxConfigRepository
-from app.database.sqlserver import SqlServerConfigurationError
+from app.database.sqlserver import SqlServerConfigurationError, sqlserver_driver_errors
 from app.core.report_deadline import (
     ReportOperationTimeout,
     ensure_time_remaining,
@@ -134,7 +134,7 @@ class MagicBoxConfigProvider:
                 raise MagicBoxConfigurationError(str(exc)) from None
             except (SqlCapacityError, SqlRequestCancelled, ReportOperationTimeout):
                 raise
-            except Exception:
+            except (OSError, RuntimeError, *sqlserver_driver_errors()):
                 raise MagicBoxConfigurationError(
                     "读取SYS_CONFIG失败，请检查生产数据库连接和只读权限"
                 ) from None

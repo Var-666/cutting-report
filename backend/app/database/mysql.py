@@ -10,6 +10,8 @@ from time import monotonic
 from typing import Any, Iterator
 from uuid import uuid4
 
+from mysql.connector.errors import Error as MySqlDriverError
+
 from app.core.operations_logging import event, operation_context
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.report_deadline import remaining_seconds
@@ -67,8 +69,6 @@ class MySqlClient:
     session_type = MySqlSession
 
     def __init__(self, config: DatabaseSourceConfig | None, *, label: str = 'MySQL', capacity: SqlCapacity, probe: bool = False) -> None:
-        if config is not None and config.engine != 'mysql':
-            raise ValueError('数据源不是 MySQL')
         self.config = config
         self.query_timeout = config.query_timeout if config else 120
         self.label = label
@@ -80,6 +80,8 @@ class MySqlClient:
         self._active: dict[int, int] = {}
         self._retired: dict[int, Any] = {}
         self._closed = False
+        if config is not None and config.engine != 'mysql':
+            raise ValueError('数据源不是 MySQL')
 
     def connection_config(self) -> DatabaseSourceConfig:
         if self.config is None:
@@ -121,7 +123,7 @@ class MySqlClient:
                 if remove is not None:
                     try:
                         remove()
-                    except Exception as exc:
+                    except (MySqlDriverError, OSError, RuntimeError) as exc:
                         logger.warning('mysql pool cleanup failure type=%s', type(exc).__name__)
                 del self._retired[key]
 
@@ -133,10 +135,7 @@ class MySqlClient:
             self._drain()
 
     def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
+        self.close()
 
     @contextmanager
     def snapshot(self) -> Iterator[MySqlSession]:
@@ -144,9 +143,12 @@ class MySqlClient:
             raise MySqlUnavailable(f'{self.label}连接配置无效，请检查后端配置')
         if not self.config.enabled:
             raise MySqlUnavailable(f'{self.label}数据源尚未启用')
-        with operation_context(source_id=self.config.id), self.capacity.slot(self.config, pool=self._pool_slots, probe=self._probe):
-            with self._snapshot() as session:
-                yield session
+        with (
+            operation_context(source_id=self.config.id),
+            self.capacity.slot(self.config, pool=self._pool_slots, probe=self._probe),
+            self._snapshot() as session,
+        ):
+            yield session
 
     @contextmanager
     def _snapshot(self) -> Iterator[MySqlSession]:
@@ -168,7 +170,7 @@ class MySqlClient:
             if ready:
                 raise
             raise MySqlUnavailable(f'{self.label}连接配置无效，请检查后端配置') from None
-        except Exception as exc:
+        except (MySqlDriverError, ImportError, OSError, RuntimeError) as exc:
             # Driver messages can contain credentials, SQL values and host addresses.
             discard_pool = True
             code = 'MYSQL_POOL_EXHAUSTED' if type(exc).__name__ == 'PoolError' else 'MYSQL_SOURCE_FAILED'
@@ -197,13 +199,13 @@ class MySqlClient:
             if connection is not None:
                 try:
                     connection.rollback()
-                except Exception as exc:
+                except (MySqlDriverError, OSError, RuntimeError) as exc:
                     discard_pool = True
                     logger.warning('mysql rollback failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
                 finally:
                     try:
                         connection.close()
-                    except Exception as exc:
+                    except (MySqlDriverError, OSError, RuntimeError) as exc:
                         discard_pool = True
                         logger.warning('mysql connection cleanup failure type=%s errno=%s', type(exc).__name__, getattr(exc, 'errno', None))
             if discard_pool and pool is not None:

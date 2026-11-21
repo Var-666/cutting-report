@@ -35,7 +35,7 @@ async function loadAdmins() {
   error.value = ''
   try {
     const data = await listAdminAccounts()
-    admins.value = data.items || []
+    admins.value = data.items
   } catch (caught) {
     const exception = toError(caught)
     error.value = exception.message
@@ -51,7 +51,7 @@ async function search() {
   notice.value = ''
   try {
     const data = await searchHrPeople(keyword.value.trim())
-    results.value = data.items || []
+    results.value = data.items
   } catch (caught) {
     const exception = toError(caught)
     error.value = exception.message

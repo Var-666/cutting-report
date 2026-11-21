@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { ReportCreateRequest, ReportDefinition, ReportJob, ReportJobState } from '../types/reports'
 
 import { toError } from '../utils/errors'
@@ -31,6 +33,7 @@ let projectsController: AbortController | null = null
 let shipsController: AbortController | null = null
 let optionsDate = ''
 let optionsDisposed = false
+const areOptionsDisposed = () => optionsDisposed
 const customDefinitions = ref<ReportDefinition[]>([])
 const generating = ref(false)
 const loadingHistory = ref(false)
@@ -45,6 +48,7 @@ let pollSequence = 0
 let historyController: AbortController | null = null
 let historySequence = 0
 let pageActive = false
+const isPageActive = () => pageActive
 let routeStateReady = false
 let awaitingCreate: { payload: string; deviceId: string; key: string } | undefined
 const pollRetryMessage = '暂时无法读取任务进度，正在重新连接。也可刷新历史查看。'
@@ -68,7 +72,7 @@ function stopPolling() {
 }
 
 async function loadHistory(page = historyPage.value, force = false, { syncRoute = false } = {}) {
-  if (!pageActive) return
+  if (!isPageActive()) return
   historyController?.abort()
   const controller = new AbortController()
   const sequence = ++historySequence
@@ -76,14 +80,14 @@ async function loadHistory(page = historyPage.value, force = false, { syncRoute 
   loadingHistory.value = true
   try {
     const data = await listReports({ page, pageSize, force, signal: controller.signal })
-    if (!pageActive || controller.signal.aborted || sequence !== historySequence) return
+    if (!isPageActive() || controller.signal.aborted || sequence !== historySequence) return
     history.value = data.items
     historyPage.value = data.page
     historyTotal.value = data.total
     if (syncRoute) await syncHistoryRouteState()
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError' && pageActive && sequence === historySequence) {
+    if (exception.name !== 'AbortError' && isPageActive() && sequence === historySequence) {
       error.value = exception.message
     }
   } finally {
@@ -96,7 +100,7 @@ async function loadHistory(page = historyPage.value, force = false, { syncRoute 
 
 function changeHistoryPage(page: number) {
   const target = Math.min(Math.max(Number(page), 1), historyTotalPages.value)
-  if (target !== historyPage.value) loadHistory(target, false, { syncRoute: true })
+  if (target !== historyPage.value) loadHistory(target, false, { syncRoute: true }).catch(reportAsyncError)
 }
 
 async function loadProjects(reportDate: string) {
@@ -109,12 +113,12 @@ async function loadProjects(reportDate: string) {
   error.value = ''
   const shipsRequest = loadShips({ reportDate, projectCode: '' })
   try {
-    if (!reportDate || optionsDisposed) return
+    if (!reportDate || areOptionsDisposed()) return
     const data = await listProjects(reportDate, { signal: controller.signal })
-    if (!optionsDisposed && !controller.signal.aborted && projectsController === controller) projects.value = data.items
+    if (!areOptionsDisposed() && !controller.signal.aborted && projectsController === controller) projects.value = data.items
   } catch (caught) {
     const exception = toError(caught)
-    if (!optionsDisposed && !controller.signal.aborted && projectsController === controller && exception.name !== 'AbortError') error.value = exception.message
+    if (!areOptionsDisposed() && !controller.signal.aborted && projectsController === controller && exception.name !== 'AbortError') error.value = exception.message
   } finally {
     if (projectsController === controller) { projectsLoading.value = false; projectsController = null }
   }
@@ -122,7 +126,7 @@ async function loadProjects(reportDate: string) {
 }
 
 async function loadShips({ reportDate, projectCode }: { reportDate: string; projectCode: string }) {
-  if (reportDate !== optionsDate || optionsDisposed) return
+  if (reportDate !== optionsDate || areOptionsDisposed()) return
   shipsController?.abort()
   const controller = new AbortController()
   shipsController = controller
@@ -132,10 +136,10 @@ async function loadShips({ reportDate, projectCode }: { reportDate: string; proj
   try {
     if (!reportDate) return
     const data = await listShips(reportDate, projectCode, { signal: controller.signal })
-    if (!optionsDisposed && !controller.signal.aborted && shipsController === controller) ships.value = data.items
+    if (!areOptionsDisposed() && !controller.signal.aborted && shipsController === controller) ships.value = data.items
   } catch (caught) {
     const exception = toError(caught)
-    if (!optionsDisposed && !controller.signal.aborted && shipsController === controller && exception.name !== 'AbortError') error.value = exception.message
+    if (!areOptionsDisposed() && !controller.signal.aborted && shipsController === controller && exception.name !== 'AbortError') error.value = exception.message
   } finally {
     if (shipsController === controller) { shipsLoading.value = false; shipsController = null }
   }
@@ -151,7 +155,7 @@ async function loadCustomDefinitions() {
 }
 
 async function generate(form: ReportCreateRequest) {
-  if (generating.value || !pageActive) return
+  if (generating.value || !isPageActive()) return
   stopPolling()
   error.value = ''
   generating.value = true
@@ -163,24 +167,24 @@ async function generate(form: ReportCreateRequest) {
   try {
     const created = await createReport(form, { deviceId, idempotencyKey: awaitingCreate.key })
     awaitingCreate = undefined
-    if (!pageActive || getDeviceId() !== deviceId) return
+    if (!isPageActive() || getDeviceId() !== deviceId) return
     currentJob.value = created
-    globalThis.window?.$message?.success('报表生成任务已提交')
+    globalThis.window.$message?.success('报表生成任务已提交')
     await router.replace({ query: { ...route.query, job: currentJob.value.report_id } })
     await pollStatus(currentJob.value.report_id)
   } catch (caught) {
     const exception = toError(caught)
-    if (!pageActive || getDeviceId() !== deviceId) return
+    if (!isPageActive() || getDeviceId() !== deviceId) return
     const status = (exception as { status?: number }).status
     if (status && status < 500 && status !== 408 && status !== 429) awaitingCreate = undefined
     error.value = awaitingCreate ? `${exception.message}。可刷新历史或再次提交相同条件确认创建结果。` : exception.message
-    if (awaitingCreate) void loadHistory(1, true)
+    if (awaitingCreate) loadHistory(1, true).catch(reportAsyncError)
     generating.value = false
   }
 }
 
 async function pollStatus(reportId: string) {
-  if (!pageActive) return
+  if (!isPageActive()) return
   window.clearTimeout(pollTimer ?? undefined)
   pollTimer = null
   pollController?.abort()
@@ -189,7 +193,7 @@ async function pollStatus(reportId: string) {
   pollController = controller
   try {
     const job = await getReportStatus(reportId, { signal: controller.signal })
-    if (!pageActive || controller.signal.aborted || sequence !== pollSequence) return
+    if (!isPageActive() || controller.signal.aborted || sequence !== pollSequence) return
     currentJob.value = job
     if (error.value === pollRetryMessage) error.value = ''
     const terminal = ['completed', 'failed'].includes(job.status)
@@ -199,12 +203,12 @@ async function pollStatus(reportId: string) {
       return
     }
     generating.value = true
-    if (pageActive && sequence === pollSequence) {
+    if (isPageActive() && sequence === pollSequence) {
       pollTimer = window.setTimeout(() => pollStatus(reportId), 1000)
     }
   } catch (caught) {
     const exception = toError(caught)
-    if (exception.name !== 'AbortError' && pageActive && sequence === pollSequence) {
+    if (exception.name !== 'AbortError' && isPageActive() && sequence === pollSequence) {
       const status = (exception as { status?: number }).status
       const transient = !status || status >= 500 || status === 408 || status === 429
       error.value = transient ? pollRetryMessage : exception.message
@@ -228,14 +232,14 @@ watch(
     }
     if (typeof reportId === 'string' && reportId && reportId !== currentJob.value?.report_id) {
       stopPolling()
-      pollStatus(reportId)
+      pollStatus(reportId).catch(reportAsyncError)
     }
   },
 )
 watch(
   () => route.query.page,
   async () => {
-    if (!pageActive || !routeStateReady || route.name !== 'report-center') return
+    if (!isPageActive() || !routeStateReady || route.name !== 'report-center') return
     const requested = queryPositiveInteger(route.query.page)
     if (requested !== historyPage.value) await loadHistory(requested)
   },
@@ -248,7 +252,7 @@ onMounted(async () => {
     loadCustomDefinitions(),
   ])
   routeStateReady = true
-  if (pageActive && typeof route.query.job === 'string' && route.query.job) {
+  if (isPageActive() && typeof route.query.job === 'string' && route.query.job) {
     await pollStatus(route.query.job)
   }
 })

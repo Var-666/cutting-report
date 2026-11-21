@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from types import SimpleNamespace
 
+from psycopg import OperationalError
+
 
 def test_restart_recovers_reserved_run_and_completed_outbox_once(workflow):
     repository, metadata, service, run = workflow
@@ -44,7 +46,7 @@ def test_recovery_isolates_callback_failure_and_repairs_failed_run(workflow, mon
     assert repository.get_run(run["run_id"])["status"] == "failed"
     complete_report(metadata, report_id)
     original = service.report_completed
-    monkeypatch.setattr(service, "report_completed", lambda *args: (_ for _ in ()).throw(RuntimeError("db outage")))
+    monkeypatch.setattr(service, "report_completed", lambda *args: (_ for _ in ()).throw(OperationalError("db outage")))
     assert service.reconcile_runs(NOW) == 0
     assert repository.delivery_for_report(report_id) is None
     monkeypatch.setattr(service, "report_completed", original)

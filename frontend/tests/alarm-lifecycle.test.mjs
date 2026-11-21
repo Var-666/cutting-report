@@ -33,7 +33,7 @@ test('alarm page preserves PDF links and shows a failed report without file acti
     created_at: '2026-10-08T09:00:00+08:00', error_message: '模型接口限流' }
   const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, incident, report, failed }
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report, failed]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatDeviceDisplay };`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}\nstatus.value = { machine_nos: ['Cutter01'] }; incidents.value = [incident]; reports.value = [report]; reportItems.value = [report, failed]; return { ${names.join(',')}, heroImage, AppIcon, alarmConfidencePercent, formatChineseDateTime, formatDeviceDisplay };`)
   const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)
@@ -71,7 +71,7 @@ test('incident report status is independent of alarm resolution and the recent r
   const items = cases.map((item) => ({ ...item, machine_no: 'Cutter01', severity: 'warning', status: 'open' }))
   const bindings = { ...Vue, heroImage: '', AppIcon: { render: () => null }, alarmConfidencePercent, latestModelAlarmReport, formatChineseDateTime, formatDeviceDisplay, items }
   const names = [...script.matchAll(/^(?:const|let|(?:async )?function) (\w+)/gm)].map((match) => match[1])
-  const setup = scriptFunction(...Object.keys(bindings), `${script}; incidents.value = items; return { ${names.join(',')}, heroImage, alarmConfidencePercent, formatDeviceDisplay };`)
+  const setup = scriptFunction(...Object.keys(bindings), `${script}; incidents.value = items; return { ${names.join(',')}, heroImage, alarmConfidencePercent, formatChineseDateTime, formatDeviceDisplay };`)
   const render = scriptFunction('Vue', compile(parse(source).descriptor.template.content, { prefixIdentifiers: true }).code)(Vue)
   const app = Vue.createSSRApp({ setup: () => setup(...Object.values(bindings)), render })
   app.component('AppIcon', bindings.AppIcon)

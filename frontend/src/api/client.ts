@@ -23,9 +23,9 @@ export async function request<T = unknown>(url: string, options: RequestOptions 
         ...cancellation.headers,
       },
     })
-    const reportCode = response.headers?.get?.('X-Report-Error') || response.headers?.get?.('X-Welding-Error')
-      || response.headers?.get?.('X-Workload-Error') || response.headers?.get?.('X-SQL-Resource-Error')
-    if (!response.ok && !(response.status === 503 && reportCode === 'snapshot_refresh_busy')) reportApiFailure(url, response.status, response.headers?.get?.('X-Request-ID') ?? cancellation.requestId)
+    const reportCode = response.headers.get('X-Report-Error') || response.headers.get('X-Welding-Error')
+      || response.headers.get('X-Workload-Error') || response.headers.get('X-SQL-Resource-Error')
+    if (!response.ok && !(response.status === 503 && reportCode === 'snapshot_refresh_busy')) reportApiFailure(url, response.status, response.headers.get('X-Request-ID') ?? cancellation.requestId)
     if (options.responseType === 'blob' && response.ok) return { blob: await response.blob(), headers: response.headers }
     let payload: ApiResponse<T>
     try {
@@ -36,17 +36,17 @@ export async function request<T = unknown>(url: string, options: RequestOptions 
     }
     if (
       response.status === 401
-      && response.headers?.get?.('X-Session-Expired') === '1'
+      && response.headers.get('X-Session-Expired') === '1'
     ) {
       await notifySessionExpired().catch(() => undefined)
     }
     if (!response.ok || payload.success === false) {
-      const message = payload?.error?.message || payload?.detail || '请求失败，请稍后重试'
+      const message = payload.error?.message || payload.detail || '请求失败，请稍后重试'
       const error: ApiError = new Error(message)
       error.status = response.status
       const code = reportCode
       if (code) error.code = code
-      const retryAfter = Number(response.headers?.get?.('Retry-After'))
+      const retryAfter = Number(response.headers.get('Retry-After'))
       if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1000
       throw error
     }

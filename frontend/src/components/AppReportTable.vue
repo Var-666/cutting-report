@@ -22,14 +22,14 @@ const props = defineProps({
 })
 const emit = defineEmits<{ page: [page: number] }>()
 const slots = defineSlots<{
-  [name: `c${number}`]: (props: { row: T; index: number }) => VNode[]
+  [name in `c${number}`]?: (props: { row: T; index: number }) => VNode[]
 } & {
-  [name: `header-c${number}` | `summary-c${number}`]: () => VNode[]
+  [name in `header-c${number}` | `summary-c${number}`]?: () => VNode[]
 } & { empty?: () => VNode[] }>()
 const root = ref<HTMLElement>()
-const fittedWidths = ref<Record<string, number>>({})
-const controlWidths = ref<Record<string, number>>({})
-const resizedWidths = ref<Record<string, number>>({})
+const fittedWidths = ref<Partial<Record<string, number>>>({})
+const controlWidths = ref<Partial<Record<string, number>>>({})
+const resizedWidths = ref<Partial<Record<string, number>>>({})
 const containerWidth = ref(0)
 const rowRevision = ref(0)
 // Naive's opened tooltip can retain its old trigger slot when a row is replaced.
@@ -47,7 +47,7 @@ function fitColumns() {
     const hasControls = Boolean(content.querySelector('button, a[href], input, select, textarea, [role="checkbox"], [role="combobox"]'))
     const plainControlCell = content.classList.contains('app-report-table-cell--controls') && !hasControls
     content.classList.toggle('app-report-table-cell--text', plainControlCell)
-    content.title = plainControlCell ? content.textContent?.trim() || '' : ''
+    content.title = plainControlCell ? content.textContent.trim() : ''
     const width = Math.ceil(content.getBoundingClientRect().width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + 2)
     widths[key] = Math.max(widths[key] || 0, hasControls ? width : Math.min(360, width))
     if (hasControls) minimums[key] = Math.max(minimums[key] || 0, width)
@@ -71,6 +71,8 @@ function rememberColumnWidth(_width: number, width: number, column: DataTableBas
 const columns = computed<DataTableColumns<T>>(() => {
   const fitted = props.columns.map(column => {
     const ellipsis = typeof column.ellipsis === 'object' ? column.ellipsis : {}
+    const header = slots[`header-${column.key}` as `header-c${number}`]
+    const cell = slots[column.key as `c${number}`]
     return {
       resizable: true,
       ...column,
@@ -89,11 +91,12 @@ const columns = computed<DataTableColumns<T>>(() => {
         maxWidth: undefined,
       } : {}),
       titleAlign: column.align || 'left',
-      title: props.autoFit ? (titleColumn: DataTableBaseColumn) => h('span', { 'data-fit-column': column.key }, slots[`header-${column.key}` as `header-c${number}`]?.() ?? (typeof column.title === 'function' ? column.title(titleColumn) : column.title)) : slots[`header-${column.key}` as `header-c${number}`] ? () => slots[`header-${column.key}` as `header-c${number}`]!() : column.title,
-      render: slots[column.key as `c${number}`] || column.render ? (row: T, index: number) => h('span', {
+      title: props.autoFit ? (titleColumn: DataTableBaseColumn) => h('span', { 'data-fit-column': column.key },
+        header?.() ?? (typeof column.title === 'function' ? column.title(titleColumn) : column.title) ?? undefined) : header ? () => header() : column.title,
+      render: cell || column.render ? (row: T, index: number) => h('span', {
         class: ['app-report-table-cell', { 'app-report-table-cell--controls': column.ellipsis === false }],
         'data-fit-column': props.autoFit ? column.key : undefined,
-      }, slots[column.key as `c${number}`]?.({ row, index }) ?? column.render?.(row, index)) : column.render,
+      }, cell?.({ row, index }) ?? column.render?.(row, index) ?? undefined) : column.render,
     }
   })
   if (!props.autoFit) return fitted

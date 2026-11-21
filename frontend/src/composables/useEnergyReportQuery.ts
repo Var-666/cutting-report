@@ -1,3 +1,4 @@
+import { reportAsyncError } from '../api/browserObservations.ts'
 import type { TaskEnergyReport } from '../types/energy'
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -24,6 +25,7 @@ export function useEnergyReportQuery() {
   const loading = ref(false)
   const error = ref('')
   const pageActive = ref(true)
+  const isPageActive = () => pageActive.value
   const {
     monthlyReport, summaryPeriodStart, summaryPeriodEnd, summaryLoading, summaryRefreshError,
     resetSummaryScope, loadInitialSummary, applyMonthlySummary, scheduleSummaryRefresh, pauseSummary,
@@ -71,7 +73,7 @@ export function useEnergyReportQuery() {
   async function changeChartType(value: string) {
     chartType.value = value
     const query = mergeOwnedQuery(route.query, ['chart'], { chart: value === 'bar_line' ? '' : value })
-    if (pageActive.value && !sameRouteQuery(query, route.query)) await router.push({ query })
+    if (isPageActive() && !sameRouteQuery(query, route.query)) await router.push({ query })
   }
 
   function beginRequest({ preserveSummary = false } = {}) {
@@ -84,7 +86,7 @@ export function useEnergyReportQuery() {
   }
 
   function requestIsCurrent(sequence: number, signal: AbortSignal) {
-    return pageActive.value && !signal.aborted && sequence === requestSequence
+    return isPageActive() && !signal.aborted && sequence === requestSequence
   }
   function pollTaskReport(initial: TaskEnergyReport, read: (signal: AbortSignal) => Promise<TaskEnergyReport>, sequence: number) {
     taskRefreshController?.abort()
@@ -97,7 +99,7 @@ export function useEnergyReportQuery() {
     }).finally(() => { if (taskRefreshController === current) taskRefreshController = null })
   }
   const analysisReady = computed(() => Boolean(
-    pageActive.value
+    isPageActive()
     && taskDay.value
     && monthlyReport.value?.analysis_source_version
     && taskDay.value.period_start === appliedPeriodStart.value
@@ -181,7 +183,7 @@ export function useEnergyReportQuery() {
   }
 
   function pause() {
-    if (pageActive.value) {
+    if (isPageActive()) {
       pageActive.value = false
       cancelReportRequest()
       loading.value = false
@@ -191,7 +193,7 @@ export function useEnergyReportQuery() {
   }
 
   async function initializeReport({ restoreQuery = false } = {}) {
-    if (!pageActive.value) return
+    if (!isPageActive()) return
     const requestedRange = restoreQuery ? queryDateRange(route.query, { maxDays: 31 }) : null
     const selectedDate = reportToday()
     anchorDate.value = selectedDate
@@ -199,7 +201,7 @@ export function useEnergyReportQuery() {
     periodEnd.value = selectedDate
     await loadDefaultRanges()
     const currentRange = queryDateRange(route.query, { maxDays: 31 })
-    if (requestedRange && pageActive.value && requestedRange.start === currentRange?.start && requestedRange.end === currentRange.end) {
+    if (requestedRange && isPageActive() && requestedRange.start === currentRange?.start && requestedRange.end === currentRange.end) {
       periodStart.value = requestedRange.start
       periodEnd.value = requestedRange.end
       await loadRange(false, { syncRoute: false })
@@ -281,7 +283,7 @@ export function useEnergyReportQuery() {
   }
 
   async function refreshAnalysisReport() {
-    if (!pageActive.value || loading.value) return
+    if (!isPageActive() || loading.value) return
     return rangeQueryApplied.value
       ? refreshRangeAnalysisReport()
       : loadDefaultRanges(true)
@@ -291,24 +293,24 @@ export function useEnergyReportQuery() {
     const initialQuery = route.query
     await initializeReport({ restoreQuery: true })
     routeStateReady = true
-    if (pageActive.value && route.query !== initialQuery) await restoreRouteState()
+    if (isPageActive() && route.query !== initialQuery) await restoreRouteState()
   })
   onActivated(async () => {
     pageActive.value = true
     await nextTick()
-    if (!pageActive.value) return
+    if (!isPageActive()) return
     if (routeStateReady && await restoreRouteState()) return
     if ((!taskDay.value || !monthlyReport.value) && !loading.value) await initializeReport()
     if (monthlyReport.value?.syncing) scheduleSummaryRefresh(monthlyReport.value)
     else if (routeStateReady && taskDay.value && monthlyReport.value && !loading.value) {
-      if (rangeQueryApplied.value) loadRange(false, { syncRoute: false, useAppliedPeriod: true })
-      else initializeReport()
+      if (rangeQueryApplied.value) loadRange(false, { syncRoute: false, useAppliedPeriod: true }).catch(reportAsyncError)
+      else initializeReport().catch(reportAsyncError)
     }
   })
   onDeactivated(pause)
   onBeforeUnmount(pause)
   watch(() => route.query, async (query, previous) => {
-    if (routeStateReady && pageActive.value && route.name === 'equipment-report') {
+    if (routeStateReady && isPageActive() && route.name === 'equipment-report') {
       await restoreRouteState({ preserveDraft: query.start === previous.start && query.end === previous.end })
     }
   }, { deep: true })

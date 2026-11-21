@@ -354,7 +354,7 @@ class DatabaseRuntime:
             except ValueError:
                 self._file_version = version
                 self._error = '运行配置无效，保留上次运行快照'
-            except Exception:
+            except (OSError, RuntimeError):
                 # Parser, filesystem and service errors must never reveal connection credentials.
                 self._error = '运行配置暂无法加载，保留上次运行快照'
             return self._context

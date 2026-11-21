@@ -31,11 +31,11 @@ test('ordinary login and bootstrap retain the existing login choices', async () 
 
 test('session consumes the server SSO flag and clears it when disabled', async () => {
   for (const enabled of [true, false]) {
-    globalThis.fetch = async url => ({
-      ok: true,
-      json: async () => ({ data: String(url).includes('/auth/status')
+    globalThis.fetch = async url => Response.json({
+      success: true,
+      data: String(url).includes('/auth/status')
         ? { setup_required: false, worker_database_auth_enabled: false, sso_enabled: enabled, authenticated: false, user: null }
-        : {} }),
+        : {},
     })
     await loadSession({ force: true })
     assert.equal(session.ssoEnabled, enabled)

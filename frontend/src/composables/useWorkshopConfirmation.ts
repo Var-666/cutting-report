@@ -135,7 +135,7 @@ export function useWorkshopConfirmation({ isWorker, user, result, filters, error
     try {
       const confirmationResult = await confirmWorkshopTasks(tasks.map((row) => row.task_id), filters.reportDate,
         Object.fromEntries(tasks.map((row) => [row.task_id, row.snapshot_revision || 1])))
-      const confirmations = confirmationResult.items || []
+      const confirmations = confirmationResult.items
       applyConfirmedTasks(confirmations)
       batchConfirmation.visible = false
       batchConfirmation.tasks = []

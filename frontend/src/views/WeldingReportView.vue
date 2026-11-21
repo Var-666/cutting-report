@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import type { PropType } from 'vue'
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow } from '../types/welding'
 import { toError } from '../utils/errors'
@@ -51,12 +53,13 @@ const seamExportError = ref('')
 const detailPart = ref<WeldingPartRow | null>(null)
 const detailTitle = computed(() => detailJob.value ? '焊接作业详情' : '工件与焊缝详情')
 const seamPage = ref(1)
-const sourceEnabled = computed(() => deviceSelection.items?.find(item => item.id === deviceSelection.id)?.enabled !== false)
+const sourceEnabled = computed(() => deviceSelection.items.find(item => item.id === deviceSelection.id)?.enabled !== false)
 let controller: AbortController | undefined, detailController: AbortController | undefined, exportController: AbortController | undefined, analysisController: AbortController | undefined
 let analysisCacheController: AbortController | undefined
 let analysisSequence = 0
 let analysisCacheKey = ''
 let disposed = false
+const isDisposed = () => disposed
 let appliedKind: WeldingReportKind | undefined
 let appliedLine = ''
 let failedRead: { values: WeldingQuery; syncRoute: boolean } | null = null
@@ -98,13 +101,14 @@ const appliedQueryLabel = computed(() => {
 function read(values: WeldingQuery, force = false, syncRoute = true) {
   const key = queryKey(values)
   if (pendingRead?.key === key && !controller?.signal.aborted) return pendingRead.promise
-  const promise = load(values, force, syncRoute)
+  const promise = load(values, force, syncRoute).finally(() => {
+    if (pendingRead?.promise === promise) pendingRead = null
+  })
   pendingRead = { key, promise }
-  promise.finally(() => { if (pendingRead?.promise === promise) pendingRead = null })
   return promise
 }
 async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, background = false) {
-  if (disposed) return
+  if (isDisposed()) return
   const kind = props.kind
   const line = deviceSelection.id
   clearTimeout(refreshTimer)
@@ -125,7 +129,7 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
   }
   try {
     const value = await getWeldingReport(props.kind, values, controller.signal, force, { mode: background ? 'poll' : force ? 'refresh' : 'read' })
-    if (disposed || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
+    if (isDisposed() || run !== generation || line !== deviceSelection.id || kind !== props.kind || selectedLineType(deviceSelection.items, deviceSelection.id) !== 'welding') return
     if (background && value.data_version !== report.value?.data_version) {
       analysisController?.abort(); analysisSequence += 1; analyzing.value = false
     }
@@ -138,15 +142,15 @@ async function load(values: WeldingQuery, force: boolean, syncRoute: boolean, ba
       analysis.value = { ...analysis.value, cached: true,
         cache_note: '数据已更新，暂显示上次成功分析；分析依据为原生成时的数据，请结合本次报表核对。' }
     }
-    void readAnalysisCache(value)
+    readAnalysisCache(value).catch(reportAsyncError)
     const query = weldingRouteQuery(route.query, parseWeldingRouteQuery(weldingRouteQuery({}, value.query), kind, today))
     if (!background && !sameRouteQuery(query, route.query)) {
       if (syncRoute) await router.push({ query })
       else await router.replace({ query })
     }
-    if (run === generation && value.meta?.report_data?.refreshing && refreshPollCount < REPORT_POLL_LIMIT) {
+    if (run === generation && value.meta.report_data?.refreshing && refreshPollCount < REPORT_POLL_LIMIT) {
       refreshPollCount += 1
-      refreshTimer = setTimeout(() => { if (!disposed && run === generation) void load(values, false, false, true) }, REPORT_POLL_INTERVAL)
+      refreshTimer = setTimeout(() => { if (!isDisposed() && run === generation) load(values, false, false, true).catch(reportAsyncError) }, REPORT_POLL_INTERVAL)
     }
   } catch (caught) {
     const exception = toError(caught)
@@ -193,12 +197,12 @@ function resetFilters() {
 function changePage(page: number) { if (!activeQuery.value) return; return read({ ...activeQuery.value, page }) }
 function goToPart() {
   if (!detailJob.value || !activeQuery.value) return
-  router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number || undefined, start: activeQuery.value.start, end: activeQuery.value.end } })
+  router.push({ name: 'welding-parts', query: { serial_number: detailJob.value.serial_number || undefined, start: activeQuery.value.start, end: activeQuery.value.end } }).catch(reportAsyncError)
   detailOpen.value = false
 }
 async function copy(value: string | null | undefined) {
   if (!value) return
-  try { await navigator.clipboard.writeText(value); globalThis.window?.$message?.success('流水号已复制') }
+  try { await navigator.clipboard.writeText(value); globalThis.window.$message?.success('流水号已复制') }
   catch { actionError.value = '复制失败，请选择流水号后手动复制' }
 }
 async function openDetail(row: WeldingJobRow | WeldingPartRow, page = 1) {
@@ -250,22 +254,24 @@ async function exportSeams() {
   finally { exporting.value = false }
 }
 async function runAnalysis() {
-  if (!report.value || !activeQuery.value || loading.value || analyzing.value) return
+  const query = activeQuery.value
+  const currentReport = report.value
+  if (!currentReport || !query || loading.value || analyzing.value) return
   analysisController = new AbortController()
   const current = analysisController
   analysisCacheController?.abort()
   const sequence = ++analysisSequence
-  const scope = analysisScope(activeQuery.value)
+  const scope = analysisScope(query)
   analyzing.value = true
   analysisError.value = ''
-  const version = report.value.data_version
+  const version = currentReport.data_version
   try {
-    const result = await analyzeWelding(reportKind.value, activeQuery.value, version, analysisController.signal)
-    if (!disposed && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
+    const result = await analyzeWelding(reportKind.value, query, version, current.signal)
+    if (!isDisposed() && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
         && scope === analysisScope(activeQuery.value) && report.value?.data_version === version) analysis.value = result
   } catch (caught) {
     const exception = toError(caught)
-    if (!disposed && sequence === analysisSequence && exception.name !== 'AbortError') analysisError.value = exception.message }
+    if (!isDisposed() && sequence === analysisSequence && exception.name !== 'AbortError') analysisError.value = exception.message }
   finally { if (sequence === analysisSequence) analyzing.value = false }
 }
 
@@ -288,10 +294,10 @@ async function readAnalysisCache(value: WeldingReport) {
   const sequence = ++analysisSequence
   try {
     const cached = await getLatestWeldingAnalysis(reportKind.value, value.query, value.data_version, current.signal)
-    if (!disposed && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
+    if (!isDisposed() && !current.signal.aborted && sequence === analysisSequence && activeQuery.value
         && analysisScope(activeQuery.value) === scope && report.value?.data_version === value.data_version && cached) { analysis.value = cached; analysisError.value = '' }
   } catch (caught) {
-    if (!disposed && !current.signal.aborted && sequence === analysisSequence) {
+    if (!isDisposed() && !current.signal.aborted && sequence === analysisSequence) {
       analysisCacheKey = ''
       analysisError.value = `历史分析读取失败：${toError(caught).message}`
     }
@@ -305,7 +311,7 @@ function cancel() {
 }
 watch(detailOpen, open => { if (!open) { detailController?.abort(); detailGeneration += 1 } })
 function restoreRouteState() {
-  if (disposed) return
+  if (isDisposed()) return
   if (!sourceEnabled.value) {
     beforeFilters = null
     filtersOpen.value = false

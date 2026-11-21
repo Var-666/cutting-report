@@ -975,6 +975,7 @@ def test_event_retry_does_not_prevent_health_sampling(tmp_path, monkeypatch):
 
     service = SimpleNamespace(role='web', discover=lambda: samples.append(clock[0]),
                               repository=SimpleNamespace(record=record),
+                              diagnostics=SimpleNamespace(load_state=lambda: 'healthy'),
                               coordination=SimpleNamespace(acquire=lambda *_args, **_kwargs: 'owner',
                                                            renew=lambda *_args, **_kwargs: True,
                                                            release=lambda *_args: released.append(True)))

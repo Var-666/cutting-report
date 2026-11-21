@@ -65,7 +65,7 @@ test('a removed saved device falls back to the catalog default and session reset
 
 test('blocked browser storage does not prevent loading and switching equipment', async (t) => {
   const storage = mockSessionStorage(t)
-  for (const method of ['getItem', 'setItem', 'removeItem']) storage[method] = () => { throw new Error('storage blocked') }
+  for (const method of ['getItem', 'setItem', 'removeItem']) storage[method] = () => { throw new DOMException('storage blocked', 'SecurityError') }
   const context = await import('../src/api/deviceContext.ts?blocked-storage')
   assert.equal(context.getDeviceId(), '')
   context.setDeviceCatalog(catalog)

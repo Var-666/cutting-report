@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import { useLeadershipReportQuery } from '../composables/useLeadershipReportQuery'
 import { useLeadershipReportData } from '../composables/useLeadershipReportData'
 import { useLeadershipReportCharts } from '../composables/useLeadershipReportCharts'
@@ -92,15 +94,16 @@ onMounted(async () => {
   }
 })
 onActivated(async () => {
+  const isActive = () => pageActive.value
   pageActive.value = true
   await nextTick()
-  if (!pageActive.value) return
+  if (!isActive()) return
   startResizeListening()
   if (routeStateReady && await restoreRouteState()) return
   if (!report.value && !loading.value) await loadDefaultReport()
   else if (chartsMissing()) renderCharts()
   resizeCharts()
-  if (routeStateReady) refreshCachedReport()
+  if (routeStateReady) refreshCachedReport()?.catch(reportAsyncError)
   scheduleRefreshPoll(true)
 })
 onDeactivated(pausePage)

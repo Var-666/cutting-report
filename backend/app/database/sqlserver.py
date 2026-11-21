@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from math import ceil
+from sys import modules
 from typing import Any, Iterator
 
 import logging
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 class SqlServerConfigurationError(RuntimeError):
     pass
+
+
+def sqlserver_driver_errors() -> tuple[type[Exception], ...]:
+    # ODBC is optional, and a driver exception can only come from an already loaded driver.
+    driver = modules.get('pyodbc')
+    return (driver.Error,) if driver is not None else ()
 
 
 class SqlServerClient:
@@ -117,41 +124,38 @@ class SqlServerClient:
                     event(logger, logging.ERROR, 'SQL Server 兼容连接或查询失败', error_code='SQLSERVER_LEGACY_FAILED',
                           source_id=self.source, incident=not self._probe, exc_info=True)
                     raise
-        with self.connect() as connection:
-            with cancellable_cursor(connection) as cursor:
-                cursor.execute(sql, parameters)
-                columns = [item[0] for item in cursor.description]
-                return [
-                    dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
-                ]
+        with self.connect() as connection, cancellable_cursor(connection) as cursor:
+            cursor.execute(sql, parameters)
+            columns = [item[0] for item in cursor.description]
+            return [
+                dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
+            ]
 
     def iter_rows(self, sql: str, parameters: tuple[Any, ...]) -> Iterator[dict[str, Any]]:
         """Stream one result set with bounded batch memory; caller must close early exits."""
-        with self.connect() as connection:
-            with cancellable_cursor(connection) as cursor:
-                cursor.execute(sql, parameters)
-                columns = [item[0] for item in cursor.description]
-                while batch := cursor.fetchmany(500):
-                    for row in batch:
-                        yield dict(zip(columns, row, strict=True))
+        with self.connect() as connection, cancellable_cursor(connection) as cursor:
+            cursor.execute(sql, parameters)
+            columns = [item[0] for item in cursor.description]
+            while batch := cursor.fetchmany(500):
+                for row in batch:
+                    yield dict(zip(columns, row, strict=True))
 
     def fetch_result_sets(
         self, sql: str, parameters: tuple[Any, ...]
     ) -> list[list[dict[str, Any]]]:
         """Execute one SQL batch and return every tabular result set."""
-        with self.connect() as connection:
-            with cancellable_cursor(connection) as cursor:
-                cursor.execute(sql, parameters)
-                result_sets: list[list[dict[str, Any]]] = []
-                while True:
-                    if cursor.description is not None:
-                        columns = [item[0] for item in cursor.description]
-                        result_sets.append(
-                            [
-                                dict(zip(columns, row, strict=True))
-                                for row in cursor.fetchall()
-                            ]
-                        )
-                    if not cursor.nextset():
-                        break
-                return result_sets
+        with self.connect() as connection, cancellable_cursor(connection) as cursor:
+            cursor.execute(sql, parameters)
+            result_sets: list[list[dict[str, Any]]] = []
+            while True:
+                if cursor.description is not None:
+                    columns = [item[0] for item in cursor.description]
+                    result_sets.append(
+                        [
+                            dict(zip(columns, row, strict=True))
+                            for row in cursor.fetchall()
+                        ]
+                    )
+                if not cursor.nextset():
+                    break
+            return result_sets

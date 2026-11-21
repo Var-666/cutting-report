@@ -166,10 +166,9 @@ def part(request: Request, part_id: int, page: int = Query(1, ge=1, le=100000), 
 @query_requests.route(router.get('/parts/{part_id}/seams/export', response_class=Response, responses={200: {'content': {'text/csv': {'schema': {'type': 'string', 'format': 'binary'}}}}}))
 def seam_export(request: Request, part_id: int):
     instance = service(request)
-    with source_errors():
-        with instance.repository.client.snapshot() as session:
-            raw = instance.repository.part(session, part_id)
-            data = None if raw is None else instance.repository.seams(session, raw, 1, 100001)
+    with source_errors(), instance.repository.client.snapshot() as session:
+        raw = instance.repository.part(session, part_id)
+        data = None if raw is None else instance.repository.seams(session, raw, 1, 100001)
     if data is None:
         raise HTTPException(status_code=404, detail='工件不存在')
     rows, total, ambiguous = data

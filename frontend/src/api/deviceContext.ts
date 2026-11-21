@@ -2,15 +2,24 @@ import type { LocationQueryRaw, RouteRecordName } from 'vue-router'
 import type { DeviceCatalog, ProductionLine } from '../types/devices'
 // Only device identifiers and public labels live here; production data stays in reportCache.
 const storageKey = 'cutting-report.device-id'
+const storageHost: { sessionStorage?: Storage } = globalThis
 function storedDeviceId() {
-  try { return globalThis.sessionStorage?.getItem(storageKey) || '' }
-  catch { return '' }
+  try { return storageHost.sessionStorage?.getItem(storageKey) || '' }
+  catch (error) {
+    if (error instanceof DOMException && error.name === 'SecurityError') return ''
+    throw new Error('读取设备选择失败', { cause: error })
+  }
 }
 function rememberDevice(id: string | null) {
   try {
-    if (id) globalThis.sessionStorage?.setItem(storageKey, id)
-    else globalThis.sessionStorage?.removeItem(storageKey)
-  } catch { /* Storage restrictions must not prevent device queries or switching. */ }
+    if (id) storageHost.sessionStorage?.setItem(storageKey, id)
+    else storageHost.sessionStorage?.removeItem(storageKey)
+  } catch (error) {
+    // Browser storage restrictions must not prevent device queries or switching.
+    if (!(error instanceof DOMException && ['SecurityError', 'QuotaExceededError'].includes(error.name))) {
+      throw new Error('保存设备选择失败', { cause: error })
+    }
+  }
 }
 let rememberedId = storedDeviceId()
 let defaultDeviceId = ''

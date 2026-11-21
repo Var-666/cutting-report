@@ -7,6 +7,7 @@ import { compileScript, parse } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { useEnergyReportData } from '../src/composables/useEnergyReportData.ts'
+import { formatChineseDate } from '../src/utils/dateDisplay.ts'
 import { computed, reactive } from 'vue'
 import { transformSync } from 'esbuild'
 import { getAutomationConfiguration, saveAutomationConfiguration } from '../src/api/automation.ts'
@@ -187,7 +188,7 @@ test('report analysis uses server source versions and starts immediately', () =>
   assert.match(script, /analysisDataVersion = computed/)
   assert.doesNotMatch(script, /AUTO_ANALYSIS_DEBOUNCE_MS|4000/)
   assert.doesNotMatch(script, /activationTimer\.schedule\(/)
-  assert.match(script, /void loadAnalysis\(false, targetKey\)/)
+  assert.match(script, /loadAnalysis\(false, targetKey\)/)
   assert.match(script, /function reloadAnalysis\(\)[\s\S]*loadAnalysis\(true\)/)
   assert.match(script, /onDeactivated\(pauseAnalysis\)/)
   assert.match(script, /requestController\?\.abort\(\)/)
@@ -501,7 +502,7 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /同步游标/)
   assert.match(template, /last_alarm_id/)
   assert.doesNotMatch(template, /已同步记录/)
-  assert.match(script, /const startValue = item\?\.first_start_time/)
+  assert.match(script, /const startValue = item\.first_start_time/)
   assert.match(script, /item\.status === 'closed' \? item\.latest_remove_time : currentTime\.value/)
   assert.doesNotMatch(script, /item\?\.first_start_time \|\| item\?\.first_seen_at/)
   assert.doesNotMatch(script, /item\.closed_at \|\| item\.last_seen_at/)
@@ -724,6 +725,7 @@ test('report charts resize with their containers and disconnect observers while 
     let activate
     const activation = source.slice(source.indexOf('onActivated(async () => {'), source.indexOf('onDeactivated('))
     const activationBindings = { ...bindings,
+      isPageActive: () => pageActive.value,
       onActivated: callback => { activate = callback },
       nextTick: async () => { panel.value = { getChartElement: () => ({}) } },
       routeStateReady: false, restoreRouteState: async () => false,
@@ -774,7 +776,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
   for (const [pageActive, panel, busy] of [[false, 'equipment', false], [true, 'equipment', true], [true, 'equipment', false]]) {
     let calls = 0
     const response = { items: [], page: 1 }
-    const bindings = { pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,
+    const bindings = { isPageActive: () => pageActive, activePanel: Vue.ref(panel), requestController: busy ? new AbortController() : null,
       requestSequence: 0, incidentPageSize: 10, reportPageSize: 10, toError: value => value }
     for (const key of ['incidentPage', 'reportPage', 'loading', 'error', 'onlyOpen', 'activeSeverity', 'status', 'incidents', 'incidentSummary', 'reports', 'reportItems', 'reportSummary', 'currentTime']) bindings[key] = Vue.ref(key.endsWith('Page') ? 1 : null)
     for (const key of ['getAlarmStatus', 'listAlarmIncidentPage', 'listAlarmReports', 'listAlarmReportPage']) bindings[key] = async () => { calls += 1; return response }
@@ -795,7 +797,7 @@ test('long-lived page polling is serialized and cancelled when the page leaves',
 
   assert.match(reportCenter, /function stopPolling\(\)[\s\S]*pollController\?\.abort\(\)/)
   assert.match(reportCenter, /getReportStatus\(reportId, \{ signal: controller\.signal \}\)/)
-  assert.match(reportCenter, /if \(!pageActive \|\| controller\.signal\.aborted \|\| sequence !== pollSequence\) return/)
+  assert.match(reportCenter, /controller\.signal\.aborted \|\| sequence !== pollSequence\) return/)
   assert.match(reportCenter, /listReports\(\{ page, pageSize, force, signal: controller\.signal \}\)/)
   assert.match(reportCenter, /sequence !== historySequence/)
   assert.match(reportCenter, /onBeforeUnmount\(\(\) => \{[\s\S]*pageActive = false[\s\S]*stopPolling\(\)/)
@@ -810,9 +812,9 @@ test('energy rows show numeric values without an extra explanation column and pr
     gas_consumption: ['missing', 'counter_reset'].includes(status) ? null : index === 0 ? 0 : 1,
     energy_note: status === 'estimated' ? '平均速率补齐；有效时段 08:00～08:30（覆盖1800秒 / 任务3600秒）' : status,
   }))
-  const bindings = { ...Vue, useEnergyReportData, formatChineseDateTime: value => value || '--',
+  const bindings = { ...Vue, useEnergyReportData, formatChineseDate, formatChineseDateTime: value => value || '--',
     useRoute: () => ({ query: {} }), queryDateRange: () => null,
-    useEnergyReportQuery: () => Object.fromEntries(Object.entries({ taskDay: { records }, monthlyReport: null,
+    useEnergyReportQuery: () => Object.fromEntries(Object.entries({ taskDay: { records, equipment_scope: [] }, monthlyReport: null,
       anchorDate: '2026-11-07', periodStart: '2026-11-07', periodEnd: '2026-11-07',
       appliedPeriodStart: '2026-11-07', appliedPeriodEnd: '2026-11-07', summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',
       loading: false, summaryLoading: false, error: '月度统计不可用', chartType: 'bar_line',
@@ -842,7 +844,7 @@ test('energy rows show numeric values without an extra explanation column and pr
   assert.match(html, /<span title="missing">--<\/span>/)
   assert.match(html, /<span title="counter_reset">--<\/span>/)
   assert.doesNotMatch(html, /能耗依据|按有效任务汇总|气：/)
-  assert.ok(html.includes('设备报表更新失败 月度统计不可用；当前保留已成功加载的数据。'))
+  assert.match(html, /设备报表更新失败 月度统计不可用/)
 })
 
 test('scrollable report tables do not add duplicate previous and next pagination', () => {

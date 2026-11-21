@@ -39,7 +39,7 @@ function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
   let mounted, activated, timerId = 0
   const context = vm.createContext({
     ref, reactive, computed, AbortController, fileKey, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
-    useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {} }), useUnsavedChanges: () => () => true, useConfirm: () => async () => true,
+    useRoute: () => ({ query: {} }), useRouter: () => ({ async replace() {} }), useUnsavedChanges: () => () => true, useConfirm: () => async () => true,
     onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
     getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
     listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
@@ -194,7 +194,7 @@ test('dispatch history pages through all records in ten-row pages independently 
     const page = Number(query.get('page'))
     calls.push({ page, size: Number(query.get('page_size')) })
     const items = Array.from({ length: page === 3 ? 3 : 10 }, (_, index) => ({ dispatch_id: `${page}-${index}` }))
-    return { ok: true, json: async () => ({ success: true, data: { items, total: 23, page } }) }
+    return Response.json({ success: true, data: { items, total: 23, page } })
   }
   const history = historyPagination()
   await history.loadHistory()
@@ -227,7 +227,7 @@ test('history retention cannot strand the user on an empty out-of-range page', a
   globalThis.fetch = async (url) => {
     const page = Number(new URL(String(url), 'http://localhost').searchParams.get('page'))
     pages.push(page)
-    return { ok: true, json: async () => ({ success: true, data: { items: page === 1 ? [{ dispatch_id: 'remaining' }] : [], total: 1, page } }) }
+    return Response.json({ success: true, data: { items: page === 1 ? [{ dispatch_id: 'remaining' }] : [], total: 1, page } })
   }
   const history = historyPagination()
   history.historyPage.value = 3
@@ -250,7 +250,7 @@ test('aborted history requests cannot overwrite the page after leaving the view'
   const pending = history.loadHistory({ signal: controller.signal })
   controller.abort()
   assert.equal(requestSignal.aborted, true)
-  resolveResponse({ ok: true, json: async () => ({ success: true, data: { items: [{ dispatch_id: 'late' }], total: 1, page: 1 } }) })
+  resolveResponse(Response.json({ success: true, data: { items: [{ dispatch_id: 'late' }], total: 1, page: 1 } }))
   await pending
   assert.equal(history.histories.value.length, 0)
   assert.equal(history.historyError.value, '')
@@ -261,7 +261,7 @@ test('directory browser requests projects, one project tree, then one catalog pa
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(String(url))
-    return { ok: true, json: async () => ({ success: true, data: { items: [], tree: [], total: 0 } }) }
+    return Response.json({ success: true, data: { items: [], tree: [], total: 0 } })
   }
 
   await listCuttingProjects('君正 25900')
@@ -289,7 +289,7 @@ test('duplicate project and catalog requests share a five-minute cache', async (
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(String(url))
-    return { ok: true, json: async () => ({ success: true, data: { items: [], tree: [] } }) }
+    return Response.json({ success: true, data: { items: [], tree: [] } })
   }
 
   await Promise.all([listCuttingProjects(), listCuttingProjects()])
@@ -312,7 +312,7 @@ test('unified dispatch page loads push readiness status', async () => {
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(String(url))
-    return { ok: true, json: async () => ({ success: true, data: {} }) }
+    return Response.json({ success: true, data: {} })
   }
 
   await getCuttingStatus('push')
@@ -323,7 +323,7 @@ test('unified dispatch page loads push readiness status', async () => {
 
 test('an explicit readiness retry bypasses a cached unconfigured status', async () => {
   let requests = 0
-  globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, data: { can_push: ++requests > 1 } }) })
+  globalThis.fetch = async () => Response.json({ success: true, data: { can_push: ++requests > 1 } })
   assert.equal((await getCuttingStatus('push')).can_push, false)
   assert.equal((await getCuttingStatus('push')).can_push, false)
   assert.equal((await getCuttingStatus('push', { force: true })).can_push, true)
@@ -415,6 +415,7 @@ test('file status refresh preserves selections and ignores responses after a dir
     rows: ref([file]), fileKey: row => JSON.stringify([row.document_id, row.version_id, row.normalized_path]),
     listCuttingFiles: (query, options) => { calls.push({ query, options }); return new Promise(resolve => { complete = resolve }) },
   }
+  bindings.isPageActive = () => bindings.pageActive.value
   const methods = scriptFunction(...Object.keys(bindings), `let querySequence = 0; ${source}; return { refreshVisibleFileStatuses, switchDirectory: () => { querySequence += 1 } }`)(...Object.values(bindings))
   const pending = methods.refreshVisibleFileStatuses()
   const status = { status: 'sent', status_label: '已派发', stage_label: '推送完成' }
@@ -434,10 +435,10 @@ test('dispatch mutations invalidate cached file status even when execution fails
   globalThis.fetch = async (url, options) => {
     if (options.method === 'POST') {
       if (String(url).endsWith('/execute')) throw new Error('推送失败')
-      return { ok: true, json: async () => ({ success: true, data: {} }) }
+      return Response.json({ success: true, data: {} })
     }
     reads += 1
-    return { ok: true, json: async () => ({ success: true, data: { items: [], total: reads } }) }
+    return Response.json({ success: true, data: { items: [], total: reads } })
   }
   const query = { projectId: 'P1', catalogId: 'C1' }
   await listCuttingFiles(query)
@@ -796,7 +797,7 @@ test('retry only continues a matching dispatch after reading its current status'
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(String(url))
-    return { ok: true, json: async () => ({ success: true, data: { ...current, can_execute: false, stage: 'upload_unknown' } }) }
+    return Response.json({ success: true, data: { ...current, can_execute: false, stage: 'upload_unknown' } })
   }
   const status = await getCuttingDispatch('task/1')
   assert.equal(status.can_execute, false)
@@ -856,7 +857,7 @@ test('execute API sends the manual segment without changing the file reference',
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url: String(url), body: options.body })
-    return { ok: true, json: async () => ({ success: true, data: { status: 'sent' } }) }
+    return Response.json({ success: true, data: { status: 'sent' } })
   }
   await executeCuttingDispatch('task/1', '806C')
   assert.deepEqual(calls, [{ url: '/api/v1/cutting/dispatches/task%2F1/execute', body: JSON.stringify({ segment_name: '806C' }) }])

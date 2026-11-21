@@ -40,7 +40,7 @@ function formatAnalysisText(value: unknown) {
 
 function plainAnalysisText(value: unknown) {
   return formatAnalysisText(value).replace(/\[(F\d{3})\]/g, (match, id) =>
-    props.analysis?.facts?.some(fact => fact.id === id) ? match : '').replace(/\s+/g, ' ').trim()
+    props.analysis?.facts.some(fact => fact.id === id) ? match : '').replace(/\s+/g, ' ').trim()
 }
 
 function sectionLead(value: unknown, fallback = '数据分析结论') {

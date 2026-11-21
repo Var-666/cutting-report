@@ -88,12 +88,13 @@ export function useAutomationDeliveries({ message, error, refresh, isDisposed, c
   }
 
   async function openDelivery(item: EmailDelivery) {
-    if (resolutionSaving.value || selectedDelivery.value?.delivery_id === item.delivery_id) return
+    const isSaving = () => resolutionSaving.value
+    if (isSaving() || selectedDelivery.value?.delivery_id === item.delivery_id) return
     if (resolutionDirty.value && !await confirm({
       title: '放弃邮件核对？', content: '切换记录将丢弃当前核对结果和依据。',
       positiveText: '放弃修改', negativeText: '继续编辑', closable: false,
     })) return
-    if (isDisposed() || resolutionSaving.value) return
+    if (isDisposed() || isSaving()) return
     resolutionDirty.value = false
     selectedDelivery.value = item
   }

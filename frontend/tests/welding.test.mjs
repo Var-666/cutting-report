@@ -56,7 +56,7 @@ test('welding KPI layouts preserve zero, missing and pending measurements with t
 })
 
 test('device types contain independent welding lines without adding a third navigation level', () => {
-  const items = [{ id: 'Cutter01', name: '20KW' }, { id: 'Cutter02', name: '30KW' }, { id: 'welding', type: 'welding', name: '小组立焊接线' }, { id: 'other-welding', type: 'welding', name: '另一焊接线' }]
+  const items = [{ id: 'Cutter01', type: 'cutting', name: '20KW' }, { id: 'Cutter02', type: 'cutting', name: '30KW' }, { id: 'welding', type: 'welding', name: '小组立焊接线' }, { id: 'other-welding', type: 'welding', name: '另一焊接线' }]
   const groups = productionGroups(items)
   assert.deepEqual(groups.map(group => [group.name, group.items.length]), [['切割', 2], ['焊接', 2]])
   assert.equal(selectedLineType(items, 'other-welding'), 'welding')
@@ -65,11 +65,11 @@ test('device types contain independent welding lines without adding a third navi
 
 test('cross-line switching enters the correct home and restores selection if navigation is cancelled', async () => {
   const script = source('composables/useDeviceSelection.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01' }, { id: 'Cutter02' }, { id: 'welding', type: 'welding' }, { id: 'other-welding', type: 'welding' }] }
+  const selection = { id: 'Cutter01', items: [{ id: 'Cutter01', type: 'cutting' }, { id: 'Cutter02', type: 'cutting' }, { id: 'welding', type: 'welding' }, { id: 'other-welding', type: 'welding' }] }
   const destinations = []
   let cancel = false
   const router = { replace: async to => { destinations.push(to); return cancel ? { type: 4 } : undefined } }
-  const bindings = { lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', query: {} }), useRouter: () => router,
+  const bindings = { lineHome, selectedLineType, navigationSection, isNavigationFailure, NavigationFailureType, ref, onMounted() {}, useRoute: () => ({ name: 'admin-home', path: '/admin/cutting/home', query: {} }), useRouter: () => router,
     allowDeviceSwitch: async () => true, deviceSwitchQuery: () => null, changeDevice: id => { selection.id = id }, deviceSelection: selection, loadDevices() {} }
   const app = scriptFunction(...Object.keys(bindings), `${script}; return useDeviceSelection();`)(...Object.values(bindings))
   await app.switchDevice('welding')
@@ -156,8 +156,9 @@ function view(readReport, options = {}) {
   const bindings = {
     REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT, setTimeout, clearTimeout,
     selectedLineType, computed, reactive, ref, watch: (source, callback, config) => { if (options.watchers) { options.watchers.push({ source, callback }); if (config?.immediate) callback(source()) } }, onBeforeUnmount: fn => cleanup.push(fn),
-    defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ push() {}, replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
-    reportToday: () => '2026-10-26', getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null,
+    defineProps: () => ({ kind: options.kind || 'jobs' }), useRoute: () => options.route || ({ query: {} }), useRouter: () => options.router || ({ async push() {}, async replace() {} }), queryDateRange, sameRouteQuery, parseWeldingRouteQuery, weldingRouteQuery,
+    reportToday: () => '2026-10-26', getWeldingReport: async (...args) => ({ meta: {}, ...await readReport(...args) }), getLatestWeldingAnalysis: async () => null,
+    formatChineseDate,
     deviceSelection: { id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: options.enabled ?? true }] }, weldingTitles, weldingKpis, weldingColumns, weldingColumnLayout, weldingDisplay, weldingQuery,
   }
   return { ...scriptFunction(...Object.keys(bindings), `${script}; return { read, submit, changePage, report, loading, error, activeQuery, draft, detailJob, goToPart, actionError, filtersDirty, appliedQueryLabel, usesFilterDialog, filtersOpen, openFilters, cancelFilters, applyFilters, resetFilters };`)(...Object.values(bindings)), cleanup }
@@ -207,7 +208,7 @@ test('pending welding filters compare effective conditions and commit only after
   assert.equal(page.filtersDirty.value, true)
   await page.submit()
   assert.equal(page.filtersDirty.value, false)
-  assert.match(page.appliedQueryLabel.value, /2026-10-26 至 2026-10-26 · 设备 0/)
+  assert.match(page.appliedQueryLabel.value, /2026年10月26日 至 2026年10月26日 · 设备 0/)
   page.draft.device_no = 0
   page.draft.page = 4
   page.draft.page_size = 20
@@ -813,7 +814,7 @@ test('reports, details, downloads and analysis never replay a capacity rejection
 
 test('job to part drilldown retains the applied historical production period', () => {
   const destinations = []
-  const app = view(async () => ({}), { route: { query: { start: '2026-09-01', end: '2026-09-02' } }, router: { push: value => destinations.push(value) } })
+  const app = view(async () => ({}), { route: { query: { start: '2026-09-01', end: '2026-09-02' } }, router: { push: async value => { destinations.push(value) } } })
   assert.equal(app.draft.start, '2026-09-01')
   assert.equal(app.draft.end, '2026-09-02')
   app.activeQuery.value = { start: '2026-09-01', end: '2026-09-02' }
@@ -999,8 +1000,8 @@ async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, c
   const drawer = { ...stub }
   const bindings = {
     setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT,
-    ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
-    reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
+    ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ async push() {}, async replace() {} }),
+    reportToday: () => period.start, getWeldingReport: async (...args) => ({ meta: {}, ...await readReport(...args) }), getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
     parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, formatChineseDate,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
     NDrawer: drawer, NDrawerContent: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,

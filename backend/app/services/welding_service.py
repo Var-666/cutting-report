@@ -15,6 +15,9 @@ from decimal import Decimal
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+import httpx
+from psycopg import Error as PostgresError
+
 from app.config import Settings
 from app.core.operations_logging import data_quality, event
 from app.services.query_cache import QueryCache
@@ -26,7 +29,9 @@ from app.database.metadata import MetadataRepository
 from app.models.domain import to_primitive
 from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
 from app.services.llm_prompts import PROMPT_VERSION
-from app.services.llm_service import AnalysisOutputValidationError, LlmService, analysis_error_message
+from app.services.llm_service import (
+    AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmService, analysis_error_message,
+)
 from app.services.analysis_execution import analysis_operation, current_analysis_id, observe_analysis_quality
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
 from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_closing_totals
@@ -216,7 +221,8 @@ class WeldingService:
                     raise AnalysisUnavailableError('模型未返回成功分析')
         except SqlRequestCancelled:
             raise
-        except Exception as exc:
+        except (AnalysisUnavailableError, AnalysisInputTooLarge, AnalysisOutputValidationError, AnalysisCapacityError,
+                httpx.HTTPError, PostgresError, OSError) as exc:
             cached = self.cached_analysis(version, kind=kind, query=query, historical=True)
             if cached:
                 return cached

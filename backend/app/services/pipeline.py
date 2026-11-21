@@ -6,6 +6,8 @@ from collections.abc import Callable
 from functools import partial
 from zoneinfo import ZoneInfo
 
+from psycopg import Error as PostgresError
+
 from app.core.operations_logging import event
 from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
@@ -264,7 +266,7 @@ class ReportPipeline:
                         return
                 else:
                     (self.settings.reports_dir / file_info["relative_path"]).unlink(missing_ok=True)
-            except Exception as cleanup:
+            except (PostgresError, OSError) as cleanup:
                 event(logger, logging.WARNING, '归档结果待核对', error_code='REPORT_ARCHIVE_UNCERTAIN',
                       report_id=report_id, line_id=self.settings.device_id, stage='archiving', error_type=type(cleanup).__name__)
             raise

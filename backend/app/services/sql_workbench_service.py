@@ -140,13 +140,12 @@ class SqlWorkbenchService:
         validated = self.validate(sql)
         limit = max(1, min(max_rows, self.settings.sql_workbench_max_rows))
         started = perf_counter()
-        with self.client.connect() as connection:
-            with cancellable_cursor(connection) as cursor:
-                cursor.execute(validated.formatted_sql)
-                if cursor.description is None:
-                    raise SqlWorkbenchValidationError("查询没有返回结果集")
-                columns = _unique_columns(cursor.description)
-                rows = cursor.fetchmany(limit + 1)
+        with self.client.connect() as connection, cancellable_cursor(connection) as cursor:
+            cursor.execute(validated.formatted_sql)
+            if cursor.description is None:
+                raise SqlWorkbenchValidationError("查询没有返回结果集")
+            columns = _unique_columns(cursor.description)
+            rows = cursor.fetchmany(limit + 1)
         truncated = len(rows) > limit
         rows = rows[:limit]
         items = [

@@ -48,7 +48,8 @@ class BoundedExecutor:
                 if future.set_running_or_notify_cancel():
                     try:
                         future.set_result(context.run(function, *args))
-                    except BaseException as exc:
+                    # Transfer all failures to the waiting Future, as concurrent.futures executors do.
+                    except BaseException as exc:  # noqa: BLE001
                         future.set_exception(exc)
             finally:
                 with self._lock:

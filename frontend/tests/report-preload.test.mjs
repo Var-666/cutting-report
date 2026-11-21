@@ -18,7 +18,7 @@ const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
 const admin = { user_id: 'admin-1', role: 'admin' }
 const today = reportToday()
 const month = today.slice(0, 7)
-const response = (data) => ({ ok: true, json: async () => ({ success: true, data }) })
+const response = (data) => Response.json({ success: true, data })
 function mockApi(override = () => undefined) {
   Object.defineProperty(globalThis, 'location', { configurable: true, value: { pathname: '/admin/cutting/home', search: '' } })
   const calls = []

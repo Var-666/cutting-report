@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../api/browserObservations.ts'
+
 import AppReportTable from '../components/AppReportTable.vue'
 import DispatchBatchDialog from '../components/dispatch/DispatchBatchDialog.vue'
 import DispatchHistoryTable from '../components/dispatch/DispatchHistoryTable.vue'
@@ -116,7 +118,7 @@ async function closeRetry() {
 const selectedFileCount = computed(() => selectedFiles.value.size)
 const historyMachineIps = computed(() => [...new Set([
   ...(trend.value?.machine_ips || []), ...machines.value.map(machine => machine.machine_ip),
-  ...(systemStatus.value?.magic_box?.machine_ips || []),
+  ...(systemStatus.value?.magic_box.machine_ips || []),
   ...(trendFilters.value.machine_ip ? [trendFilters.value.machine_ip] : []),
 ])].sort())
 
@@ -142,7 +144,7 @@ function rememberSelectedProject(projectId: string) {
   const query = { ...route.query }
   if (value) query.project_id = value
   else delete query.project_id
-  router.replace({ query })
+  router.replace({ query }).catch(reportAsyncError)
 }
 
 function openSinglePush(file: CuttingFile) {
@@ -152,18 +154,18 @@ function openSinglePush(file: CuttingFile) {
 }
 
 async function loadMachines({ signal }: ReadOptions = {}) {
-  if (!systemStatus.value?.magic_box?.configured) return
+  if (!systemStatus.value?.magic_box.configured) return
   try {
     const data = await listCuttingMachines({ signal })
     if (signal?.aborted || !pageActive.value) return
-    machines.value = data.items || []
+    machines.value = data.items
     if (!dispatchForm.machineIp && machines.value.length) {
       dispatchForm.machineIp = machines.value[0].machine_ip
     }
   } catch (caught) {
     const error = toError(caught)
     if (signal?.aborted || !pageActive.value || error.name === 'AbortError') return
-    machines.value = (systemStatus.value?.magic_box?.machine_ips || []).map((machineIp) => ({
+    machines.value = systemStatus.value.magic_box.machine_ips.map((machineIp) => ({
       machine_ip: machineIp,
       online: false,
       configured: true,
@@ -174,7 +176,8 @@ async function loadMachines({ signal }: ReadOptions = {}) {
 }
 
 async function executeSaved(item: CuttingDispatch, segmentName?: string) {
-  if (dispatchBusy.value) return
+  const isBusy = () => dispatchBusy.value
+  if (isBusy()) return
   if (segmentName === undefined) {
     if (retryDispatch.value) return
     if (!item.remote_task_id && !parseCuttingInstructionFilename(item.document_no)) {
@@ -187,7 +190,7 @@ async function executeSaved(item: CuttingDispatch, segmentName?: string) {
       title: '执行文件派发？',
       content: `将任务 ${item.dispatch_id} 的文件“${item.document_no}”发往${machineName(item.machine_ip)}（${item.machine_ip}）。`,
       positiveText: '执行文件派发',
-    }) || dispatchBusy.value || !pageActive.value) return
+    }) || isBusy() || !pageActive.value) return
   } else if (retryDispatch.value?.dispatch_id !== item.dispatch_id || !segmentName) return
   retryError.value = ''
   operatingId.value = item.dispatch_id
@@ -227,9 +230,11 @@ async function loadRuntimeStatus({ signal, force = false }: ReadOptions = {}) {
   const controller = new AbortController()
   statusController = controller
   const sequence = lifecycleSequence
+  const isCurrent = () => pageActive.value && sequence === lifecycleSequence && statusController === controller
   const cancel = () => controller.abort()
   signal?.addEventListener('abort', cancel, { once: true })
   let timedOut = false
+  const didTimeOut = () => timedOut
   const timer = window.setTimeout(() => {
     timedOut = true
     controller.abort()
@@ -238,19 +243,17 @@ async function loadRuntimeStatus({ signal, force = false }: ReadOptions = {}) {
   statusError.value = ''
   try {
     const data = await getCuttingStatus('push', { signal: controller.signal, force })
-    if (controller.signal.aborted || !pageActive.value || sequence !== lifecycleSequence
-        || statusController !== controller) return
+    if (controller.signal.aborted || !isCurrent()) return
     systemStatus.value = data
     window.clearTimeout(timer)
     statusLoading.value = false
     await loadMachines({ signal: controller.signal })
   } catch (caught) {
     const error = toError(caught)
-    if (!pageActive.value || signal?.aborted || sequence !== lifecycleSequence
-        || statusController !== controller) return
-    if (timedOut || error.name !== 'AbortError') {
+    if (signal?.aborted || !isCurrent()) return
+    if (didTimeOut() || error.name !== 'AbortError') {
       systemStatus.value = null
-      statusError.value = timedOut
+      statusError.value = didTimeOut()
         ? '文件派发状态检查超时（30秒），项目目录可继续浏览，请重新检查后再派发。'
         : `文件派发状态检查失败：${error.message}`
     }
@@ -300,7 +303,7 @@ function pausePage() {
 
 onMounted(() => {
   startHistoryPolling()
-  initializePage()
+  initializePage().catch(reportAsyncError)
 })
 
 onActivated(async () => {

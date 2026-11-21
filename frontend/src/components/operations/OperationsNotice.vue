@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { reportAsyncError } from '../../api/browserObservations.ts'
+
 import { useDocumentVisibility } from '@vueuse/core'
 import { NButton } from 'naive-ui'
 import { ref, watch } from 'vue'
@@ -28,7 +30,7 @@ watch(useDocumentVisibility(), (visibility, _, onCleanup) => {
       if (!controller.signal.aborted) timer = setTimeout(refresh, 60_000)
     }
   }
-  void refresh()
+  refresh().catch(reportAsyncError)
 }, { immediate: true })
 </script>
 

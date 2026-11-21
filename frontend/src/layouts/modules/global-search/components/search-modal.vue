@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import { reportAsyncError } from '../../../../api/browserObservations.ts'
+
 import { computed, ref, shallowRef } from 'vue';
 import { useRouter } from 'vue-router';
 import { onKeyStroke, useDebounceFn } from '@vueuse/core';
@@ -74,9 +76,9 @@ function getActivePathIndex() {
 
 /** key enter */
 function handleEnter() {
-  if (resultOptions.value?.length === 0 || activePath.value === '') return;
+  if (resultOptions.value.length === 0 || activePath.value === '') return;
   handleClose();
-  router.push(activePath.value);
+  router.push(activePath.value).catch(reportAsyncError);
 }
 
 function registerShortcut() {

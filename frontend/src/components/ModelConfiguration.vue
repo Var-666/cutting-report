@@ -67,7 +67,7 @@ async function save() {
     if (disposed) return
     configuration.value = result
     Object.assign(draft, { enabled: result.enabled, base_url: result.base_url, model: result.model, api_key: '' })
-    globalThis.window?.$message?.success(result.enabled ? '模型配置已保存' : '智能分析配置已保存')
+    globalThis.window.$message?.success(result.enabled ? '模型配置已保存' : '智能分析配置已保存')
   } catch (caught) {
     if (!disposed) error.value = toError(caught).message
   } finally {
