@@ -55,6 +55,7 @@ jobs:
           backend/tests/test_api_contract_generation.py
           backend/tests/test_frontend_response_contracts.py
           backend/tests/test_settings_boundary.py
+          backend/tests/test_runtime_shape_boundary.py
           backend/tests/test_database_runtime.py::test_direct_and_injected_dependencies_share_one_request_snapshot
           backend/tests/test_database_runtime.py::test_cold_http_capacity_matches_diagnostics_after_save
           backend/tests/test_database_runtime.py::test_diagnostics_authentication_uses_published_context_without_reloading
@@ -65,7 +66,7 @@ jobs:
           import xml.etree.ElementTree as ET
           cases = ET.parse('api-contract-results.xml').getroot().findall('.//testcase')
           modules = {'test_api_contract_generation', 'test_frontend_response_contracts', 'test_settings_boundary',
-                     'test_database_runtime', 'test_automation_configuration'}
+                     'test_database_runtime', 'test_automation_configuration', 'test_runtime_shape_boundary'}
           assert cases and all(any(module in case.attrib['classname'] for case in cases) for module in modules), 'Contract tests were not collected'
           counts = {tag: sum(case.find(tag) is not None for case in cases) for tag in ('skipped', 'failure', 'error')}
           print(f'API contracts: collected={len(cases)}, passed={len(cases)-sum(counts.values())}, {counts}')
