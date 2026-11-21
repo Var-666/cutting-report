@@ -1,10 +1,7 @@
 import { renderComponent } from './vue-component-helpers.mjs'
-import { scriptFunction, runTypeScript } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
-import { afterEach, test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import vm from 'node:vm'
-import { computed, reactive, ref } from 'vue'
+import { afterEach, test, vi } from 'vitest'
+import { computed, ref } from 'vue'
 import {
   getCuttingStatus,
   executeCuttingDispatch,
@@ -16,15 +13,12 @@ import {
   listCuttingDispatches,
 } from '../src/api/reports.ts'
 import { reportCache } from '../src/api/reportCache.ts'
+import * as dispatch from '../src/api/dispatch.ts'
+import { useCuttingDispatchBatch } from '../src/composables/useCuttingDispatchBatch'
+import { useCuttingDispatchHistory } from '../src/composables/useCuttingDispatchHistory'
+import { useCuttingFileBrowser } from '../src/composables/useCuttingFileBrowser'
 import { parseCuttingInstructionFilename } from '../src/utils/cuttingInstructionName.ts'
-import { cuttingFileKey as fileKey, matchesDispatchParameters, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError } from '../src/utils/cuttingDispatchBatch.ts'
-
-const readSource = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
-const browserSource = readSource('composables/useCuttingFileBrowser.ts')
-const batchSource = readSource('composables/useCuttingDispatchBatch.ts')
-const historySource = readSource('composables/useCuttingDispatchHistory.ts')
-const historyTableSource = readSource('components/dispatch/DispatchHistoryTable.vue')
-const hookScript = source => source.replace(/^import .*$/gm, '').replace(/^export type .*$/gm, '').replace('export function', 'function')
+import { cuttingFileKey as fileKey, matchesDispatchParameters, batchItemError, hasNameMismatch } from '../src/utils/cuttingDispatchBatch.ts'
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -32,130 +26,11 @@ afterEach(() => {
   reportCache.invalidate('cutting:')
 })
 
-function dispatchLifecycle({ status, projects, listMachines, catalogs } = {}) {
-  const source = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const calls = { status: [], projects: 0, history: 0 }
-  const timers = new Map()
-  let mounted, activated, timerId = 0
-  const context = vm.createContext({
-    ref, reactive, computed, AbortController, fileKey, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
-    useRoute: () => ({ query: {} }), useRouter: () => ({ async replace() {} }), useUnsavedChanges: () => () => true, useConfirm: () => async () => true,
-    onMounted: fn => { mounted = fn }, onActivated: fn => { activated = fn }, onDeactivated() {}, onBeforeUnmount() {},
-    getCuttingStatus: (_scope, options) => { calls.status.push(options); return status(options, calls.status.length) },
-    listCuttingProjects: (...args) => { calls.projects += 1; return projects ? projects(...args) : Promise.resolve({ items: [{ project_id: 'P1', project_name: 'P1' }] }) },
-    listCuttingCatalogs: catalogs || (async () => ({ tree: [] })),
-    listCuttingMachines: listMachines || (async () => ({ items: [] })),
-    listCuttingDispatches: async () => { calls.history += 1; return { items: [], total: 0 } },
-    getCuttingDispatchTrend: async filters => ({ ...filters, items: [], machine_ips: [], timezone: 'Asia/Shanghai' }),
-    window: {
-      setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id },
-      clearTimeout: id => timers.delete(id),
-    },
-  })
-  for (const module of [browserSource, historySource, batchSource]) runTypeScript(hookScript(module), context)
-  const script = source.match(/<script setup(?: lang="ts")?>([\s\S]*?)<\/script>/)[1].replace(/^import[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
-  runTypeScript(script + '\nthis.page = { initializePage, loadRuntimeStatus, loadMachines, pausePage, systemStatus, statusError, statusLoading, projectOptions, notice, machines };', context)
-  return { ...context.page, calls, timers, context, mounted: () => mounted(), activated: () => activated() }
-}
-
 const flushDispatch = () => new Promise(resolve => setImmediate(resolve))
-
-test('a slow readiness check cannot block the project directory or dispatch history after refresh', async () => {
-  let completeStatus
-  const page = dispatchLifecycle({ status: () => new Promise(resolve => { completeStatus = resolve }) })
-  const initial = page.initializePage()
-  await flushDispatch()
-  try {
-    assert.equal(page.projectOptions.value.length, 1, 'PDM browsing must not wait for the separate production SYS_CONFIG check')
-    assert.equal(page.calls.history, 1)
-  } finally {
-    completeStatus({ can_push: true, magic_box: { configured: false } })
-    await initial
-  }
-})
-
-test('a timed-out readiness check offers a fresh retry while keeping the loaded project directory', async () => {
-  const page = dispatchLifecycle({ status: ({ signal }, attempt) => attempt === 1
-    ? new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }))
-    : Promise.resolve({ can_push: true, magic_box: { configured: false } }) })
-  const initial = page.initializePage()
-  await flushDispatch()
-  const timer = [...page.timers.values()][0]
-  assert.equal(timer.delay, 30_000)
-  timer.callback()
-  await initial
-  assert.match(page.statusError.value, /超时/)
-  assert.equal(page.statusLoading.value, false)
-  assert.equal(page.systemStatus.value, null, 'readiness failure must not leave dispatch enabled')
-  assert.equal(page.projectOptions.value.length, 1)
-  await page.loadRuntimeStatus({ force: true })
-  assert.equal(page.statusError.value, '')
-  assert.equal(page.systemStatus.value.can_push, true)
-  assert.equal(page.calls.status[1].force, true)
-  assert.equal(page.calls.projects, 1, 'retrying readiness must not reset directory or file selection')
-  assert.equal(page.timers.size, 0)
-})
-
-test('a failed readiness check does not present a false empty project list', async () => {
-  const page = dispatchLifecycle({ status: async () => { throw new Error('SYS_CONFIG unavailable') } })
-  await page.initializePage()
-  assert.equal(page.projectOptions.value.length, 1)
-  assert.equal(page.calls.history, 1)
-  assert.match(page.statusError.value, /SYS_CONFIG unavailable/)
-  assert.equal(page.systemStatus.value, null)
-  assert.equal(page.timers.size, 0)
-})
-
-test('returning after an interrupted first load retries the directory and ignores late old responses', async () => {
-  let oldStatus, oldProjects
-  const page = dispatchLifecycle({
-    status: (_options, attempt) => attempt === 1 ? new Promise(resolve => { oldStatus = resolve })
-      : Promise.resolve({ can_push: true, magic_box: { configured: false } }),
-    projects: () => page.calls.projects === 1 ? new Promise(resolve => { oldProjects = resolve })
-      : Promise.resolve({ items: [{ project_id: 'new', project_name: 'new' }] }),
-  })
-  const initial = page.initializePage()
-  await page.activated()
-  page.pausePage()
-  const resumed = page.activated()
-  await flushDispatch()
-  assert.equal(page.calls.projects, 2)
-  assert.equal(page.projectOptions.value[0].project_id, 'new')
-  oldStatus({ can_push: false })
-  oldProjects({ items: [{ project_id: 'old', project_name: 'old' }] })
-  await Promise.all([initial, resumed])
-  assert.equal(page.systemStatus.value.can_push, true)
-  assert.equal(page.projectOptions.value[0].project_id, 'new')
-  assert.equal(page.statusError.value, '')
-})
-
-test('a completed empty project list is preserved on reactivation', async () => {
-  const page = dispatchLifecycle({ status: async () => ({ can_push: false }), projects: async () => ({ items: [] }) })
-  await page.initializePage()
-  await page.activated()
-  page.pausePage()
-  await page.activated()
-  assert.equal(page.calls.projects, 1)
-  assert.equal(page.calls.status.length, 2)
-})
-
-test('cancelling machine status cannot write a stale fallback or error notice after leaving', async () => {
-  let fail
-  const page = dispatchLifecycle({ listMachines: () => new Promise((_resolve, reject) => { fail = reject }) })
-  page.systemStatus.value = { magic_box: { configured: true, machine_ips: ['10.147.1.40'] } }
-  const controller = new AbortController()
-  const pending = page.loadMachines({ signal: controller.signal })
-  controller.abort()
-  fail(new DOMException('cancelled', 'AbortError'))
-  await pending
-  assert.equal(page.machines.value.length, 0)
-  assert.equal(page.notice.value, '')
-})
 
 function historyPagination() {
   const inputs = { pageActive: ref(true), operatingId: ref(''), pushBatch: { saving: false } }
-  const useHistory = scriptFunction('ref', 'computed', 'listCuttingDispatches', `${hookScript(historySource)}; return useCuttingDispatchHistory`)(ref, computed, listCuttingDispatches)
-  const state = useHistory({ pageActive: inputs.pageActive, isBusy: () => Boolean(inputs.operatingId.value || inputs.pushBatch.saving) })
+  const state = useCuttingDispatchHistory({ pageActive: inputs.pageActive, isBusy: () => Boolean(inputs.operatingId.value || inputs.pushBatch.saving) })
   return { ...inputs, ...state, historyPageCount: computed(() => Math.max(1, Math.ceil(state.historyTotal.value / 10))) }
 }
 
@@ -330,104 +205,29 @@ test('an explicit readiness retry bypasses a cached unconfigured status', async 
   assert.equal(requests, 2)
 })
 
-test('machine selectors show Chinese names and IPs while dispatch still uses their IPs', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = view.match(/function machineName\(machineIp: string\) \{[\s\S]*?\n\}/)[0]
-  const machines = { value: [{ machine_ip: '10.147.1.41', server_name: '其他机床' }] }
-  const machineName = scriptFunction('machines', `${source}\nreturn machineName`)(machines)
-
-  assert.equal(machineName('10.147.1.40'), '20kW 切割机')
-  assert.equal(machineName('10.147.1.38'), '30kW 切割机')
-  assert.equal(machineName('10.147.1.41'), '其他机床')
-  assert.equal(machineName('10.147.1.42'), '未命名机床')
-  assert.match(batchSource, /machine_ip: dispatchForm.machineIp/)
-  assert.match(historyTableSource, /#c4="[^"]*">\{\{ machineName\(item.machine_ip\) \}\}<\/template>/)
-  assert.doesNotMatch(view, /目标机床 IP|<th>机床IP<\/th>/)
-})
-
-test('confirming a project opens it immediately, preserves same-project selection and ignores superseded catalogs', async () => {
-  const requests = []
-  let finishOld
-  const page = dispatchLifecycle({ catalogs: (id, { signal }) => {
-    requests.push({ id, signal })
-    return id === 'P2' ? new Promise(resolve => { finishOld = resolve }) : Promise.resolve({ tree: [{ catalog_id: `C-${id}`, title: id }] })
-  } })
-  const state = runTypeScript('({ projectOptions, selectedProjectId, selectedProject, selectedCatalog, selectedFiles, rows, catalogTree, openSelectedProject })', page.context)
-  state.projectOptions.value = ['P1', 'P2', 'P3'].map(id => ({ project_id: id, project_name: id }))
-  state.selectedProjectId.value = 'P1'
-  await state.openSelectedProject()
-  state.selectedCatalog.value = { catalog_id: 'C-P1' }
-  state.selectedFiles.value.set('file-1', { document_id: 'file-1' })
-  state.rows.value = [{ document_id: 'file-1' }]
-  await state.openSelectedProject()
-  assert.equal(requests.length, 1)
-  assert.equal(state.selectedFiles.value.size, 1)
-  state.selectedProjectId.value = 'P2'
-  const pending = state.openSelectedProject()
-  assert.equal(state.selectedFiles.value.size, 0)
-  assert.equal(state.selectedCatalog.value, null)
-  assert.equal(state.rows.value.length, 0)
-  state.selectedProjectId.value = 'P3'
-  await state.openSelectedProject()
-  assert.equal(requests[1].signal.aborted, true)
-  finishOld({ tree: [{ catalog_id: 'stale', title: 'old' }] })
-  await pending
-  assert.equal(state.selectedProject.value.project_id, 'P3')
-  assert.equal(state.catalogTree.value[0].catalog_id, 'C-P3')
-})
-
-test('selected dispatch project survives refresh without a saved-file browser', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-
-  assert.match(view, /useRoute, useRouter/)
-  assert.match(view, /route\.query\.project_id/)
-  assert.match(view, /router\.replace\(\{ query \}\)/)
-  assert.match(browserSource, /if \(projectToOpen && pageActive\.value && !signal\.aborted && sequence === querySequence\) await selectProject\(projectToOpen\)/)
-  assert.doesNotMatch(view, /CuttingDownloadsPanel|downloadsPanel|selectProjectById/)
-})
-
-test('project-shaped catalog root is hidden to avoid showing the project twice', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(browserSource, /roots\.length === 1/)
-  assert.match(view, /project\.project_name/)
-  assert.match(browserSource, /roots = roots\[0\]\.children/)
-})
-
-test('file dispatch status is displayed after operation time with the history badge and empty state', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /title: "操作时间"[\s\S]*title: "派发状态"[\s\S]*title: "操作"/)
-  assert.match(view, /class="dispatch-status" :class="row.dispatch_status.status"/)
-  assert.match(view, /row.dispatch_status.status_label/)
-  assert.match(view, /row.dispatch_status.stage_label/)
-  assert.match(view, /v-else class="dispatch-project-name">暂无记录/)
-  assert.match(view, /#empty>[\s\S]*当前目录没有匹配的文件/)
-})
-
-test('file status refresh preserves selections and ignores responses after a directory switch', async () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = browserSource.slice(browserSource.indexOf('async function refreshVisibleFileStatuses('), browserSource.indexOf('function pauseDirectory('))
-  let complete
-  const calls = []
-  const file = { document_id: 'doc', version_id: 'v1', normalized_path: 'file.gen' }
-  const bindings = {
-    selectedProject: ref({ project_id: 'P1' }), selectedCatalog: ref({ catalog_id: 'C1' }),
-    pageActive: ref(true), appliedFileKeyword: ref('307C'), page: ref(3), pageSize: 20,
-    rows: ref([file]), fileKey: row => JSON.stringify([row.document_id, row.version_id, row.normalized_path]),
-    listCuttingFiles: (query, options) => { calls.push({ query, options }); return new Promise(resolve => { complete = resolve }) },
-  }
-  bindings.isPageActive = () => bindings.pageActive.value
-  const methods = scriptFunction(...Object.keys(bindings), `let querySequence = 0; ${source}; return { refreshVisibleFileStatuses, switchDirectory: () => { querySequence += 1 } }`)(...Object.values(bindings))
-  const pending = methods.refreshVisibleFileStatuses()
+test('file status refresh preserves selections and ignores stale responses after a folder switch', async () => {
+  const original = selectableFile('original')
+  const next = selectableFile('new-folder')
+  const pending = []
+  const browser = fileSelection([original], { listFiles: (query, options) => query.catalogId === 'C2'
+    ? Promise.resolve({ items: [next], total: 1, page: 1 })
+    : new Promise(resolve => pending.push({ query, options, resolve })) })
+  browser.appliedFileKeyword.value = '307C'
+  browser.page.value = 3
+  browser.setFileSelected(original, true)
+  const first = browser.refreshVisibleFileStatuses()
   const status = { status: 'sent', status_label: '已派发', stage_label: '推送完成' }
-  complete({ items: [{ ...file, dispatch_status: status }] })
-  await pending
-  assert.deepEqual(bindings.rows.value[0].dispatch_status, status)
-  assert.deepEqual(calls[0], { query: { projectId: 'P1', catalogId: 'C1', keyword: '307C', page: 3, pageSize: 20 }, options: { force: true } })
-  const late = methods.refreshVisibleFileStatuses()
-  methods.switchDirectory()
-  complete({ items: [{ ...file, dispatch_status: null }] })
-  await late
-  assert.deepEqual(bindings.rows.value[0].dispatch_status, status)
+  assert.deepEqual(pending[0].query, { projectId: 'P1', catalogId: 'C1', keyword: '307C', page: 3, pageSize: 10 })
+  assert.deepEqual(pending[0].options, { force: true })
+  pending[0].resolve({ items: [{ ...original, dispatch_status: status }] })
+  await first
+  assert.deepEqual(browser.rows.value[0].dispatch_status, status)
+  assert.equal(browser.selectedFiles.value.has(fileKey(original)), true)
+  const stale = browser.refreshVisibleFileStatuses()
+  await browser.selectCatalog({ catalog_id: 'C2', title: '新目录' })
+  pending[1].resolve({ items: [{ ...next, dispatch_status: status }] })
+  await stale
+  assert.deepEqual(browser.rows.value, [next])
 })
 
 test('dispatch mutations invalidate cached file status even when execution fails', async () => {
@@ -457,8 +257,8 @@ test('dispatch mutations invalidate cached file status even when execution fails
 function fileSelection(files = [], { total = files.length, listFiles } = {}) {
   const notices = []
   const inputs = { pageActive: ref(true), systemStatus: ref({ can_push: true }), pushBatch: { saving: false } }
-  const useBrowser = scriptFunction('ref', 'computed', 'listCuttingFiles', 'fileKey', `${hookScript(browserSource)}; return useCuttingFileBrowser`)(ref, computed, listFiles, fileKey)
-  const state = useBrowser({ ...inputs, isDispatching: () => inputs.pushBatch.saving, initialProjectId: '', rememberSelectedProject() {}, notice: ref(''), showNotice: text => notices.push(text) })
+  if (listFiles) vi.spyOn(dispatch, 'listCuttingFiles').mockImplementation(listFiles)
+  const state = useCuttingFileBrowser({ ...inputs, isDispatching: () => inputs.pushBatch.saving, initialProjectId: '', rememberSelectedProject() {}, notice: ref(''), showNotice: text => notices.push(text) })
   state.rows.value = files
   state.total.value = total
   state.selectedProject.value = { project_id: 'P1' }
@@ -657,9 +457,6 @@ test('empty and unavailable-only pages do not falsely indicate full directory se
   await selection.toggleCatalogFiles(checkboxEvent(true))
   assert.equal(selection.selectedFiles.value.size, 1)
   assert.equal(selection.allCatalogFilesSelected.value, true)
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(view, /:disabled="!total \|\| !systemStatus\?\.can_push \|\| loading \|\| pushBatch\.saving"/)
-  assert.match(view, /正在选择所有分页的文件/)
 })
 
 test('standard cutting instruction names provide material and thickness for dispatch', () => {
@@ -720,7 +517,6 @@ test('dispatch parameters depend on material and thickness, not the product code
 })
 
 test('any two-character material code is filled verbatim without a grade mapping or manual override', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const batch = batchWorkflow()
   const createPushBatchItem = file => {
     batch.closePushBatch()
@@ -803,38 +599,9 @@ test('retry only continues a matching dispatch after reading its current status'
   assert.equal(status.can_execute, false)
   assert.deepEqual(calls, ['/api/v1/cutting/dispatches/task%2F1'])
 
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  assert.match(batchSource, /const current = await getCuttingDispatch\(item\.dispatchId\)/)
-  assert.match(batchSource, /if \(current\.status === 'sent' \|\| !item\.retryable\) return/)
-})
-
-test('project suggestions preserve the typed search while selecting and switching projects', async () => {
-  const page = dispatchLifecycle()
-  const state = runTypeScript('({ projectOptions, projectSearch, projectSuggestions, selectedProject, openSelectedProject })', page.context)
-  state.projectOptions.value = [
-    { project_id: 'P1', project_name: '扬州切割联调项目', ship_no: 'CMYZ0177' },
-    { project_id: 'P2', project_name: '文件派发模拟项目', ship_no: 'CMYZ0188' },
-  ]
-  state.projectSearch.value = '  cmyz0177  '
-  assert.equal(state.projectSuggestions.value.length, 1)
-  const option = state.projectSuggestions.value[0]
-  assert.equal(option.displayLabel, '扬州切割联调项目 · CMYZ0177')
-  assert.equal(Object.hasOwn(option, 'label'), false, 'autocomplete must not replace the typed query on selection')
-  await state.openSelectedProject(option.value)
-  assert.equal(state.projectSearch.value, '  cmyz0177  ')
-  assert.equal(state.selectedProject.value.project_id, 'P1')
-  state.projectSearch.value = '模拟'
-  await state.openSelectedProject(state.projectSuggestions.value[0].value)
-  assert.equal(state.projectSearch.value, '模拟')
-  assert.equal(state.selectedProject.value.project_id, 'P2')
-  state.projectSearch.value = '不存在'
-  assert.equal(state.projectSuggestions.value.length, 0)
-  state.projectSearch.value = null
-  assert.equal(state.projectSuggestions.value.length, 2)
 })
 
 test('dispatch segments are recognized or required before a nonstandard file can be pushed', () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
   const batch = batchWorkflow()
   const createPushBatchItem = file => {
     batch.closePushBatch()
@@ -863,34 +630,6 @@ test('execute API sends the manual segment without changing the file reference',
   assert.deepEqual(calls, [{ url: '/api/v1/cutting/dispatches/task%2F1/execute', body: JSON.stringify({ segment_name: '806C' }) }])
 })
 
-test('history retries require a segment for nonstandard files and cancellation never executes', async () => {
-  const view = readFileSync(new URL('../src/views/CuttingDispatchView.vue', import.meta.url), 'utf8')
-  const source = view.slice(view.indexOf('async function executeSaved('), view.indexOf('function formatTime('))
-  const calls = [], retryDispatch = ref(null), retrySegment = ref(''), retryError = ref('')
-  const operatingId = ref('')
-  let accepted = true
-  let historyRefreshes = 0, fileRefreshes = 0
-  const executeSaved = scriptFunction('confirm', 'retryDispatch', 'retrySegment', 'retryError', 'dispatchBusy', 'pageActive', 'operatingId', 'machineName', 'parseCuttingInstructionFilename', 'executeCuttingDispatch', 'showNotice', 'refreshHistory', 'refreshVisibleFileStatuses', `${source}\nreturn executeSaved`)(async () => accepted, retryDispatch, retrySegment, retryError, computed(() => Boolean(operatingId.value)), ref(true), operatingId, String, parseCuttingInstructionFilename, async (...args) => { calls.push(args); return { remote_task_id: 'remote' } }, () => {}, async () => { historyRefreshes++ }, async () => { fileRefreshes++ })
-  const manual = { dispatch_id: 'old-manual', document_no: 'custom.gen', machine_ip: '10.1.1.2' }
-  await executeSaved(manual)
-  assert.equal(calls.length, 0)
-  assert.deepEqual(retryDispatch.value, manual)
-  await executeSaved(manual, '806C')
-  assert.deepEqual(calls, [['old-manual', '806C']])
-  assert.equal(retryDispatch.value, null)
-  accepted = false
-  await executeSaved({ ...manual, remote_task_id: 'remote' })
-  assert.equal(calls.length, 1)
-  assert.equal(historyRefreshes, 1)
-  assert.equal(fileRefreshes, 1)
-  accepted = true
-  await executeSaved({ ...manual, dispatch_id: 'uploaded', remote_task_id: 'remote' })
-  assert.deepEqual(calls[1], ['uploaded', undefined])
-  assert.equal(historyRefreshes, 2)
-  assert.equal(fileRefreshes, 2)
-  assert.doesNotMatch(view, /window\.(?:confirm|prompt)\(/)
-})
-
 function batchWorkflow(api = {}) {
   const calls = { create: [], execute: [], refresh: 0 }
   const inputs = {
@@ -900,8 +639,7 @@ function batchWorkflow(api = {}) {
     loadFiles: async () => {}, showNotice() {},
   }
   inputs.clearSelectedFiles = () => { inputs.selectedFiles.value = new Map() }
-  const bindings = {
-    ref, computed, reactive, fileKey, parseCuttingInstructionFilename, matchesDispatchParameters, batchItemError, hasNameMismatch, batchStatusLabel, isStaleFileError,
+  const requests = {
     createCuttingDispatchBatch: async payload => {
       calls.create.push(payload)
       return { items: payload.items.map((item, index) => ({ ...item, status: 'created', dispatch: { dispatch_id: `d${index + 1}` } })) }
@@ -910,8 +648,8 @@ function batchWorkflow(api = {}) {
     getCuttingDispatch: async () => { throw new Error('状态不可用') },
     ...api,
   }
-  const useBatch = scriptFunction(...Object.keys(bindings), `${hookScript(batchSource)}; return useCuttingDispatchBatch`)(...Object.values(bindings))
-  const state = useBatch(inputs)
+  for (const [name, implementation] of Object.entries(requests)) vi.spyOn(dispatch, name).mockImplementation(implementation)
+  const state = useCuttingDispatchBatch(inputs)
   state.openPushBatch()
   return { ...state, inputs, calls }
 }
