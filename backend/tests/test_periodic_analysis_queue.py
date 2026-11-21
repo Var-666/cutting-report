@@ -120,7 +120,7 @@ def test_expired_periodic_work_does_not_call_its_business_handler(periodic_worke
     with process.scope():
         process._execute(fresh)
         process._flush_completions()
-    assert calls == [(kind, payload)]
+    assert calls == [(kind, {**payload, 'requested_at': fresh['created_at']})]
 
 
 @pytest.mark.parametrize('key', [None, 'reconcile:Cutter01:2026-11-12:2026-10-01'])
@@ -133,4 +133,4 @@ def test_manual_and_historical_month_refreshes_are_not_expired(periodic_worker, 
     with process.scope():
         process._execute(task)
         process._flush_completions()
-    assert calls == [('leadership_refresh', payload)]
+    assert calls == [('leadership_refresh', {**payload, 'requested_at': task['created_at']})]

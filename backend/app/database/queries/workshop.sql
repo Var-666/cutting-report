@@ -7,6 +7,7 @@ WITH task_source AS (
     SELECT
         t.*,
         COALESCE(NULLIF(LTRIM(RTRIM(t.[PROJECT_NAME])), ''), NULLIF(LTRIM(RTRIM(t.[PROJECT_CODE])), '')) AS project_number,
+        TRY_CONVERT(datetime2(7), NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS completed_at,
         TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(varchar(64), t.[END_TIME], 126))), '')) AS production_date
     FROM [dbo].[task] AS t
     WHERE t.[STATUS] = 2
@@ -25,10 +26,10 @@ SELECT
     CONVERT(decimal(18, 3), COALESCE(source.[WORK_TIME], 0)) AS work_time,
     NULLIF(LTRIM(RTRIM(source.[REMARK])), '') AS remark,
     source.[START_TIME] AS production_time,
-    source.[END_TIME] AS source_updated_at
+    source.completed_at AS source_updated_at
 FROM task_source AS source
-WHERE source.production_date >= CONVERT(date, ?)
-  AND source.production_date < CONVERT(date, ?)
+WHERE source.completed_at >= CAST(? AS datetime2(7))
+  AND source.completed_at < CAST(? AS datetime2(7))
   AND (? IS NULL OR source.project_number = ?)
   AND (? IS NULL OR source.project_number = ?)
 ORDER BY source.[START_TIME] DESC, source.[TASK_ID];

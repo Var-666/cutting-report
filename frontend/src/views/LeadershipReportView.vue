@@ -152,7 +152,7 @@ const monthlyTableColumns = [
       :show-loading="!report"
       :has-data="Boolean(report)"
       :date-dirty="dateQueryDirty"
-      :applied-range="report && snapshot.data_as_of ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : ''"
+      :applied-range="report && snapshot.data_as_of ? `${formatChineseDate(appliedPeriodStart)} 至 ${formatChineseDate(appliedPeriodEnd)}` : ''"
       :export-disabled="loading || !report || !snapshot.data_as_of || snapshot.refreshing"
       :exporting="exporting"
       @submit="loadReport(false)"
@@ -161,35 +161,34 @@ const monthlyTableColumns = [
     />
   </section>
 
-  <ReportFeedback v-if="loading && report" type="info" title="领导报表正在后台更新" message="当前显示上次成功结果。" />
-  <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="`${error}；仍显示 ${appliedPeriodStart} 至 ${appliedPeriodEnd} 的结果。`" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
+  <ReportFeedback v-if="error && report" type="error" title="报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
   <ReportDataStatus :meta="report?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
-  <ReportFeedback v-if="report && !report.meta?.report_data && (snapshot.stale || snapshot.refreshing)" :type="snapshot.stale ? 'warning' : 'info'" :title="snapshot.stale ? '当前统计已过期' : '后台刷新中'" :message="snapshot.refreshing ? '后台更新完成后自动替换。' : '当前保留上次统计，可重新查询。'" :action-label="snapshot.refreshing || loading ? '' : '重新查询'" @action="retryReport" />
+  <ReportFeedback v-if="report && !report.meta?.report_data && snapshot.stale" type="warning" title="当前统计已过期" :action-label="snapshot.refreshing || loading ? '' : '重新查询'" @action="retryReport" />
 
   <section class="leadership-kpis" aria-label="区间汇总" :aria-busy="loading">
     <article class="leadership-kpi report-kpi-card leadership-kpi--tasks">
       <span class="report-kpi-card__icon"><AppIcon name="tasks" size="22" tone="current" /></span>
       <div><span>完成任务</span><p><strong>{{ total.task_count ?? '--' }}</strong> 项</p><em v-if="metricChanges.taskCount" :class="metricChanges.taskCount.direction"><AppIcon :name="metricChanges.taskCount.direction === 'down' ? 'arrow-down' : metricChanges.taskCount.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" tone="current" />{{ metricChanges.taskCount.value }}% <small>{{ comparisonLabel }}</small></em></div>
-      <MetricSparkline class="metric-sparkline" :values="metricSeries.taskCount" label="每日完成任务趋势" />
+      <MetricSparkline class="metric-sparkline" variant="bar" :values="metricSeries.taskCount" label="每日完成任务趋势" />
     </article>
     <article class="leadership-kpi report-kpi-card leadership-kpi--cut-length">
       <span class="report-kpi-card__icon"><AppIcon name="ruler" size="22" tone="current" /></span>
       <div><span>切割长度</span><p><strong>{{ formatLength(total.cut_length_m) }}</strong> 米</p><em v-if="metricChanges.cutLength" :class="metricChanges.cutLength.direction"><AppIcon :name="metricChanges.cutLength.direction === 'down' ? 'arrow-down' : metricChanges.cutLength.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" tone="current" />{{ metricChanges.cutLength.value }}% <small>{{ comparisonLabel }}</small></em></div>
-      <MetricSparkline class="metric-sparkline" :values="metricSeries.cutLength" label="每日切割长度趋势" />
+      <MetricSparkline class="metric-sparkline" variant="bar" :values="metricSeries.cutLength" label="每日切割长度趋势" />
     </article>
     <article class="leadership-kpi report-kpi-card leadership-kpi--groove-length">
       <span class="report-kpi-card__icon"><AppIcon name="grid" size="22" tone="current" /></span>
       <div><span>坡口长度</span><p><strong>{{ formatLength(total.groove_length_m) }}</strong> 米</p><em v-if="metricChanges.grooveLength" :class="metricChanges.grooveLength.direction"><AppIcon :name="metricChanges.grooveLength.direction === 'down' ? 'arrow-down' : metricChanges.grooveLength.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" tone="current" />{{ metricChanges.grooveLength.value }}% <small>{{ comparisonLabel }}</small></em></div>
-      <MetricSparkline class="metric-sparkline" :values="metricSeries.grooveLength" label="每日坡口长度趋势" />
+      <MetricSparkline class="metric-sparkline" variant="bar" :values="metricSeries.grooveLength" label="每日坡口长度趋势" />
     </article>
     <article class="leadership-kpi report-kpi-card leadership-kpi--work-time">
       <span class="report-kpi-card__icon"><AppIcon name="clock" size="22" tone="current" /></span>
       <div><span>切割时长</span><p><strong>{{ formatDuration(total.work_time_seconds) }}</strong> <small>HH:mm:ss</small></p><em v-if="metricChanges.workTime" :class="metricChanges.workTime.direction"><AppIcon :name="metricChanges.workTime.direction === 'down' ? 'arrow-down' : metricChanges.workTime.direction === 'flat' ? 'activity' : 'arrow-up'" size="12" tone="current" />{{ metricChanges.workTime.value }}% <small>{{ comparisonLabel }}</small></em></div>
-      <MetricSparkline class="metric-sparkline" :values="metricSeries.workTime" label="每日切割时长趋势" />
+      <MetricSparkline class="metric-sparkline" variant="bar" :values="metricSeries.workTime" label="每日切割时长趋势" />
     </article>
   </section>
 
-  <ReportTrendPanel ref="dailyPanel" title="区间每日明细与趋势" :subtitle="snapshot.data_as_of ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : '按生产日统计'" chart-label="区间每日趋势图" :height="245" :loading="!snapshot.data_as_of && (loading || refreshLoading)" :has-data="dailyRecords.length > 0" :empty="Boolean(snapshot.data_as_of) && !dailyRecords.length" :error="!snapshot.data_as_of ? error : ''" loading-title="正在读取区间生产数据" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
+  <ReportTrendPanel ref="dailyPanel" title="区间每日明细与趋势" :subtitle="snapshot.data_as_of ? `${formatChineseDate(appliedPeriodStart)} 至 ${formatChineseDate(appliedPeriodEnd)}` : '按生产日统计'" chart-label="区间每日趋势图" :height="245" :loading="!snapshot.data_as_of && (loading || refreshLoading)" :has-data="dailyRecords.length > 0" :empty="Boolean(snapshot.data_as_of) && !dailyRecords.length" :error="!snapshot.data_as_of ? error : ''" loading-title="正在读取区间生产数据" empty-title="所选区间暂无已完成任务" empty-message="请调整日期范围，或等待生产数据完成后重新查询。" @retry="retryReport">
     <template #table>
         <AppReportTable flex-height :columns="dailyTableColumns" :items="dailyRecords" :row-key="row => row.period_start" :paginate="false" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
@@ -209,7 +208,7 @@ const monthlyTableColumns = [
     </template>
   </ReportTrendPanel>
 
-  <ReportTrendPanel ref="monthlyPanel" :title="monthlyTitle" :note="`${monthlyPeriodStart} 至 ${monthlyPeriodEnd}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading && !monthlyReport" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="" @retry="loadDefaultReport">
+  <ReportTrendPanel ref="monthlyPanel" :title="monthlyTitle" :note="`${formatChineseDate(monthlyPeriodStart)} 至 ${formatChineseDate(monthlyPeriodEnd)}`" chart-label="近12个月月度趋势图" :height="245" :loading="monthlyLoading && !monthlyReport" :has-data="monthlyRecords.length > 0" :empty="Boolean(monthlyReport) && !monthlyRecords.length" :error="!monthlyReport ? error : ''" loading-title="正在读取近12个月趋势" loading-message="月度汇总独立加载，不影响当前区间明细。" empty-title="近12个月暂无已完成任务" empty-message="" @retry="loadDefaultReport">
     <template #table>
         <AppReportTable flex-height :columns="monthlyTableColumns" :items="monthlyRecords" :row-key="row => row.period_start" :paginate="false" summary>
         <template #c0="{ row, index: rowIndex }">{{ rowIndex + 1 }}</template>
@@ -277,7 +276,7 @@ const monthlyTableColumns = [
   font-weight:700;
   overflow-wrap:anywhere;
 }
-.leadership-kpi p{margin:0;color:var(--text-color-1); font-size:var(--font-auxiliary); grid-column:1/-1; min-width:0; overflow-wrap:anywhere}.leadership-kpi p strong{margin:0; font-size:21px}.leadership-kpi:nth-child(4) p strong{font-size:19px}.leadership-kpi p small{margin-left:3px;font-size:var(--font-auxiliary)}.leadership-kpi em{display:flex;align-items:center;gap:4px;color:rgb(var(--success-color));font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6;flex-wrap:wrap}.leadership-kpi em.down{color:rgb(var(--error-color))}.leadership-kpi em.flat{color:var(--muted)}.leadership-kpi em:not(.up):not(.down):not(.flat){color:var(--muted)}.leadership-kpi em small{margin-left:2px;color:var(--muted);font-size:inherit}.metric-sparkline{opacity:.78; width:58px; height:25px; grid-area:4 / 1 / 5 / -1; justify-self:end}:deep(.report-trend-panel){border:1px solid var(--theme-border-color);box-shadow:var(--theme-shadow); border-radius:var(--report-panel-radius); margin-bottom:24px}:deep(.report-trend-panel__content){ gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}
+.leadership-kpi p{margin:0;color:var(--text-color-1); font-size:var(--font-auxiliary); grid-column:1/-1; min-width:0; overflow-wrap:anywhere}.leadership-kpi p strong{margin:0; font-size:21px}.leadership-kpi:nth-child(4) p strong{font-size:19px}.leadership-kpi p small{margin-left:3px;font-size:var(--font-auxiliary)}.leadership-kpi em{display:flex;align-items:center;gap:4px;color:rgb(var(--success-color));font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6;flex-wrap:wrap}.leadership-kpi em.down{color:rgb(var(--error-color))}.leadership-kpi em.flat{color:var(--muted)}.leadership-kpi em:not(.up):not(.down):not(.flat){color:var(--muted)}.leadership-kpi em small{margin-left:2px;color:var(--muted);font-size:inherit}.metric-sparkline{opacity:.78; width:76px; max-width:100%; height:28px; grid-area:4 / 1 / 5 / -1; justify-self:end}:deep(.report-trend-panel){border:1px solid var(--theme-border-color);box-shadow:var(--theme-shadow); border-radius:var(--report-panel-radius); margin-bottom:24px}:deep(.report-trend-panel__content){ gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}
 @media(max-width:1180px){.leadership-hero{grid-template-columns:1fr;grid-template-rows:auto auto;padding:24px}.leadership-hero__copy{grid-row:auto}.leadership-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){.leadership-hero{min-height:0;padding:22px 18px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.97),rgb(var(--container-bg-color) / 0.89)),var(--leadership-hero-image) center/cover}.leadership-kpis{grid-template-columns:1fr}:deep(.report-trend-panel__content){grid-template-columns:1fr;gap:16px}}
 @media(prefers-reduced-motion:reduce){.leadership-hero,.leadership-kpi{animation:none}.leadership-kpi{transition:none}}

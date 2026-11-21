@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from dataclasses import replace
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -6,18 +7,20 @@ import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
 from app.api.auth import optional_user
 from app.api.downloads import router
-from app.config import settings
+from app.config import Settings
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.services.file_download_service import DownloadError, FileDownloadService, download_filename
 from app.services.file_source import HttpFileSource, FileSourceError, normalize_relative_path
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
+
+
+settings = Settings()
 
 
 ADMIN = {"user_id": "test-admin", "display_name": "管理员", "role": "admin"}
@@ -339,7 +342,7 @@ def test_restart_marks_only_incomplete_records_failed(tmp_path, state_database):
 @pytest.mark.parametrize("user,expected", [(None, 401), ({"role": "worker"}, 403)])
 def test_download_routes_are_admin_only(tmp_path, state_database, user, expected):
     service, payload = make_service(tmp_path, state_database)
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.file_downloads = service
     app.dependency_overrides[optional_user] = lambda: user
@@ -351,7 +354,7 @@ def test_download_routes_are_admin_only(tmp_path, state_database, user, expected
 
 def test_api_download_saves_record_without_exposing_file_content(tmp_path, state_database):
     service, payload = make_service(tmp_path, state_database)
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.file_downloads = service
     app.dependency_overrides[optional_user] = lambda: ADMIN

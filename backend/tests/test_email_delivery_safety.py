@@ -7,13 +7,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.database.automation import AutomationRepository
 from app.services.email_service import (
     EmailService, EmailDeliveryFailure, EmailDeliveryUnknown, EmailRecipientsRefused,
 )
 from app.services.email_report import EmailReport
 from tests.automation_fixtures import complete_report, NOW, STAMP
+
+
+settings = Settings()
 
 
 def smtp_service(monkeypatch, responses, *, quit_error=False):
@@ -319,7 +322,7 @@ def test_retry_api_reports_conflict_for_unknown_or_active_mail(workflow):
 
     repository, _, report_id = ready(workflow)
     record = repository.delivery_for_report(report_id)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(automation=repository)),
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(automation=repository, settings=settings)),
                               state=SimpleNamespace(request_id="test"))
     with pytest.raises(HTTPException) as captured:
         retry_delivery(record["delivery_id"], request)

@@ -101,6 +101,9 @@ def test_equipment_export_refreshes_task_rows_and_month_counts(tmp_path, monkeyp
     assert prepared.report['energy_month']['total_task_count'] == 8
     assert prepared.report['energy_month']['total_work_time_seconds'] == 480
     assert prepared.report['equipment_summary']['total_electricity_consumption'] is None
+    assert prepared.report['charts']['equipment_month']['xAxis']['data'] == [
+        row['report_date'] for row in prepared.report['energy_month']['rows']
+    ]
     assert prepared.report['closing_comparison'][0]['totals']['work_time_seconds'] == 480
     assert prepared.report['closing_comparison'][0]['totals']['electricity'] is None
     assert len(metric_calls) == 2

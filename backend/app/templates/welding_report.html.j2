@@ -11,12 +11,11 @@
 {{ report_heading('小组立焊接线 · ' ~ title,
   [('grid','产线','小组立焊接线'), ('calendar','报告周期',report.query.start ~ ' 至 ' ~ report.query.end), ('grid','数据来源','MySQL'), ('clock','生产时区',report.meta.timezone)],
   [('生成时间',report.meta.calculated_at), ('数据更新时间',report.meta.data_updated_at)]) }}
-{% if filters %}<p class="lp-method">筛选条件：{{ filters|join('；') }}</p>{% endif %}
+{% if filters %}<div>筛选条件：{{ filters|join('；') }}</div>{% endif %}
 {% if report.closing_comparison is defined %}
 {{ render_closing_comparison(report.closing_comparison,
   [('part_row_count','参与工件记录数（件）','count')] if kind == 'parts' else
-  [('job_count','焊接作业次数（次）','count'), ('weld_length_m','焊接长度（米）','number'), ('working_hours','累计作业用时（小时）','number')],
-  '按焊接作业结束时间归属', '累计和同期均应用本报表的筛选条件。') }}
+  [('job_count','焊接作业次数（次）','count'), ('weld_length_m','焊接长度（米）','number'), ('working_hours','累计作业用时（小时）','number')]) }}
 {% endif %}
 {{ section_title('核心生产指标（本期）') }}
 <div class="lp-kpis">
@@ -31,14 +30,12 @@
                          'unlinked_part_count':'未关联工件流水号', 'ambiguous_part_count':'工件归属待核查'} %}
 {% set quality_counts = dict(report.meta.quality, unlinked_part_count=report.meta.unlinked_part_count,
                              ambiguous_part_count=report.meta.ambiguous_part_count|default(0)) %}
-<p class="lp-method">数据质量与关联计数：
+<div>数据质量与关联计数：
   {% for key, count in quality_counts.items() %}
   {% set label = quality_labels.get(key, key) ~ ' ' ~ count %}
   {{ attention_badge(label) if count else label }}{{ '；' if not loop.last else '。' }}
   {% endfor %}
-</p>
-{% for notice in report.meta.notices %}<p class="lp-method">{{ notice }}</p>{% endfor %}
-<p class="lp-method">累计作业用时不等于设备开机时间，未记录的数据不作零。</p>
+</div>
 {% if echarts %}{{ section_title('区间每日生产趋势') }}<div id="trend" class="chart" role="img" aria-label="按日焊接长度趋势"></div>
 <script>{{ echarts|safe }}</script><script>
 const trend={{ report.daily|tojson }};

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -145,6 +146,7 @@ class RangeReportService:
         project_code: str | None = None,
         ship_no: str | None = None,
         force: bool = False,
+        business_days: bool = False,
     ) -> QueryBundle:
         return self.query_service.fetch_workshop_data(
             report_filter(
@@ -154,6 +156,7 @@ class RangeReportService:
                 ship_no=ship_no,
             ),
             force=force,
+            business_days=business_days,
         )
 
     def leadership(
@@ -227,6 +230,7 @@ class RangeReportService:
         self, start_date: date, end_date: date, reference_at: datetime, *,
         project_code: str | None = None, ship_no: str | None = None, include_meter_energy: bool = False,
         grouping: ClosingGrouping = "day_week_month",
+        business_day_totals: Callable[[date], Totals] | None = None,
     ) -> list[dict]:
         metrics = ("task_count", "cut_length_m", "groove_length_m", "work_time_seconds")
         meter_coverage = {}
@@ -236,6 +240,9 @@ class RangeReportService:
             end = max(right for _, right in windows)
             buckets = self.query_service.fetch_cutting_closing_totals(start, end, project_code=project_code, ship_no=ship_no)
             totals = {window: sum_closing_totals(window, buckets, metrics) for window in windows}
+            if business_day_totals is not None:
+                business_day = windows[0]
+                totals[business_day] = business_day_totals(business_day[1].date())
             if include_meter_energy:
                 meter_coverage.update(self.energy_period_service.closing_meter_coverage(windows))
                 for window, channels in meter_coverage.items():
@@ -259,13 +266,11 @@ class RangeReportService:
         project_code: str | None = None,
         ship_no: str | None = None,
         force: bool = False,
+        business_days: bool = False,
     ) -> tuple[QueryBundle, list[WorkshopRecord]]:
         bundle = self.workshop_bundle(
-            start_date,
-            end_date,
-            project_code=project_code,
-            ship_no=ship_no,
-            force=force,
+            start_date, end_date, project_code=project_code, ship_no=ship_no,
+            force=force, business_days=business_days,
         )
         return bundle, self.with_workshop_confirmations(bundle.workshop_records)
 

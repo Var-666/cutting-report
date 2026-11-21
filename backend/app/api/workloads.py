@@ -12,16 +12,18 @@ from anyio.lowlevel import checkpoint_if_cancelled
 from fastapi import HTTPException, Request
 
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
-from app.core.sql_capacity import current_sql_identity, default_sql_capacity, sql_queue_budget
+from app.api.runtime import request_settings
+from app.config import Settings
+from app.core.sql_capacity import SqlCapacity, current_sql_identity, sql_queue_budget
 from app.core.report_deadline import operation_deadline, remaining_seconds
-from app.config import settings
 
 
 logger = logging.getLogger(__name__)
 
 
 class RequestWorkload:
-    def __init__(self, limit: int, label: str, *, max_waiters: int = 0, queue_timeout_seconds: float = 5, partitioned: bool = False) -> None:
+    def __init__(self, limit: int, label: str, *, max_waiters: int = 0, queue_timeout_seconds: float = 5,
+                 sql_capacity: SqlCapacity | None = None) -> None:
         if limit < 1 or max_waiters < 0 or queue_timeout_seconds <= 0:
             raise ValueError('Invalid workload capacity or queue timeout')
         self._slots = BoundedSemaphore(limit)
@@ -32,7 +34,7 @@ class RequestWorkload:
         self.queue_timeout_seconds = queue_timeout_seconds
         self.label = label
         self.limit = limit
-        self.partitioned = partitioned
+        self.sql_capacity = sql_capacity
         self._active_keys = {}
         self._executing = 0
         self._timeouts = 0
@@ -50,13 +52,11 @@ class RequestWorkload:
             headers['X-Workload-Error'] = reason
         return HTTPException(status_code=503, detail=f'{self.label}{message}，请稍后重试。', headers=headers)
 
-    def _keys(self, request):
+    def _keys(self):
         identity = current_sql_identity.get()
-        if not self.partitioned or not (identity.line_id or identity.source_key):
+        capacity = self.sql_capacity
+        if capacity is None or not (identity.line_id or identity.source_key):
             return ()
-        context = getattr(request.state, 'database_context', None) if request is not None else None
-        sources = getattr(context, 'database_sources', None)
-        capacity = sources.capacity if sources is not None else default_sql_capacity()
         keys = []
         if identity.line_id: keys.append((f'line:{identity.line_id}', capacity.line_limit))
         if identity.source_key: keys.append((f'source:{identity.source_key}', capacity.source_limit(identity.source_key)))
@@ -125,13 +125,13 @@ class RequestWorkload:
                     self._queue.remove(ticket)
 
     async def run_sync(self, operation: Callable[..., Any], *args: Any, _request: Request | None = None, **kwargs: Any) -> Any:
-        with operation_deadline(settings.report_operation_timeout_seconds), sql_queue_budget(self.queue_timeout_seconds):
+        with sql_queue_budget(self.queue_timeout_seconds):
             return await self._run_sync(operation, *args, _request=_request, **kwargs)
 
     async def _run_sync(self, operation: Callable[..., Any], *args: Any, _request: Request | None = None, **kwargs: Any) -> Any:
         request = _request or next((value for value in (*args, *kwargs.values()) if isinstance(value, Request)), None)
         queued_at = monotonic()
-        keys = self._keys(request)
+        keys = self._keys()
         await self._acquire(request, keys)
         pending = True
         finished = Event()
@@ -193,28 +193,60 @@ class RequestWorkload:
                     pending = False
                     self._release(keys)
 
-    def wrap(self, endpoint: Callable[..., Any], *, local_when=None) -> Callable[..., Any]:
+    def wrap(self, endpoint: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(endpoint)
         async def run(*args: Any, **kwargs: Any) -> Any:
-            request = next((value for value in (*args, *kwargs.values()) if isinstance(value, Request)), None)
-            if local_when and request is not None and local_when(request):
-                return await snapshot_requests.run_sync(endpoint, *args, **kwargs)
             return await self.run_sync(endpoint, *args, **kwargs)
-
-        # Resolve postponed annotations in the endpoint's module, not this module.
         run.__signature__ = signature(endpoint, eval_str=True)
         return run
 
+
+def build_workloads(settings: Settings, sql_capacity: SqlCapacity) -> dict[str, RequestWorkload]:
+    queue = dict(max_waiters=settings.http_max_waiters, queue_timeout_seconds=settings.sql_queue_timeout_seconds)
+    return {
+        'query': RequestWorkload(settings.http_query_max_concurrent, "报表查询", sql_capacity=sql_capacity, **queue),
+        'snapshot': RequestWorkload(settings.http_snapshot_max_concurrent, "快照读取", **queue),
+        'analysis': RequestWorkload(settings.http_analysis_max_concurrent, "智能分析", **queue),
+        'pdf': RequestWorkload(settings.http_pdf_max_concurrent, "PDF 导出", **queue),
+        'authentication': RequestWorkload(settings.http_auth_max_concurrent, "身份验证", **queue),
+    }
+
+
+def request_workloads(request: Request) -> dict[str, RequestWorkload]:
+    try:
+        return request.app.state.workloads
+    except AttributeError:
+        raise RuntimeError("应用未装配 HTTP 执行池") from None
+
+
+class WorkloadRoute:
+    """A route binding that selects a pool from the running application."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    async def run_sync(self, operation: Callable[..., Any], *args: Any, _request: Request, **kwargs: Any) -> Any:
+        settings = await to_thread.run_sync(request_settings, _request)
+        pool = request_workloads(_request)[self.name]
+        with operation_deadline(settings.report_operation_timeout_seconds):
+            return await pool.run_sync(operation, *args, _request=_request, **kwargs)
+
     def route(self, register: Callable[..., Any], *, local_when=None) -> Callable[..., Any]:
         def decorate(endpoint: Callable[..., Any]) -> Callable[..., Any]:
-            register(self.wrap(endpoint, local_when=local_when))
+            @wraps(endpoint)
+            async def run(*args: Any, **kwargs: Any) -> Any:
+                request = next(value for value in (*args, *kwargs.values()) if isinstance(value, Request))
+                workload = snapshot_requests if local_when and local_when(request) else self
+                return await workload.run_sync(endpoint, *args, _request=request, **kwargs)
+
+            run.__signature__ = signature(endpoint, eval_str=True)
+            register(run)
             return endpoint
         return decorate
 
 
-_queue = dict(max_waiters=settings.http_max_waiters, queue_timeout_seconds=settings.sql_queue_timeout_seconds)
-analysis_requests = RequestWorkload(settings.http_analysis_max_concurrent, "智能分析", **_queue)
-pdf_requests = RequestWorkload(settings.http_pdf_max_concurrent, "PDF 导出", **_queue)
-query_requests = RequestWorkload(settings.http_query_max_concurrent, "报表查询", partitioned=True, **_queue)
-authentication_requests = RequestWorkload(settings.http_auth_max_concurrent, "身份验证", **_queue)
-snapshot_requests = RequestWorkload(settings.http_snapshot_max_concurrent, "快照读取", **_queue)
+query_requests = WorkloadRoute('query')
+snapshot_requests = WorkloadRoute('snapshot')
+analysis_requests = WorkloadRoute('analysis')
+pdf_requests = WorkloadRoute('pdf')
+authentication_requests = WorkloadRoute('authentication')

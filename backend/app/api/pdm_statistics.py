@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import require_admin
-from app.api.runtime import runtime_state
+from app.api.runtime import runtime_state, request_settings
 from app.api.workloads import snapshot_requests
 from app.core.request_cancellation import SqlRequestCancelled
 from app.core.report_deadline import ReportOperationTimeout
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def service(request: Request) -> PdmStatisticsService:
     context = runtime_state(request)
-    if not context.settings.file_database_enabled:
+    if not request_settings(request).file_database_enabled:
         raise HTTPException(status_code=503, detail='PDM 数据源未启用，请先配置切割文件库连接')
     current = context.shared_reports.get(PDM_STATISTICS_SCOPE)
     if not isinstance(current, PdmStatisticsService):

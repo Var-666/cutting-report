@@ -1,4 +1,6 @@
 """Availability monitoring through the public HTTP and persistent queue contracts."""
+
+from tests.web_fixtures import embedded_app
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
@@ -8,7 +10,6 @@ import errno
 import logging
 import socket
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -139,7 +140,7 @@ def test_concurrent_duplicate_endpoints_and_duplicate_results_are_atomic(monitor
 
 def test_http_crud_validation_permissions_and_global_scope(monitor):
     service, repository, clock = monitor
-    app = FastAPI()
+    app = embedded_app()
     app.state.runtime = SimpleNamespace(database_monitor=service)
     app.include_router(router)
     user = [{'role': 'admin'}]

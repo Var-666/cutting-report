@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from app.config import Settings
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
@@ -100,14 +101,13 @@ def test_report_request_normalizes_and_limits_inclusive_period() -> None:
      (None, None), ("2026-11-01", "2026-11-01")),
 ])
 def test_report_creation_preserves_monthly_and_explicit_range_semantics(body, stored_period, effective_period):
-    from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api import reports
     from app.api.auth import require_admin
     from app.services.report_generation.common import _job_period
 
     jobs = []
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.state.lines = as_line_services({"Cutter01": SimpleNamespace(
@@ -136,8 +136,9 @@ def test_report_creation_replay_is_atomic_and_scoped_to_admin_line_and_payload(s
 
     def request(line):
         metadata = MetadataRepository(state_database, device_id=line)
-        state = SimpleNamespace(lines=as_line_services({
-            line: SimpleNamespace(settings=cutting_settings(device_id=line), metadata=metadata),
+        settings = cutting_settings(device_id=line)
+        state = SimpleNamespace(settings=settings, lines=as_line_services({
+            line: SimpleNamespace(settings=settings, metadata=metadata),
         }))
         return SimpleNamespace(headers={}, query_params={'device_id': line}, app=SimpleNamespace(state=state),
                                state=SimpleNamespace(request_id='idempotency-regression'))

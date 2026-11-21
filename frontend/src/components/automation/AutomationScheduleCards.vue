@@ -84,8 +84,8 @@ function scheduleText(item: AutomationSchedule) {
 .card-details dd small { margin-left:var(--space-1); font-size:var(--font-auxiliary); font-weight:400; color:var(--text-color-3); }
 .card-details > div:last-child { padding-left:var(--space-3); border-left:1px solid var(--theme-divider-color); }
 .card-details .card-next { grid-column:1/-1; padding:var(--space-3); border:1px solid color-mix(in srgb,var(--schedule-accent) 12%,transparent); border-radius:var(--card-radius); background:linear-gradient(100deg,color-mix(in srgb,var(--schedule-accent) 10%,transparent),color-mix(in srgb,var(--schedule-accent) 3.5%,transparent)); }
-.card-next dd { margin-top:var(--space-2); font-size:clamp(var(--font-section-title),5cqi,20px); }
-.card-frequency { display:flex; align-items:center; gap:var(--space-1); margin:var(--space-2) 0 0; font-size:var(--font-auxiliary); font-weight:400; color:var(--text-color-2); }
+.card-next dd { display:grid; grid-template-rows:minmax(1lh,auto) auto; margin-top:var(--space-2); font-size:clamp(var(--font-section-title),5cqi,20px); }
+.card-frequency { grid-row:2; display:flex; align-items:center; gap:var(--space-1); margin:var(--space-2) 0 0; font-size:var(--font-auxiliary); font-weight:400; color:var(--text-color-2); }
 .card-details dd.card-failed { color:rgb(var(--error-color)); }
 .last-status { margin:0; }
 .card-actions { justify-content:flex-end; flex-wrap:wrap; margin-top:auto; padding:var(--space-3) 0 0; border-top:1px solid var(--theme-divider-color); }

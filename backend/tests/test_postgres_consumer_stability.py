@@ -32,7 +32,9 @@ def _save_metrics(path, item):
 
 
 def _stress_consumer(cfg, stopped, ready, go, release, events, results):
-    worker = WorkerProcess(cfg)
+    from tests.analysis_fakes import worker_settings_with_fake_model
+
+    worker = WorkerProcess(worker_settings_with_fake_model(cfg))
     pool = worker.runtime.database.pool
     metrics = {'instance': worker.instance_id, 'pool_limit': cfg.postgres_pool_max_size,
                'peak_checked_out': 0, 'pool_timeouts': 0, 'getconn_max_seconds': 0,

@@ -15,10 +15,10 @@
     {{ report_heading(report.custom.template.title_prefix ~ ' · ' ~ report.meta.title,
       [('grid','设备',device_name), ('calendar','报告周期',period), ('grid','查询任务',report.query_task.name ~ ' · V' ~ report.query_task.version), ('grid','模板版本',report.template_meta.name ~ ' · V' ~ report.template_meta.version)] if report.custom.template.show_meta else [],
       [('报告编号',report.meta.report_id), ('生成时间',report.meta.generated_at|replace('T',' ')), ('版本',report.meta.system_version)] if report.custom.template.show_meta else [], demo_mode) }}
-    <p class="lp-method">{{ report.custom.template.logo_text }} · {{ report.definition.description or '配置驱动的自定义生产报表' }}</p>
-    {% set detail = '查询共 ' ~ report.custom.total_row_count ~ ' 行，核心指标按完整查询计算。' %}
+    {% if report.custom.template.logo_text %}<div>{{ report.custom.template.logo_text }}</div>{% endif %}
+    {% set detail = '查询共 ' ~ report.custom.total_row_count ~ ' 行' %}
     {% if report.custom.truncated %}
-    {% set detail = detail ~ '明细与图表仅展示按查询返回顺序的前 ' ~ report.custom.rows|length ~ ' 行。' %}
+    {% set detail = detail ~ ' · 显示 ' ~ report.custom.rows|length ~ ' 行' %}
     {% endif %}
     {{ executive('查询结果已汇总' if report.custom.total_row_count else '当前条件下暂无生产记录', detail) }}
     {% if report.custom.metrics %}

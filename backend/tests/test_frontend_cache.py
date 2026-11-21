@@ -1,18 +1,21 @@
-from dataclasses import replace
+from tests.web_fixtures import embedded_app
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.services.frontend_static import FrontendAssets
+from app.config import Settings
+from tests.web_fixtures import configure_web
 
 
-def test_index_and_nested_routes_are_not_stored_without_caching_api_errors(tmp_path, monkeypatch):
+def test_index_and_nested_routes_are_not_stored_without_caching_api_errors(tmp_path):
     from app import main
     dist = tmp_path / 'frontend/dist'
     dist.mkdir(parents=True)
     (dist / 'index.html').write_text('<html>frontend</html>')
-    monkeypatch.setattr(main, 'settings', replace(main.settings, project_root=tmp_path))
-    client = TestClient(main.app)
+    settings = Settings(project_root=tmp_path)
+    app = main.create_app(settings)
+    configure_web(app, settings)
+    client = TestClient(app)
     for path in ('/', '/admin/home', '/admin/welding/reports/jobs'):
         response = client.get(path)
         assert response.status_code == 200
@@ -25,7 +28,7 @@ def test_index_and_nested_routes_are_not_stored_without_caching_api_errors(tmp_p
 def test_only_fingerprinted_js_and_css_are_cached_for_one_year(tmp_path):
     for filename in ('index-Abc123_X.js', 'style-1234abcd.css', 'plain.js'):
         (tmp_path / filename).write_text('test')
-    app = FastAPI()
+    app = embedded_app()
     app.mount('/assets', FrontendAssets(directory=tmp_path))
     client = TestClient(app)
     for filename in ('index-Abc123_X.js', 'style-1234abcd.css'):

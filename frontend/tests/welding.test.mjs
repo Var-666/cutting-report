@@ -763,7 +763,7 @@ test('queue overflow is shown once and retains the last successful report', asyn
 test('source, authentication and network failures remain visible without replay', async t => {
   const responses = [
     () => Response.json({ detail: '数据源超时' }, { status: 503 }),
-    () => Response.json({ detail: '后台刷新队列已满' }, { status: 503, headers: { 'X-Welding-Error': 'snapshot_queue_full' } }),
+    () => Response.json({ detail: '数据源连接池已满' }, { status: 503, headers: { 'X-Report-Error': 'connection_pool_exhausted' } }),
     () => Response.json({ detail: '权限不足' }, { status: 403, headers: { 'Retry-After': '1' } }),
     () => busyResponse('invalid'),
     () => busyResponse('0'),
@@ -1001,9 +1001,9 @@ async function mountWeldingDisplay(t, readReport, kind = 'jobs', { setTimeout, c
     setTimeout, clearTimeout, REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT,
     ...Vue, useRoute: () => ({ query: {} }), useRouter: () => ({ push() {}, replace() {} }),
     reportToday: () => period.start, getWeldingReport: readReport, getLatestWeldingAnalysis: async () => null, weldingQuery, selectedLineType, queryDateRange, sameRouteQuery,
-    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles,
+    parseWeldingRouteQuery, weldingRouteQuery, weldingTitles, formatChineseDate,
     deviceSelection: reactive({ id: 'welding', items: [{ id: 'welding', type: 'welding', enabled: true }] }),
-    NDrawer: drawer, NDrawerContent: stub, NTag: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
+    NDrawer: drawer, NDrawerContent: stub, NButton: stub, ReportPeriodPicker: stub, AppIcon: stub, HomeSectionHeader: stub,
     getWeldingPart: async id => ({ part: { id }, items: [], total: 0 }),
     ReportAnalysis: { props: ['showMetrics'], setup: props => () => h('section', ['智能分析', props.showMetrics === false ? '' : '分析指标卡']) },
     AppSelect: stub, ReportFeedback: stub, ReportPanelState: stub, ReportExportMenu: stub, ReportFilterDialog: stub,
@@ -1083,20 +1083,22 @@ test('welding displays edited filters beside the applied result through loading 
   const page = await mountWeldingDisplay(t, (_kind, values) => new Promise((resolve, reject) => calls.push({ values, resolve, reject })))
   const result = call => ({ query: call.values, data_version: 'v1', summary: { job_count: 1 }, items: [{ id: 1, serial_number: '旧结果' }], total: 1, meta: { quality: {}, notices: [], devices: [] } })
   calls[0].resolve(result(calls[0])); await flushWelding()
-  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 全部设备/)
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 全部设备/)
   assert.doesNotMatch(page.text(), /筛选条件已修改/)
   page.selectDevice(7); await flushWelding()
-  assert.match(page.text(), /筛选条件已修改，当前仍展示上次成功查询结果/)
+  assert.match(page.text(), /筛选条件已修改/)
+  assert.doesNotMatch(page.text(), /仍展示上次成功查询结果/)
   page.submit(); await flushWelding()
-  assert.match(page.text(), /当前展示上次结果/)
+  assert.match(page.text(), /旧结果/)
+  assert.doesNotMatch(page.text(), /当前展示上次结果/)
   calls[1].reject(new Error('offline')); await flushWelding()
   assert.match(page.text(), /筛选条件已修改/)
-  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 全部设备/)
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 全部设备/)
   assert.match(page.text(), /旧结果/)
   page.submit(); await flushWelding()
   calls[2].resolve(result(calls[2])); await flushWelding()
   assert.doesNotMatch(page.text(), /筛选条件已修改/)
-  assert.match(page.text(), /当前结果：2026-10-26 至 2026-10-26 · 设备 7/)
+  assert.match(page.text(), /当前结果：2026年10月26日 至 2026年10月26日 · 设备 7/)
 })
 
 test('cached welding data stays visible through manual refresh, replacement and query failure', async t => {
@@ -1118,17 +1120,20 @@ test('cached welding data stays visible through manual refresh, replacement and 
   assert.equal(calls[1].force, true)
   assert.match(page.text(), /作业次数：3/)
   assert.match(page.text(), /任务3/)
-  assert.match(page.text(), /当前展示上次结果/)
+  assert.doesNotMatch(page.text(), /当前展示上次结果/)
   assert.doesNotMatch(page.text(), /正在读取焊接数据/)
   calls[1].resolve(result(calls[1], 3, true)); await flushWelding()
-  assert.match(page.text(), /后台更新中/)
+  assert.match(page.text(), /刷新/)
+  assert.doesNotMatch(page.text(), /后台更新中/)
   clock.fire(); await flushWelding()
   assert.equal(calls[2].force, false)
   assert.match(page.text(), /任务3/)
   const failed = result(calls[2], 3, true)
+  failed.meta.report_data.stale = true
   failed.meta.report_data.refresh_failed = true
   calls[2].resolve(failed); await flushWelding()
-  assert.match(page.text(), /正在重试，保留上次结果/)
+  assert.match(page.text(), /刷新旧数据/)
+  assert.doesNotMatch(page.text(), /正在重试|保留上次结果/)
   assert.match(page.text(), /任务3/)
   assert.equal(clock.timers.size, 1)
   clock.fire(); await flushWelding()
@@ -1141,7 +1146,7 @@ test('cached welding data stays visible through manual refresh, replacement and 
   page.submit(); await flushWelding()
   calls[4].reject(new Error('源库暂不可用')); await flushWelding()
   assert.match(page.text(), /源库暂不可用/)
-  assert.match(page.text(), /保留上次成功查询结果/)
+  assert.doesNotMatch(page.text(), /保留上次成功查询结果/)
   assert.match(page.text(), /作业次数：9/)
   assert.match(page.text(), /任务9/)
 

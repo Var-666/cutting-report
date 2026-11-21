@@ -3,12 +3,15 @@ from dataclasses import replace
 
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.database.workshop import AuthenticationError
 from app.services.worker_auth_service import (
     WorkerAuthenticationUnavailableError,
     WorkerAuthService,
 )
+
+
+settings = Settings()
 
 
 def test_worker_auth_uses_group_number_and_keeps_password_out_of_select() -> None:

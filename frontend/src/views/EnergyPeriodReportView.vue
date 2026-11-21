@@ -16,7 +16,7 @@ import ReportFeedback from '../components/ReportFeedback.vue'
 import ReportDataStatus from '../components/ReportDataStatus.vue'
 import ReportTrendPanel from '../components/ReportTrendPanel.vue'
 import StandardReportQuery from '../components/StandardReportQuery.vue'
-import { formatChineseDateTime } from '../utils/dateDisplay.ts'
+import { formatChineseDate, formatChineseDateTime } from '../utils/dateDisplay.ts'
 import { useRoute } from 'vue-router'
 import { queryDateRange } from '../utils/reportRouteState.ts'
 defineProps({ exporting: Boolean })
@@ -123,7 +123,7 @@ const summaryTableColumns = [
         :show-loading="!taskDay"
         :has-data="Boolean(taskDay)"
         :date-dirty="dateQueryDirty"
-        :applied-range="taskDay ? `${appliedPeriodStart} 至 ${appliedPeriodEnd}` : ''"
+        :applied-range="taskDay ? `${formatChineseDate(appliedPeriodStart)} 至 ${formatChineseDate(appliedPeriodEnd)}` : ''"
         :export-disabled="loading || !taskDay"
         :exporting="exporting"
         @submit="loadRange(true)"
@@ -133,8 +133,7 @@ const summaryTableColumns = [
     </section>
 
     <ReportDataStatus :meta="taskDay?.meta" :busy="loading" @refresh="refreshAnalysisReport" />
-    <ReportFeedback v-if="loading && taskDay" type="info" title="设备报表正在后台更新" message="当前显示上次加载的数据，更新完成后自动替换。" />
-    <ReportFeedback v-if="error && (taskDay || monthlyReport)" type="error" title="设备报表更新失败" :message="`${error}；当前保留已成功加载的数据。`" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
+    <ReportFeedback v-if="error && (taskDay || monthlyReport)" type="error" title="设备报表更新失败" :message="error" action-label="重新查询" dismissible @action="retryReport" @dismiss="error = ''" />
     <ReportFeedback v-if="!energyConnected" type="info" title="能耗暂未接入" message="当前设备暂未接入电表和气表，生产任务与工时正常统计。" />
     <ReportFeedback v-else-if="configurationError" type="warning" title="能管数据提示" :message="`${configurationError}。缺失值显示 --，不按零计算。`" />
 
@@ -142,27 +141,27 @@ const summaryTableColumns = [
       <article class="device-kpi report-kpi-card kpi-red">
         <span class="report-kpi-card__icon"><AppIcon name="zap" size="21" tone="current" /></span>
         <div><span>电耗</span><p><strong>{{ format(summary.total_electricity_consumption) }}</strong> <small>{{ units.electricity }}</small></p></div>
-        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.electricity" label="任务电耗趋势" />
+        <MetricSparkline class="device-sparkline" variant="bar" :values="deviceMetricSeries.electricity" label="任务电耗趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-blue">
         <span class="report-kpi-card__icon"><AppIcon name="wind" size="21" tone="current" /></span>
         <div><span>气耗</span><p><strong>{{ format(summary.total_gas_consumption) }}</strong> <small>{{ units.gas }}</small></p></div>
-        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.gas" label="任务气耗趋势" />
+        <MetricSparkline class="device-sparkline" variant="bar" :values="deviceMetricSeries.gas" label="任务气耗趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-teal">
         <span class="report-kpi-card__icon"><AppIcon name="activity" size="21" tone="current" /></span>
         <div><span>能耗覆盖率</span><p><strong>{{ taskDay ? energyCoverage : '--' }}</strong> <small>%</small></p><em>电 / 气数据匹配</em></div>
-        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.coverage" label="单项任务能耗覆盖率趋势" />
+        <MetricSparkline class="device-sparkline" variant="bar" :values="deviceMetricSeries.coverage" label="单项任务能耗覆盖率趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-violet">
         <span class="report-kpi-card__icon"><AppIcon name="tasks" size="21" tone="current" /></span>
         <div><span>任务数量</span><p><strong>{{ taskDay ? (summary.task_count ?? '--') : '--' }}</strong> <small>项</small></p><em>{{ equipmentScopeLabel }}</em></div>
-        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.tasks" label="每日任务数量趋势" />
+        <MetricSparkline class="device-sparkline" variant="bar" :values="deviceMetricSeries.tasks" label="每日任务数量趋势" />
       </article>
       <article class="device-kpi report-kpi-card kpi-cyan">
         <span class="report-kpi-card__icon"><AppIcon name="clock" size="21" tone="current" /></span>
         <div><span>累计切割时长</span><p class="device-duration"><strong>{{ duration(summary.total_work_time) }}</strong></p></div>
-        <MetricSparkline class="device-sparkline" :values="deviceMetricSeries.workTime" label="单项任务切割时长趋势" />
+        <MetricSparkline class="device-sparkline" variant="bar" :values="deviceMetricSeries.workTime" label="单项任务切割时长趋势" />
       </article>
     </section>
 
@@ -170,7 +169,7 @@ const summaryTableColumns = [
       :height="245"
       ref="taskPanel"
       title="区间任务能耗明细"
-      :subtitle="`${appliedPeriodStart} 至 ${appliedPeriodEnd}`"
+      :subtitle="`${formatChineseDate(appliedPeriodStart)} 至 ${formatChineseDate(appliedPeriodEnd)}`"
       chart-label="任务能耗图"
       :loading="loading && !taskDay"
       :has-data="taskRows.length > 0"
@@ -204,7 +203,7 @@ const summaryTableColumns = [
     </ReportTrendPanel>
 
     <ReportDataStatus :meta="monthlyReport?.meta" :busy="summaryLoading" @refresh="refreshAnalysisReport" />
-    <ReportFeedback v-if="summaryRefreshError && monthlyReport" type="warning" title="月度能耗后台更新失败" :message="`${summaryRefreshError}；当前保留已有汇总。`" action-label="重新查询" @action="refreshAnalysisReport" />
+    <ReportFeedback v-if="summaryRefreshError && monthlyReport" type="warning" title="月度能耗后台更新失败" :message="summaryRefreshError" action-label="重新查询" @action="refreshAnalysisReport" />
     <ReportTrendPanel
       :height="245"
       ref="periodPanel"
@@ -255,7 +254,7 @@ const summaryTableColumns = [
 </template>
 
 <style scoped>
-.device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid var(--theme-border-color);border-radius:14px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.99) 0%,rgb(var(--container-bg-color) / 0.92) 39%,rgb(var(--container-bg-color) / 0.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:var(--theme-shadow);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:transparent}.device-hero__copy{position:relative;z-index:1;max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:rgb(var(--info-color));font-size:var(--font-auxiliary)}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:var(--text-color-1);font-size:var(--font-page-title);line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700;letter-spacing:3px}.device-query-shell{margin:10px 0;border:1px solid var(--theme-border-color)}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-teal{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.device-kpi.kpi-cyan{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi:hover .report-kpi-card__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{display:contents}.device-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.device-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.device-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.device-sparkline{width:58px;height:25px;opacity:.72;grid-column:1/-1;justify-self:end}
+.device-report-shell>.page-hero{position:relative;min-height:174px;display:flex;align-items:center;overflow:hidden;padding:25px 30px;border:1px solid var(--theme-border-color);border-radius:14px;background:linear-gradient(90deg,rgb(var(--container-bg-color) / 0.99) 0%,rgb(var(--container-bg-color) / 0.92) 39%,rgb(var(--container-bg-color) / 0.08) 69%),url('../assets/home-laser-cutting.webp') center 51%/cover no-repeat;box-shadow:var(--theme-shadow);animation:surface-in .46s cubic-bezier(.2,.75,.25,1) both}.device-report-shell>.page-hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:transparent}.device-hero__copy{position:relative;z-index:1;max-width:540px}.device-breadcrumb{display:block;margin-bottom:7px;color:rgb(var(--info-color));font-size:var(--font-auxiliary)}.device-title-row{display:flex;align-items:flex-end;gap:14px}.device-title-row h2{margin:0;color:var(--text-color-1);font-size:var(--font-page-title);line-height:1.08;letter-spacing:1px}.device-title-row>span{padding-bottom:5px;color:rgb(var(--info-color));font-size:var(--font-auxiliary);font-weight:700;letter-spacing:3px}.device-query-shell{margin:10px 0;border:1px solid var(--theme-border-color)}.device-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1);transition:transform .18s ease,box-shadow .18s ease;animation:surface-in .42s cubic-bezier(.2,.75,.25,1) both}.device-kpi:hover{transform:translateY(-2px);box-shadow:var(--theme-shadow)}.device-kpi:nth-child(2){animation-delay:.04s}.device-kpi:nth-child(3){animation-delay:.08s}.device-kpi:nth-child(4){animation-delay:.12s}.device-kpi:nth-child(5){animation-delay:.16s}.device-kpi.kpi-red{--kpi-color:var(--text-color-3);--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-teal{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi.kpi-violet{--kpi-color:rgb(var(--primary-color));--kpi-soft:rgb(var(--primary-color) / .1)}.device-kpi.kpi-cyan{--kpi-color:rgb(var(--info-color));--kpi-soft:rgb(var(--info-color) / .1)}.device-kpi:hover .report-kpi-card__icon{transform:scale(1.08) rotate(-3deg)}.device-kpi>div{display:contents}.device-kpi>div>span{display:block;color:var(--text-color-1);font-size:var(--font-auxiliary);font-weight:700;white-space:normal;overflow-wrap:anywhere;grid-column:2}.device-kpi p{margin:0;color:var(--text-color-1);font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;overflow-wrap:anywhere}.device-kpi p strong{font-size:21px}.device-kpi p.device-duration strong{font-size:17px}.device-kpi p small{margin-left:2px;color:var(--muted);font-size:var(--font-auxiliary)}.device-kpi em{display:block;color:var(--muted);font-style:normal;font-size:var(--font-auxiliary);grid-column:1/-1;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.device-sparkline{width:76px;max-width:100%;height:28px;opacity:.72;grid-column:1/-1;justify-self:end}
 :deep(.report-trend-panel){margin-bottom:24px;border:1px solid var(--theme-border-color);border-radius:var(--report-panel-radius);box-shadow:var(--theme-shadow)}:deep(.report-trend-panel__content){gap:16px}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:var(--report-trend-height);overflow:hidden;border-color:var(--theme-border-color);border-radius:6px}
 @media(max-width:1120px){.device-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.device-kpi:last-child{grid-column:1/-1}}
 @media(max-width:900px){:deep(.report-trend-panel__content){grid-template-columns:1fr;gap:16px}:deep(.report-trend-panel){--report-trend-height:270px!important}:deep(.report-trend-panel__chart),:deep(.report-trend-panel__table){height:var(--report-trend-height);border-radius:6px}}

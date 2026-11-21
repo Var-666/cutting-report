@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from concurrent.futures import ThreadPoolExecutor
@@ -7,7 +8,6 @@ import json
 from threading import Event
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
 import pytest
@@ -68,7 +68,7 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
                                     context=context, force=True,
                                     publish_latest=publish_latest)
 
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     runtime = SimpleNamespace(report_analysis_service=service)

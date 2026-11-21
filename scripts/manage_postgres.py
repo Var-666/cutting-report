@@ -7,12 +7,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 
-from app.config import settings
+from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.database.postgres_migrations import apply_migrations, prepare_consumers, validate_schema, MigrationError
 
 
 def main(argv=None):
+    settings = Settings()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('schema', 'status', 'prepare-consumers'))
     args = parser.parse_args(argv)

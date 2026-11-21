@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from dataclasses import replace
 from datetime import datetime
 from threading import Event, Lock
@@ -9,7 +10,7 @@ import httpx
 import pytest
 
 from app.api import auth, workloads
-from app.config import settings
+from app.config import Settings
 from app.database import users as workshop
 from app.database.workshop import WorkshopRepository
 from app.main import app
@@ -17,10 +18,16 @@ from app.services.worker_auth_service import WorkerAuthService
 from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enabled_settings, valid_row as _valid_row
 
 
+pytestmark = pytest.mark.usefixtures("shared_web")
+
+
+settings = Settings()
+
+
 @pytest.fixture(autouse=True)
-def isolated_app_state(monkeypatch):
+def isolated_app_state(monkeypatch, shared_web):
     # These admission tests exercise immediate rejection with no waiting queue.
-    monkeypatch.setattr(workloads.authentication_requests, "max_waiters", 0)
+    monkeypatch.setattr(app.state.workloads['authentication'], "max_waiters", 0)
     from tests.line_fixtures import cutting_settings
     from app.device_config import load_line_catalog
     monkeypatch.delattr(app.state,'runtime',raising=False)
@@ -61,7 +68,7 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
         monkeypatch.setattr(source, 'fetch_all', lambda *args: block(original_fetch, *args))
         slow_path, slow_payload = '/api/v1/auth/hr-login', {'group_no': 'G0021', 'password': 'password'}
 
-    monkeypatch.setattr(auth, 'settings', replace(settings, worker_database_auth_enabled=True))
+    monkeypatch.setattr(app.state, 'settings', replace(settings, worker_database_auth_enabled=True))
     monkeypatch.setattr(app.state, 'workshop', repository, raising=False)
     monkeypatch.setattr(app.state, 'worker_auth', service, raising=False)
     runtime = SimpleNamespace(settings=settings, metadata=SimpleNamespace(list_reports=lambda **_: ([], 0)),
@@ -86,7 +93,7 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
                         while not all_entered.is_set():
                             await anyio.sleep(0.01)
                     assert anyio.to_thread.current_default_thread_limiter().borrowed_tokens == 0
-                    assert workloads.authentication_requests._threads.borrowed_tokens == 8
+                    assert app.state.workloads['authentication']._threads.borrowed_tokens == 8
                     responses = []
 
                     async def business(path, headers):
@@ -124,7 +131,7 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
                     release.set()
             assert len(completed) == 8 and all(response.status_code == 200 for response in completed)
             assert anyio.to_thread.current_default_thread_limiter().borrowed_tokens == 0
-            assert workloads.authentication_requests._threads.borrowed_tokens == 0
+            assert app.state.workloads['authentication']._threads.borrowed_tokens == 0
         assert repository.user_for_session(local_token, now=now.isoformat())
         assert repository.user_for_session(hr_token, now=now.isoformat())
         assert len(source.calls) == (1 if blocking_kind == 'password' else 9)
@@ -166,12 +173,12 @@ def test_more_than_eight_session_reads_run_in_threads_without_authentication_adm
                             await anyio.sleep(0.01)
                     assert anyio.to_thread.current_default_thread_limiter().borrowed_tokens == 12
                     for _ in range(8):
-                        assert workloads.authentication_requests._slots.acquire(blocking=False)
+                        assert app.state.workloads['authentication']._slots.acquire(blocking=False)
                     try:
                         assert (await client.get('/api/v1/health')).status_code == 200
                     finally:
                         for _ in range(8):
-                            workloads.authentication_requests._slots.release()
+                            app.state.workloads['authentication']._slots.release()
                 finally:
                     release.set()
             assert len(responses) == 12 and all(response.status_code == 200 for response in responses)
@@ -180,11 +187,10 @@ def test_more_than_eight_session_reads_run_in_threads_without_authentication_adm
 
 
 def test_bootstrap_and_local_account_hashing_use_authentication_capacity_and_keep_sessions(state_database, tmp_path, monkeypatch):
-    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     repository = WorkshopRepository(state_database)
-    isolated = FastAPI()
+    isolated = embedded_app(replace(settings, worker_database_auth_enabled=False, auth_cookie_secure=False))
     isolated.include_router(auth.router)
     isolated.state.workshop = repository
 
@@ -193,12 +199,11 @@ def test_bootstrap_and_local_account_hashing_use_authentication_capacity_and_kee
         request.state.request_id = 'isolated-auth-test'
         return await call_next(request)
 
-    monkeypatch.setattr(auth, 'settings', replace(settings, worker_database_auth_enabled=False, auth_cookie_secure=False))
     original_hash = workshop.hash_password
     hashes = []
 
     def hash_password(password):
-        assert workloads.authentication_requests._threads.borrowed_tokens == 1
+        assert isolated.state.workloads['authentication']._threads.borrowed_tokens == 1
         hashes.append(password)
         return original_hash(password)
 

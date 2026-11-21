@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.postgres_fixtures import state_settings
 """P13 uses fake drivers and isolated files; never connect to a site database."""
 from dataclasses import replace
@@ -7,12 +8,12 @@ import multiprocessing
 import weakref
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import database
 from app.api.auth import require_admin
-from app.config import settings
+from app.config import Settings
+from app.core.sql_capacity import SqlCapacity
 from tests.line_fixtures import configuration
 from app.database.mysql import MySqlClient, MySqlUnavailable
 from app.database.sqlserver import SqlServerClient
@@ -21,6 +22,9 @@ from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequ
 from app.services.application_runtime import build_runtime
 from app.services.database_configuration import test_source_connection as probe, SourceConnectionError
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, RuntimeSettingsSaveError
+
+
+settings = Settings()
 
 
 def source(source_id='quality', engine='sqlserver', **updates):
@@ -48,7 +52,7 @@ def update(payload, **values):
 def test_registry_isolates_configs_dispatches_clients_and_is_lazy():
     sql = config(source())
     mysql = config(source('inspection', 'mysql'))
-    registry = DatabaseSourceRegistry([sql, mysql])
+    registry = DatabaseSourceRegistry([sql, mysql], capacity=SqlCapacity(settings))
     sql_client = registry.client('quality')
     mysql_client = registry.client('inspection')
     assert isinstance(sql_client, SqlServerClient)
@@ -224,7 +228,7 @@ def pools(monkeypatch):
 
 
 def test_mysql_close_defers_drain_until_all_inflight_sessions_return(pools):
-    client = MySqlClient(config(source('inspection', 'mysql')))
+    client = MySqlClient(config(source('inspection', 'mysql')), capacity=SqlCapacity(settings))
     with client.snapshot() as first:
         with client.snapshot() as second:
             first.fetch('SELECT %s AS value', ('a',))
@@ -278,7 +282,7 @@ def test_probe_is_readonly_redacted_unsaved_and_releases_resources(runtime, monk
         return [{'connected': 1}]
     monkeypatch.setattr(SqlServerClient, 'fetch_all', query)
     candidate = manager.source_for_test(update(payload, password='', enabled=False))
-    result = probe(candidate)
+    result = probe(candidate, capacity=manager.current_context.database_sources.capacity)
     assert result['connected'] and not result['saved']
     assert manager._base.runtime_settings_env_path.read_bytes() == before
     if engine == 'sqlserver':
@@ -288,7 +292,7 @@ def test_probe_is_readonly_redacted_unsaved_and_releases_resources(runtime, monk
         assert pools[0].queries[0][0] == 'SELECT 1 AS connected'
     monkeypatch.setattr(SqlServerClient, 'fetch_all', lambda *_: (_ for _ in ()).throw(RuntimeError('private-password')))
     with pytest.raises(SourceConnectionError) as error:
-        probe(config(source()))
+        probe(config(source()), capacity=manager.current_context.database_sources.capacity)
     assert 'private-password' not in str(error.value)
 
 
@@ -296,7 +300,7 @@ def test_probe_is_readonly_redacted_unsaved_and_releases_resources(runtime, monk
 def http(runtime):
     from app.main import safe_connection_validation
     from fastapi.exceptions import RequestValidationError
-    app = FastAPI()
+    app = embedded_app()
     app.state.runtime = runtime
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     app.include_router(database.router)
@@ -353,7 +357,7 @@ def test_sqlserver_independent_config_keeps_parameters_deadline_and_cleanup(monk
         return connection
     monkeypatch.setitem(sys.modules, 'pyodbc', SimpleNamespace(connect=connect))
     sql = config(update(source(), password='semi;brace}secret'))
-    client = SqlServerClient(sql)
+    client = SqlServerClient(sql, capacity=SqlCapacity(settings))
     with operation_deadline(8):
         with client.connect() as selected:
             assert selected is connection and 1 <= selected.timeout <= 8

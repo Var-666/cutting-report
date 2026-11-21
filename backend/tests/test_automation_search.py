@@ -1,7 +1,7 @@
+from tests.web_fixtures import embedded_app
 from datetime import timedelta
 import json
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
@@ -40,7 +40,7 @@ def test_delivery_search_covers_all_pages_and_matches_snapshot_names_subjects_an
     for term in ['不存在', "' OR 1=1 --", '_']:
         assert repository.list_deliveries(page=1, page_size=20, search=term) == ([], 0)
 
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.automation = repository
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}

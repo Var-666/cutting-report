@@ -35,7 +35,7 @@ class OperationsRepository(PostgresRepository):
 
     @staticmethod
     def _record(connection, item, *, observed=False):
-        context = {key: item[key] for key in ('request_id', 'analysis_id', 'task_id', 'report_id', 'stage', 'related_kind')
+        context = {key: item[key] for key in ('request_id', 'analysis_id', 'task_id', 'report_id', 'stage', 'related_kind', 'error_type')
                    if item.get(key)}
         quality = bool(item.get('quality_observation'))
         if quality:

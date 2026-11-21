@@ -10,7 +10,7 @@ from threading import Event, Lock
 from time import monotonic, time
 from zoneinfo import ZoneInfo
 
-from app.config import Settings, settings, consumer_identity
+from app.config import Settings, consumer_identity
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import periodic_analysis_task
 from app.database.postgres import ExecutionLeaseLost, execution_scope
@@ -146,10 +146,13 @@ class WorkerProcess:
             started = monotonic()
             snapshot = task['kind'] == 'report_snapshot_refresh'
             report_type = None
-            event(logger, logging.INFO, '后台任务开始', stage=task['kind'])
+            stage = task['kind']
             try:
                 if snapshot:
                     report_type = task['payload'].get('report_type')
+                    stage = report_type or stage
+                event(logger, logging.INFO, '后台任务开始', stage=stage)
+                if snapshot:
                     query = task['payload'].get('query') or {}
                     logger.info('report snapshot refresh started: task=%s device=%s report_type=%s start=%s end=%s',
                                 task['task_id'], task['device_id'], report_type,
@@ -164,14 +167,14 @@ class WorkerProcess:
             except Exception as exc:
                 error = 'SOURCE_UNVERIFIED' if isinstance(exc, TaskSourceUnavailable) else type(exc).__name__
                 event(logger, logging.ERROR, '后台任务执行失败', error_code='TASK_ATTEMPT_FAILED',
-                      stage=task['kind'], exc_info=True, duration_ms=(monotonic() - started) * 1000)
+                      stage=stage, exc_info=True, duration_ms=(monotonic() - started) * 1000)
             finally:
                 if snapshot:
                     logger.info('report snapshot refresh finished: task=%s device=%s report_type=%s outcome=%s elapsed_ms=%s',
                                 task['task_id'], task['device_id'], report_type,
                                 'failed' if error else 'completed', round((monotonic() - started) * 1000))
                 if not error:
-                    event(logger, logging.INFO, '后台任务完成', stage=task['kind'], duration_ms=(monotonic() - started) * 1000)
+                    event(logger, logging.INFO, '后台任务完成', stage=stage, duration_ms=(monotonic() - started) * 1000)
                 with self._lock:
                     self._completed.append((task, error))
 
@@ -293,6 +296,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--health", action="store_true")
     args = parser.parse_args()
+    settings = Settings()
     if args.health:
         return role_health(settings, f'worker:{consumer_identity(settings)}')
     with configured_logging(settings.logs_dir, 'worker', consumer_identity(settings), settings.operations_log_retention_days) as logs:

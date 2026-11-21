@@ -82,15 +82,6 @@ const analysisColumns = [
   { key: 'c5', title: '状态', align: 'center' },
 ] as const
 
-function formatDateTime(value: unknown) {
-  return formatChineseDateTime(value)
-}
-
-function formatShortDateTime(value: unknown) {
-  if (!value) return '--'
-  return formatDateTime(value).replace(/年|月/g, '-').replace('日', '')
-}
-
 function formatBytes(value: number | null | undefined) {
   if (!value) return '--'
   return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB`
@@ -282,8 +273,8 @@ const reportTableColumns = [
         </div>
         <dl>
           <div><dt>设备</dt><dd>{{ machineLabel }}</dd></div>
-          <div><dt>统计起点</dt><dd>{{ formatDateTime(status?.monitor_start_at) }}</dd></div>
-          <div><dt>最近检测</dt><dd>{{ formatDateTime(status?.last_success_at) }}</dd></div>
+          <div><dt>统计起点</dt><dd>{{ formatChineseDateTime(status?.monitor_start_at) }}</dd></div>
+          <div><dt>最近检测</dt><dd>{{ formatChineseDateTime(status?.last_success_at) }}</dd></div>
         </dl>
       </div>
     </section>
@@ -334,8 +325,8 @@ const reportTableColumns = [
         <template #c0="{ row: item }"><NTag class="severity-badge" :class="item.severity" size="small" :type="item.severity === 'critical' ? 'error' : item.severity === 'high' ? 'warning' : 'info'">{{ severityLabels[item.severity] || item.severity }}</NTag></template>
         <template #c1="{ row: item }">{{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
         <template #c2="{ row: item }"><strong class="alarm-name">{{ item.alarm_desc || '--' }}</strong><small>{{ item.alarm_code || item.alarm_type || '--' }}</small></template>
-        <template #c3="{ row: item }">{{ formatShortDateTime(item.first_start_time) }}</template>
-        <template #c4="{ row: item }">{{ formatShortDateTime(item.first_seen_at) }}</template>
+        <template #c3="{ row: item }">{{ formatChineseDateTime(item.first_start_time) }}</template>
+        <template #c4="{ row: item }">{{ formatChineseDateTime(item.first_seen_at) }}</template>
         <template #c5="{ row: item }">{{ durationLabel(item) }}</template>
         <template #c6="{ row: item }"><NTag class="live-state" :class="item.status" size="small" :type="item.status === 'open' ? 'error' : 'success'">{{ item.status === 'open' ? '异常' : '正常' }}</NTag></template>
         <template #c7="{ row: item }"><div class="cause-cell">{{ possibleCause(item) }}</div></template>
@@ -349,7 +340,7 @@ const reportTableColumns = [
       <aside class="alarm-insights alarm-ai-panel" aria-labelledby="alarm-insights-title">
         <header>
           <div class="alarm-section-title"><span class="section-icon"><AppIcon name="sparkles" size="18" /></span><h2 id="alarm-insights-title">AI 告警分析</h2></div>
-          <span v-if="latestAiReport">{{ formatShortDateTime(latestAiReport.completed_at || latestAiReport.created_at) }}</span>
+          <span v-if="latestAiReport">{{ formatChineseDateTime(latestAiReport.completed_at || latestAiReport.created_at) }}</span>
         </header>
         <div v-if="loading && !reports.length" class="alarm-ai-empty" role="status"><span class="spinner dark" aria-hidden="true"></span><strong>正在读取模型分析</strong></div>
         <div v-else-if="error && !reports.length" class="alarm-ai-empty" role="status"><strong>模型分析读取失败</strong><span>请重试读取。</span></div>
@@ -388,7 +379,7 @@ const reportTableColumns = [
               <template #c1="{ row }">{{ formatDeviceDisplay(row.alarm_desc || row.alarm_class) }} · {{ row.alarm_code || '无编码' }}</template>
               <template #c2="{ row }">{{ formatDeviceDisplay(row.machine_no) }}</template>
               <template #c3="{ row }">{{ severityLabels[row.severity] || row.severity }}</template>
-              <template #c4="{ row }">{{ formatDateTime(row.start_time) }}</template>
+              <template #c4="{ row }">{{ formatChineseDateTime(row.start_time) }}</template>
               <template #c5="{ row }">{{ row.status === 'open' ? '未解除' : '已解除' }}</template>
             </AppReportTable>
           </NCollapseItem></NCollapse>
@@ -419,7 +410,7 @@ const reportTableColumns = [
         <AppReportTable :columns="reportTableColumns" :items="reportItems" :total="reportSummary.total" :page="reportPage" :page-size="reportPageSize" @page="changeReportPage" :row-key="item => item.report_id" aria-label="实体告警报告" :loading="loading">
         <template #c0="{ row: item }"><span class="report-name"><AppIcon name="file" size="16" tone="red" />{{ reportName(item) }}</span></template>
         <template #c1="{ row: item }">{{ item.incident_ids.length }} 项 · {{ formatDeviceDisplay(item.machine_no) || '--' }}</template>
-        <template #c2="{ row: item }">{{ formatShortDateTime(item.created_at) }}</template>
+        <template #c2="{ row: item }">{{ formatChineseDateTime(item.created_at) }}</template>
         <template #c3="{ row: item }">{{ formatBytes(item.file_size) }}</template>
         <template #c4="{ row: item }">
           <span class="report-status" :class="item.status">{{ reportStatusLabels[item.status] || item.status }}</span>

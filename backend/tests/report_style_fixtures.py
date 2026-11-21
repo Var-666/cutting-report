@@ -45,7 +45,8 @@ def style_report_html(kind: str, directory: Path, *, energy_connected: bool | No
                                  quality={'invalid_length_rows': 1, 'invalid_duration_rows': 0}, unlinked_part_count=0))
         if weld_kind in {'daily', 'equipment'}:
             payload['items'][0]['device_no'] = BUSINESS_MARKER if weld_kind == 'equipment' else 0
-            if weld_kind == 'daily': payload['meta']['notices'].append(BUSINESS_MARKER)
+        if weld_kind == 'daily':
+            analysis.update(data_version=payload['data_version'], overview=BUSINESS_MARKER)
         instance = SimpleNamespace(report=lambda *a, **kw: payload, analyze_report=lambda *a, **kw: analysis)
         html = WeldingExport(welding_settings(project_root=root), instance, PdfService()).prepare(weld_kind, query, 'html')[0].decode()
     elif kind == 'alarm':

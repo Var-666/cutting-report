@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 import ast
 from pathlib import Path
 from types import SimpleNamespace
@@ -62,22 +63,22 @@ def test_file_locks_share_reentrant_state(tmp_path):
 
 
 def test_http_execution_context_reaches_query_thread_and_is_cleaned_up():
-    from fastapi import FastAPI
+    from fastapi import Request
     from fastapi.testclient import TestClient
     from app.api.workloads import query_requests
     from app.main import request_id_middleware
 
-    app = FastAPI()
+    app = embedded_app()
     app.middleware('http')(request_id_middleware)
     observed = []
 
     @app.get('/context')
-    async def context():
+    async def context(request: Request):
         def query():
             execution = request_cancellation.current_request_id.get()
             observed.append(execution)
             return request_cancellation.sql_request_cancellations._requests[execution]['client_request_id']
-        return await query_requests.run_sync(query)
+        return await query_requests.run_sync(query, _request=request)
 
     with TestClient(app) as client:
         response = client.get('/context', headers={'X-Request-ID': 'core-context'})

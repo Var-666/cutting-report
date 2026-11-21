@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 import json
 import os
 from dataclasses import fields, replace
@@ -5,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
@@ -176,7 +176,7 @@ def test_sensitive_values_urls_and_digests_never_leave_api(configured):
                'FILE_HTTP_COOKIE': 'secret-cookie', 'FILE_HTTP_AUTHORIZATION': 'secret-auth',
                'SMTP_PASSWORD': 'secret-smtp', 'SQL_WORKBENCH_ADMIN_TOKEN': 'secret-token'}
     web = configured(secrets)
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_user] = lambda: {'role': 'admin'}
     app.state.workshop = SimpleNamespace(user_for_session=lambda *_, **__: None)
@@ -227,7 +227,7 @@ def test_health_never_exposes_internal_configuration_fingerprints(configured):
     import anyio
     from app.main import health
     web = configured()
-    state = SimpleNamespace(worker_status_reader=SimpleNamespace(status=lambda: worker(web)))
+    state = SimpleNamespace(settings=web.settings, worker_status_reader=SimpleNamespace(status=lambda: worker(web)))
     request = SimpleNamespace(app=SimpleNamespace(state=state), state=SimpleNamespace(request_id='health'))
     response = anyio.run(health, request)
     assert 'configuration' not in response['data']['workers']
@@ -235,12 +235,13 @@ def test_health_never_exposes_internal_configuration_fingerprints(configured):
 
 
 def test_worker_heartbeat_uses_its_own_snapshot_and_diagnostic_failure_is_isolated(configured):
+    from app.core.sql_capacity import SqlCapacity
     from app.worker import WorkerProcess
     web, background = configured(), configured()
     saved = []
     runtime = SimpleNamespace(coordination=SimpleNamespace(
         task_counts=lambda: {}, renew=lambda *args, **kwargs: saved.append(kwargs['status']) or True),
-        lines={}, database_sources=DatabaseSourceRegistry(),
+        lines={}, database_sources=DatabaseSourceRegistry(capacity=SqlCapacity(background.settings)),
         configuration_diagnostics=background)
     process = WorkerProcess(replace(background.settings, consumer_instance_id='diagnostic-test'), runtime=runtime)
     process.owner = 'test-worker'

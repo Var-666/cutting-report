@@ -99,7 +99,7 @@ class SourceConnectionError(RuntimeError):
     pass
 
 
-def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacity | None = None) -> dict:
+def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacity) -> dict:
     """Probe only SELECT 1; connection success says nothing about business schemas."""
     from time import perf_counter
     from app.database.sqlserver import SqlServerClient
@@ -108,7 +108,7 @@ def test_source_connection(config: DatabaseSourceConfig, *, capacity: SqlCapacit
 
     started = perf_counter()
     client = None
-    probe = capacity is None or not capacity.knows_source(config.id)
+    probe = not capacity.knows_source(config.id)
     try:
         if config.engine == 'sqlserver':
             rows = SqlServerClient(config, capacity=capacity, probe=probe).fetch_all('SELECT 1 AS connected', ())

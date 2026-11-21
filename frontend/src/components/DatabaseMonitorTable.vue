@@ -17,7 +17,7 @@ const columns = [
   { key: 'c6', title: '持续时长', align: 'right' }, { key: 'c7', title: '最近失败原因', align: 'left' },
   { key: 'c8', title: '操作', align: 'center', width: 200, fixed: 'right', ellipsis: false },
 ] as const
-function stamp(value: number | null) { return value === null ? '—' : formatChineseDateTime(new Date(value * 1000).toLocaleString('sv-SE', { timeZone: props.timezone })) }
+function stamp(value: number | null) { return value === null ? '—' : formatChineseDateTime(new Date(value * 1000), '—', props.timezone) }
 function duration(value: number | null) {
   if (value === null) return '—'
   const seconds = Math.max(0, Math.floor(props.now - value))

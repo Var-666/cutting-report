@@ -71,12 +71,9 @@ def intercept_history(monkeypatch, pipeline, report_type, interval, error, *, fa
     elif report_type == "equipment":
         owner, method = pipeline.query_service, "fetch_equipment_data"
         get_date = lambda args: args[0].report_date
-    elif interval:
+    else:
         owner, method = pipeline.range_service, "workshop_records"
         get_date = lambda args: args[0]
-    else:
-        owner, method = pipeline.workshop_repository, "get_daily_report_records"
-        get_date = lambda args: date.fromisoformat(args[0])
     original = getattr(owner, method)
 
     def query(*args, **kwargs):

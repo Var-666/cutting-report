@@ -10,13 +10,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.automation_service import AutomationService
 from app.services.email_report import EmailReport
 from app.services.email_service import EmailService, EmailDeliveryFailure
 from app.services.pdf_service import PdfService, PdfRenderError
 from app.services.report_service import ReportService
+
+
+settings = Settings()
 
 
 @pytest.mark.parametrize("attach", [True, False])

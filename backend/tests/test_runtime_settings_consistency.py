@@ -10,20 +10,21 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api import automation, database
-from app.config import settings
+from app.config import Settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
-from tests.line_fixtures import configuration, line_settings
+from tests.line_fixtures import configuration, line_settings, source_client
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter
 from app.services.query_service import QueryService
 
 
+settings = Settings()
+
+
 def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, monkeypatch):
     configured = replace(settings, project_root=tmp_path)
-    monkeypatch.setattr(database, "settings", configured)
-    monkeypatch.setattr(automation, "settings", configured)
     runtime = AutomationRuntime(configured)
     assert runtime.update_lock is runtime_settings_lock
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(automation_runtime=runtime)),
@@ -113,7 +114,7 @@ def test_database_configuration_cannot_save_removed_excel_mode():
 
 def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkeypatch):
     cfg = configuration(__import__('pathlib').Path('/tmp/source-test'), real=True)
-    service = QueryService(line_settings(cfg), client=DatabaseSourceRegistry.from_json(cfg.database_sources_json).client('cutting-production'))
+    service = QueryService(line_settings(cfg), client=source_client(line_settings(cfg)))
 
     def unavailable(*args):
         raise SqlServerConfigurationError("生产数据库未配置")
@@ -130,16 +131,16 @@ def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkey
     ("sqlserver", True, "admin-secret", "wrong", 401),
 ])
 def test_removing_local_workbench_keeps_production_execution_guards(monkeypatch, mode, enabled, token, provided, expected):
-    monkeypatch.setattr(database, "settings", replace(settings, data_source_mode=mode,
-                        sql_workbench_enabled=enabled, sql_workbench_admin_token=token))
+    cfg = replace(settings, data_source_mode=mode, sql_workbench_enabled=enabled, sql_workbench_admin_token=token)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=cfg)), state=SimpleNamespace())
     with pytest.raises(HTTPException) as error:
-        database.execute_sql(database.SqlExecuteRequest(sql="SELECT 1"), object(), provided)
+        database.execute_sql(database.SqlExecuteRequest(sql="SELECT 1"), request, provided)
     assert error.value.status_code == expected
 
 
 def test_demo_status_does_not_advertise_sql_execution_even_when_flag_is_set(monkeypatch):
-    monkeypatch.setattr(database, "settings", configuration(__import__('pathlib').Path('/tmp/status-test'), sql_workbench_enabled=True))
-    request = SimpleNamespace(state=SimpleNamespace(request_id="test"))
+    cfg = configuration(__import__('pathlib').Path('/tmp/status-test'), sql_workbench_enabled=True)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=cfg)), state=SimpleNamespace(request_id="test"))
     status = database.database_status(request)["data"]
     assert status["sql_workbench_enabled"] is False
     assert status["arbitrary_sql_enabled"] is False

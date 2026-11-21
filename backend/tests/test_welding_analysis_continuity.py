@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from dataclasses import replace
 from datetime import date
 import json
@@ -5,7 +6,6 @@ from unittest.mock import Mock
 
 import pytest
 import httpx
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
@@ -207,7 +207,7 @@ def test_latest_endpoint_is_read_only_and_returns_original_analysis_after_restar
     first = to_primitive(build().analyze_report('daily', QUERY, report(), 'a' * 64))
     restarted = build()
     restarted.page = lambda *_: pytest.fail('cache read must not query the source')
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     app.state.lines = {'welding': runtime_line(restarted, 'welding')}

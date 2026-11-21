@@ -12,8 +12,8 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
+from app.api.runtime import request_settings
 from app.api.auth import require_admin
-from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
 from app.models.contracts import ApiEnvelope
@@ -39,9 +39,9 @@ class LeadershipRefreshRequest(BaseModel):
     report_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
-def _parse_month(value: str | None) -> date:
+def _parse_month(value: str | None, timezone: str) -> date:
     if value is None:
-        now = datetime.now(ZoneInfo(settings.timezone))
+        now = datetime.now(ZoneInfo(timezone))
         return date(now.year, now.month, 1)
     try:
         return date.fromisoformat(f"{value}-01")
@@ -84,7 +84,7 @@ def get_leadership_report(
 ) -> dict:
     selected_start = start_date or end_date
     selected_end = end_date or start_date
-    query = {'start': selected_start, 'end': selected_end} if selected_start else {'report_month': _parse_month(report_month)}
+    query = {'start': selected_start, 'end': selected_end} if selected_start else {'report_month': _parse_month(report_month, request_settings(request).timezone)}
     data = statistics_page(request, 'leadership-range' if selected_start else 'leadership', query, refresh=refresh)
     if data is not None:
         if selected_start:
@@ -117,7 +117,7 @@ def get_leadership_report(
                 "data": data,
                 "request_id": request.state.request_id,
             }
-        month_start = _parse_month(report_month)
+        month_start = _parse_month(report_month, request_settings(request).timezone)
         service = device_state(request).leadership_report_service
         provider = getattr(device_state(request), 'report_provider', None) or CuttingReportProvider(service)
         result = provider.fetch_summary('leadership', {'report_month': month_start}).payload
@@ -149,12 +149,12 @@ def refresh_leadership_report(
     payload: LeadershipRefreshRequest,
     request: Request,
 ) -> dict:
-    data = statistics_page(request, 'leadership', {'report_month': _parse_month(payload.report_month)}, refresh=True)
+    data = statistics_page(request, 'leadership', {'report_month': _parse_month(payload.report_month, request_settings(request).timezone)}, refresh=True)
     if data is not None:
         data['snapshot'].update(stale=data['meta']['report_data']['stale'], refreshing=data['meta']['report_data']['refreshing'])
         return {'success': True, 'data': _with_analysis_source_version(data), 'request_id': request.state.request_id}
     try:
-        month_start = _parse_month(payload.report_month)
+        month_start = _parse_month(payload.report_month, request_settings(request).timezone)
         service = device_state(request).leadership_report_service
         worker = getattr(device_state(request), "leadership_refresh_worker", None)
         if worker is None:

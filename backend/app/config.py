@@ -381,6 +381,3 @@ def consumer_identity(configuration: Settings) -> str:
     if Path('/.dockerenv').is_file():
         return socket.gethostname()
     raise ValueError('原生 Consumer 必须显式设置 CONSUMER_INSTANCE_ID；同机各实例使用不同值')
-
-
-settings = Settings()

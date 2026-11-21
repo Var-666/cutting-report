@@ -5,12 +5,16 @@ import pytest
 from dotenv import dotenv_values
 
 from app.api import database
-from app.config import settings
+from app.config import Settings
+from app.core.sql_capacity import SqlCapacity
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.database_sources import DatabaseSourceConfig
 from app.services.worker_auth_service import WorkerAuthService
 from tests.line_fixtures import configuration
+
+
+settings = Settings()
 
 
 def test_worker_and_file_use_explicitly_bound_registry_clients(postgres_state, tmp_path):
@@ -33,9 +37,9 @@ def test_disabled_or_incompatible_source_cannot_be_used():
     cfg = DatabaseSourceConfig(id='production-test', name='测试', engine='sqlserver', host='', port=1433,
                                database='', username='', enabled=False)
     with pytest.raises(SqlServerConfigurationError, match='尚未启用'):
-        SqlServerClient(cfg).connection_config()
+        SqlServerClient(cfg, capacity=SqlCapacity(settings)).connection_config()
     with pytest.raises(ValueError, match='不是 SQL Server'):
-        SqlServerClient(cfg.model_copy(update={'engine': 'mysql'}))
+        SqlServerClient(cfg.model_copy(update={'engine': 'mysql'}), capacity=SqlCapacity(settings))
 
 
 def test_configuration_response_is_from_selected_source_and_never_echoes_credentials(tmp_path):
@@ -58,7 +62,6 @@ def test_runtime_env_write_is_atomic_preserves_unknown_keys_and_quotes_secrets(
     path = runtime_settings.runtime_settings_env_path
     path.parent.mkdir(parents=True)
     path.write_text("CUSTOM_SETTING='keep-me'\nSQLSERVER_HOST='old'\n", encoding="utf-8")
-    monkeypatch.setattr(database, "settings", runtime_settings)
 
     from app.services.runtime_settings_store import write_runtime_env
     write_runtime_env(

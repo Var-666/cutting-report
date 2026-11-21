@@ -497,7 +497,7 @@ test('alarm center uses source timestamps and presents the latest evidenced mode
   assert.match(template, /aria-label="告警监控概况"/)
   assert.match(template, /按告警级别筛选/)
   assert.match(script, /title: "告警时间"[\s\S]*title: "发现时间"/)
-  assert.match(template, /formatShortDateTime\(item\.first_start_time\)/)
+  assert.match(template, /formatChineseDateTime\(item\.first_start_time\)/)
   assert.match(template, /同步游标/)
   assert.match(template, /last_alarm_id/)
   assert.doesNotMatch(template, /已同步记录/)

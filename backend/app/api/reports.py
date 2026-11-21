@@ -15,11 +15,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api.runtime import application_state
+from app.api.runtime import application_state, request_settings
 from app.api.workloads import pdf_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import settings
 from app.core.operations_logging import event, operation_context
 from app.models.api import ReportCreateRequest
 from app.models.contracts import ApiEnvelope, Page
@@ -42,7 +41,7 @@ def _request_id(request: Request) -> str:
     return request.state.request_id
 
 
-def _serialize_job(job: dict) -> dict:
+def _serialize_job(job: dict, reports_dir: Path) -> dict:
     report_id = job["report_id"]
     period_start = job.get("period_start") or job["report_date"]
     period_end = job.get("period_end") or period_start
@@ -75,7 +74,7 @@ def _serialize_job(job: dict) -> dict:
     result['device_id'] = job['device_id']
     if job["status"] == "completed":
         try:
-            archived_report_path(settings.reports_dir, job)
+            archived_report_path(reports_dir, job)
         except OSError:
             message = "归档 HTML 文件缺失或不完整，请重新生成报告。"
             result.update(status="failed", stage_message=message, error={"code": "REPORT_FILE_UNAVAILABLE", "message": message})
@@ -109,7 +108,7 @@ view_router.dependencies.append(Depends(device_state))
 def create_report(payload: ReportCreateRequest, request: Request,
                   user: Annotated[dict, Depends(require_admin)],
                   idempotency_key: Annotated[uuid.UUID | None, Header()] = None) -> dict:
-    now = datetime.now(ZoneInfo(settings.timezone))
+    now = datetime.now(ZoneInfo(request_settings(request).timezone))
     line_id = device_settings(request).device_id
     report_id = f"rpt_{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
     if idempotency_key is not None:
@@ -166,7 +165,7 @@ def get_report_status(report_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="报告不存在")
     return {
         "success": True,
-        "data": _serialize_job(job),
+        "data": _serialize_job(job, request_settings(request).reports_dir),
         "request_id": _request_id(request),
     }
 
@@ -189,10 +188,11 @@ def list_reports(
         ship_no=ship_no,
         report_type=report_type,
     )
+    reports_dir = request_settings(request).reports_dir
     return {
         "success": True,
         "data": {
-            "items": [_serialize_job(item) for item in items],
+            "items": [_serialize_job(item, reports_dir) for item in items],
             "page": page,
             "page_size": page_size,
             "total": total,
@@ -209,7 +209,7 @@ def _resolve_report_file(request: Request, report_id: str) -> tuple[dict, Path]:
     if job["status"] != "completed" or not relative_path:
         raise HTTPException(status_code=404, detail="报告文件尚未生成")
     try:
-        path = archived_report_path(settings.reports_dir, job, verify_hash=True)
+        path = archived_report_path(request_settings(request).reports_dir, job, verify_hash=True)
     except OSError as exc:
         event(logger, logging.WARNING, "归档 HTML 无法下载", error_code="REPORT_FILE_UNAVAILABLE",
               report_id=report_id, line_id=job.get("device_id"), stage="download", related_kind="reports")

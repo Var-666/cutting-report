@@ -5,15 +5,18 @@ from types import SimpleNamespace
 import anyio
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.main import health
 from app.workers.report_worker import ReportWorker
 from test_report_worker_resilience import IdleMetadata
 
 
+settings = Settings()
+
+
 def health_request(worker):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(worker_status_reader=worker)),
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=settings, worker_status_reader=worker)),
                            state=SimpleNamespace(request_id="health-test"))
 
 

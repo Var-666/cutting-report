@@ -39,7 +39,7 @@ const line = computed(() => deviceSelection.items.find(item => item.id === devic
 const sourceEnabled = computed(() => line.value?.enabled !== false)
 const query = computed(() => parseWeldingRouteQuery(route.query, 'dashboard', today.value))
 const applied = computed(() => report.value?.query ?? query.value)
-const rangeLabel = computed(() => `${applied.value.start} 至 ${applied.value.end}${applied.value.device_no != null && applied.value.device_no !== '' ? ` · 设备 ${applied.value.device_no}` : ''}`)
+const rangeLabel = computed(() => `${formatChineseDate(applied.value.start)} 至 ${formatChineseDate(applied.value.end)}${applied.value.device_no != null && applied.value.device_no !== '' ? ` · 设备 ${applied.value.device_no}` : ''}`)
 const trendTitle = computed(() => {
   const week = parseWeldingRouteQuery({}, 'dashboard', today.value)
   return applied.value.start === week.start && applied.value.end === week.end ? '近七天生产趋势' : '区间生产趋势'
@@ -152,7 +152,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
       </div>
     </header>
     <ReportFeedback v-if="!sourceEnabled" title="焊接产线未启用" message="请检查是否已配置数据源并启用此产线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
-    <ReportFeedback v-else-if="error" type="error" title="生产概览读取失败" :message="report ? '当前保留上次成功结果，可以重试。' : '暂时无法读取当前范围，可以重试。'" action-label="重试" @action="load(true)" />
+    <ReportFeedback v-else-if="error" type="error" title="生产概览读取失败" :message="error" action-label="重试" @action="load(true)" />
     <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" :title="preparing ? '焊接生产数据准备中' : '正在读取焊接生产概览'" message="当日指标和所选区间统计就绪后将自动显示。" />
     <ReportFeedback v-if="notice" title="操作提示" :message="notice" dismissible @dismiss="notice = ''" />
     <WeldingKpiCards v-if="sourceEnabled" kind="dashboard" :report="report" :loading="loading" :title="report ? `当日指标按焊接生产日统计（${report.meta.timezone || '时区未提供'}），不随趋势区间变化` : undefined" />
@@ -162,12 +162,12 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader :title="trendTitle" icon="trend" :to="reportLink('daily')" action="生产统计" /></template>
           <div class="welding-home-chart"><WeldingChart v-if="daily.length" :option="trendOption" label="每日焊接长度与作业次数" /><NEmpty v-else description="当前范围暂无生产趋势" /></div>
-          <details v-if="daily.length" class="welding-chart-data"><summary>查看生产趋势数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="生产趋势数据" tabindex="0"><table><caption>每日焊接长度与作业次数（{{ applied.start }} 至 {{ applied.end }}）</caption><thead><tr><th scope="col">日期</th><th scope="col">焊接长度(m)</th><th scope="col">作业次数</th></tr></thead><tbody><tr v-for="row in daily" :key="row.production_date"><th scope="row" :title="row.production_date"><span>{{ row.production_date }}</span></th><td :title="weldingDisplay(row.weld_length_m, 'weld_length_m')"><span>{{ weldingDisplay(row.weld_length_m, 'weld_length_m') }}</span></td><td :title="weldingDisplay(row.job_count, 'job_count')"><span>{{ weldingDisplay(row.job_count, 'job_count') }}</span></td></tr></tbody></table></div></details>
+          <details v-if="daily.length" class="welding-chart-data"><summary>查看生产趋势数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="生产趋势数据" tabindex="0"><table><caption>每日焊接长度与作业次数（{{ formatChineseDate(applied.start) }} 至 {{ formatChineseDate(applied.end) }}）</caption><thead><tr><th scope="col">日期</th><th scope="col">焊接长度(m)</th><th scope="col">作业次数</th></tr></thead><tbody><tr v-for="row in daily" :key="row.production_date"><th scope="row" :title="row.production_date"><span>{{ formatChineseDate(row.production_date) }}</span></th><td :title="weldingDisplay(row.weld_length_m, 'weld_length_m')"><span>{{ weldingDisplay(row.weld_length_m, 'weld_length_m') }}</span></td><td :title="weldingDisplay(row.job_count, 'job_count')"><span>{{ weldingDisplay(row.job_count, 'job_count') }}</span></td></tr></tbody></table></div></details>
         </NCard>
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="焊接工艺结构" icon="activity" :to="reportLink('jobs')" action="查看作业" /></template>
           <div class="welding-home-chart"><WeldingChart v-if="processes.some(row => row.length !== null && row.length > 0)" :option="processOption" label="按焊接长度统计的工艺结构，包含未知工艺" /><NEmpty v-else description="暂无有效工艺长度数据" /></div>
-          <details v-if="processes.some(row => row.length !== null && row.length > 0)" class="welding-chart-data"><summary>查看工艺结构数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="工艺结构数据" tabindex="0"><table><caption>各工艺焊接长度（{{ applied.start }} 至 {{ applied.end }}）</caption><thead><tr><th scope="col">焊接工艺</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in processes" :key="row.key"><th scope="row" :title="row.name"><span>{{ row.name }}</span></th><td :title="weldingDisplay(row.length, 'weld_length_m')"><span>{{ weldingDisplay(row.length, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
+          <details v-if="processes.some(row => row.length !== null && row.length > 0)" class="welding-chart-data"><summary>查看工艺结构数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="工艺结构数据" tabindex="0"><table><caption>各工艺焊接长度（{{ formatChineseDate(applied.start) }} 至 {{ formatChineseDate(applied.end) }}）</caption><thead><tr><th scope="col">焊接工艺</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in processes" :key="row.key"><th scope="row" :title="row.name"><span>{{ row.name }}</span></th><td :title="weldingDisplay(row.length, 'weld_length_m')"><span>{{ weldingDisplay(row.length, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
         </NCard>
       </section>
       <section class="welding-home-grid" aria-label="设备贡献与数据核查">
@@ -175,7 +175,7 @@ onBeforeUnmount(() => { disposed = true; generation += 1; clearTimeout(timer); c
           <template #header><HomeSectionHeader title="设备产出对比" icon="factory" :to="reportLink('equipment')" action="查看设备效能报表" /></template>
           <p v-if="report?.meta?.pending_metrics?.device_distribution" class="welding-home-note">{{ report.meta.pending_metrics.device_distribution }}</p>
           <div class="welding-home-chart"><WeldingChart v-if="devices.length" :option="deviceOption" label="按累计焊接长度排序的设备产出" /><NEmpty v-else description="暂无设备产出数据" /></div>
-          <details v-if="devices.length" class="welding-chart-data"><summary>查看设备产出数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="设备产出数据" tabindex="0"><table><caption>各设备累计焊接长度（{{ applied.start }} 至 {{ applied.end }}）</caption><thead><tr><th scope="col">设备</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in devices" :key="String(row.device_no)"><th scope="row" :title="`设备 ${row.device_no ?? '未记录'}`"><span>设备 {{ row.device_no ?? '未记录' }}</span></th><td :title="weldingDisplay(row.weld_length_m, 'weld_length_m')"><span>{{ weldingDisplay(row.weld_length_m, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
+          <details v-if="devices.length" class="welding-chart-data"><summary>查看设备产出数据</summary><div class="welding-chart-data-scroll" role="region" aria-label="设备产出数据" tabindex="0"><table><caption>各设备累计焊接长度（{{ formatChineseDate(applied.start) }} 至 {{ formatChineseDate(applied.end) }}）</caption><thead><tr><th scope="col">设备</th><th scope="col">焊接长度(m)</th></tr></thead><tbody><tr v-for="row in devices" :key="String(row.device_no)"><th scope="row" :title="`设备 ${row.device_no ?? '未记录'}`"><span>设备 {{ row.device_no ?? '未记录' }}</span></th><td :title="weldingDisplay(row.weld_length_m, 'weld_length_m')"><span>{{ weldingDisplay(row.weld_length_m, 'weld_length_m') }}</span></td></tr></tbody></table></div></details>
         </NCard>
         <NCard :bordered="false" size="small" class="card-wrapper">
           <template #header><HomeSectionHeader title="数据核查概况" icon="search" :to="reportLink('jobs')" action="核查作业" /></template>

@@ -7,6 +7,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 import { setup as setupCssr } from '@css-render/vue3-ssr'
 import { scriptFunction } from './typescript-helpers.mjs'
+import { formatChineseDate } from '../src/utils/dateDisplay.ts'
 
 function component(name, extra = {}) {
   const descriptor = parse(readFileSync(new URL(`../src/components/${name}.vue`, import.meta.url), 'utf8')).descriptor
@@ -225,6 +226,7 @@ test('period calendars escape the scrollable popover while other date pickers re
   const Period = component('ReportPeriodPicker', {
     AppDatePicker: DatePicker,
     AppIcon: () => null,
+    formatChineseDate,
     createActivationBinding: () => ({ activate() {}, deactivate() {} }),
     NPopover: Vue.defineComponent({ setup(_, { slots }) { return () => slots.default?.() } }),
   })

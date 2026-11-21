@@ -10,8 +10,7 @@ from pydantic import BaseModel, Field
 from app.api.workloads import query_requests
 from app.api.auth import require_admin
 from app.api.devices import device_state, device_settings
-from app.config import settings
-from app.api.runtime import application_state, runtime_state
+from app.api.runtime import application_state, request_settings
 from app.models.designer import (
     DefinitionUpsert,
     QueryPreviewRequest,
@@ -38,11 +37,11 @@ def _envelope(request: Request, data):
     return {"success": True, "data": data, "request_id": request.state.request_id}
 
 
-def _require_admin_token(token: str | None, request=None) -> None:
-    configuration = getattr(runtime_state(request), "settings", settings) if request is not None else settings
+def _require_admin_token(token: str | None, request: Request) -> None:
+    configuration = request_settings(request)
     if configuration.effective_data_source_mode != "sqlserver":
         return
-    expected = settings.sql_workbench_admin_token
+    expected = configuration.sql_workbench_admin_token
     if not expected:
         raise HTTPException(status_code=503, detail="服务器尚未配置报表设计管理员令牌")
     if not token or not hmac.compare_digest(token, expected):
@@ -79,7 +78,7 @@ def list_query_tasks(request: Request, token: AdminToken = None):
 def validate_query_task(payload: SqlTextRequest, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        result = CustomReportService(settings).validate(payload.sql_text)
+        result = CustomReportService(request_settings(request)).validate(payload.sql_text)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _envelope(request, result)
@@ -89,7 +88,7 @@ def validate_query_task(payload: SqlTextRequest, request: Request, token: AdminT
 def create_query_task(payload: QueryTaskUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        CustomReportService(settings).validate(payload.sql_text)
+        CustomReportService(request_settings(request)).validate(payload.sql_text)
         item = application_state(request).definitions.save_query_task(payload.model_dump())
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -102,7 +101,7 @@ def create_query_task(payload: QueryTaskUpsert, request: Request, token: AdminTo
 def update_query_task(query_task_id: str, payload: QueryTaskUpsert, request: Request, token: AdminToken = None):
     _require_admin_token(token, request)
     try:
-        CustomReportService(settings).validate(payload.sql_text)
+        CustomReportService(request_settings(request)).validate(payload.sql_text)
         item = application_state(request).definitions.save_query_task(payload.model_dump(), query_task_id)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -14,7 +14,7 @@ from app.core.operations_logging import event, operation_context
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.report_deadline import remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
-from app.core.sql_capacity import SqlCapacity, default_sql_capacity
+from app.core.sql_capacity import SqlCapacity
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +66,13 @@ class MySqlSession:
 class MySqlClient:
     session_type = MySqlSession
 
-    def __init__(self, config: DatabaseSourceConfig | None, *, label: str = 'MySQL', capacity: SqlCapacity | None = None, probe: bool = False) -> None:
+    def __init__(self, config: DatabaseSourceConfig | None, *, label: str = 'MySQL', capacity: SqlCapacity, probe: bool = False) -> None:
         if config is not None and config.engine != 'mysql':
             raise ValueError('数据源不是 MySQL')
         self.config = config
         self.query_timeout = config.query_timeout if config else 120
         self.label = label
-        self.capacity = capacity or default_sql_capacity()
+        self.capacity = capacity
         self._probe = probe
         self._pool_slots = BoundedSemaphore(config.pool_size if config else 1)
         self._pool = None

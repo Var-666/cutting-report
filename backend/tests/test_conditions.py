@@ -1,8 +1,8 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import as_line_services, runtime_line, source_client, cutting_settings
 from dataclasses import replace
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
@@ -11,7 +11,7 @@ from app.api.auth import optional_user
 from app.api.conditions import router as conditions_router
 from app.api.cutting import router as cutting_router
 from app.api.downloads import router as downloads_router
-from app.config import settings
+from app.config import Settings
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository, SqlServerPdmRepository
 from app.models.conditions import ConditionGroup, ConditionSearch, SortRule
@@ -22,6 +22,9 @@ from app.services.condition_service import schema_for
 from app.services.cutting_dispatch_service import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
 from app.services.file_source import DisabledFileSource
+
+
+settings = Settings()
 
 
 def rule(field, operator, value=None):
@@ -438,7 +441,7 @@ def api(state_database, tmp_path):
     cfg = cutting_settings(project_root=tmp_path)
     pdm = MockPdmRepository()
     repo = DownloadRepository(state_database)
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(conditions_router)
     app.include_router(cutting_router)
     app.include_router(downloads_router)

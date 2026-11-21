@@ -1,5 +1,6 @@
-from tests.line_fixtures import as_line_services, runtime_line
 """Contracts must cover actual service output, not just a second handwritten TS model."""
+
+from tests.line_fixtures import as_line_services, runtime_line
 from pathlib import Path
 import importlib.util
 
@@ -57,7 +58,7 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
 
 @pytest.fixture
 def contract_http(tmp_path, postgres_state):
-    from fastapi import FastAPI
+    from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
     from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
     from app.api.auth import require_admin
@@ -68,7 +69,7 @@ def contract_http(tmp_path, postgres_state):
     runtime = build_runtime(state_settings(line_configuration(tmp_path), postgres_state), role='web')
     admin = runtime.users.bootstrap_admin(username='contract-admin', display_name='管理员',
         password='test-password', now='2026-11-02T10:00:00+08:00')
-    app = FastAPI()
+    app = embedded_app(runtime.database_runtime.current_context.settings)
     app.state.runtime = runtime
     app.dependency_overrides[require_admin] = lambda: admin
     for router in (database.router, automation.router, configuration.router, leadership.router, equipment.router, energy.router, reports.router, analysis.router):
@@ -173,7 +174,7 @@ def test_required_dispatch_fields_cannot_silently_disappear():
 
 @pytest.mark.parametrize('file_type', [0, 1, '0', 'GEN', None])
 def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, file_type):
-    from fastapi import FastAPI
+    from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
     from app.api import cutting
     from app.api.auth import require_user
@@ -181,7 +182,7 @@ def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, f
     service, _, admin = _service(state_database, tmp_path)
     raw = service.pdm.files[0]
     raw['physical_file_type'] = file_type
-    app = FastAPI()
+    app = embedded_app(service.settings)
     app.include_router(cutting.router)
     app.state.cutting_dispatch = service
     app.dependency_overrides[require_user] = lambda: admin
@@ -209,7 +210,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     from datetime import datetime
     from decimal import Decimal
     from types import SimpleNamespace
-    from fastapi import FastAPI
+    from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
     from app.api import cutting, workshop
     from app.api.auth import require_admin, require_user, require_worker
@@ -221,7 +222,7 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     worker = repository.create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')
     records = [WorkshopRecord(task_id='task1', project_code='SHIP', ship_no='SHIP', segment_name='P1', program_no='p.gen', cut_length=Decimal('1.2'), groove_length=Decimal('0.1'), work_time=Decimal('120'), production_time=datetime(2026, 10, 1, 8))]
     repository.sync_daily_report(report_date='2026-10-01', source_mode='demo', records=records, user=admin, now='2026-10-01T09:00:00', scope_machine_no='Cutter01')
-    app = FastAPI()
+    app = embedded_app(service.settings)
     app.include_router(workshop.router)
     app.include_router(cutting.router)
     app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=service.settings, workshop=repository, query_service=None)})
@@ -232,7 +233,10 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     @app.middleware('http')
     async def attach_context(request, call_next):
         request.state.request_id = 'contract-test'
-        request.state.database_context = SimpleNamespace(cutting_dispatch=service, lines=app.state.lines)
+        request.state.database_context = SimpleNamespace(
+            settings=service.settings, cutting_dispatch=service, lines=app.state.lines,
+            database_sources=app.state.database_sources,
+        )
         return await call_next(request)
 
     with TestClient(app) as client:
@@ -255,7 +259,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
     from datetime import datetime
     from types import SimpleNamespace
     from zoneinfo import ZoneInfo
-    from fastapi import FastAPI
+    from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
     from app.api import alarms
     from app.api.auth import require_admin
@@ -268,7 +272,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
     repository.initialize()
     cfg = Settings(project_root=tmp_path, device_id='Cutter01')
     runtime = SimpleNamespace(settings=cfg, alarm_repository=repository, alarm_worker=SimpleNamespace(enabled=False, thread=None))
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(alarms.router)
     app.state.lines = as_line_services({'Cutter01': runtime})
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}

@@ -27,7 +27,8 @@ def configuration(root, postgres_state=None):
 
 def _web_probe(root, output):
     import app.main as main
-    main.settings = configuration(root)
+    cfg = configuration(root)
+    app = main.create_app(cfg)
 
     async def probe():
         before = {thread.ident for thread in threading.enumerate()}
@@ -39,26 +40,32 @@ def _web_probe(root, output):
             original(self, *args, **kwargs)
 
         threading.Thread.__init__ = observe
-        async with main.lifespan(main.app):
+        async with main.lifespan(app, settings=cfg):
             threading.Thread.__init__ = original
-            assert all(name and name.startswith("pool-") for name in constructed)
+            operational_threads = {"operations-log", "operations-collector"}
+            assert all(name and (name.startswith("pool-") or name in operational_threads) for name in constructed), constructed
             extra = [thread.name for thread in threading.enumerate() if thread.ident not in before]
-            assert all(line.background.workers == () for line in main.app.state.runtime.database_runtime.snapshot().lines.values() if line.background is not None)
-            job = main.app.state.runtime.metadata.get_job("restart-test")
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as client:
+            current = app.state.runtime.database_runtime.snapshot()
+            assert app.state.workloads['query'].sql_capacity is current.database_sources.capacity
+            assert all(line.background.workers == () for line in current.lines.values() if line.background is not None)
+            job = app.state.runtime.metadata.get_job("restart-test")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                 with anyio.fail_after(3):
                     assert (await client.get("/api/v1/health")).status_code == 200
                     response = await client.post("/api/v1/auth/login", json={"username": "process-admin", "password": "test-password"})
                     assert response.status_code == 200
                     assert (await client.get("/api/v1/devices")).status_code == 200
-            output.put(([name for name in extra if not name.startswith("pool-")], job["status"], hasattr(main.app.state, "worker")))
+            background = [name for name in extra if not name.startswith("pool-") and name not in operational_threads]
+            output.put((background, job["status"], hasattr(app.state, "worker")))
 
     anyio.run(probe)
 
 
 def _worker(root, stop, entered=None, release=None):
     from app.worker import WorkerProcess
-    process = WorkerProcess(configuration(root))
+    from tests.analysis_fakes import worker_settings_with_fake_model
+
+    process = WorkerProcess(worker_settings_with_fake_model(configuration(root)))
     process.stop_event = stop
     if entered is not None:
         for device in (line.service for line in process.runtime.database_runtime.snapshot().lines.values() if line.pipeline is not None):

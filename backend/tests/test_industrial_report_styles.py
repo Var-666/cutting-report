@@ -50,6 +50,7 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (kind, width)
                 assert page.locator('.industrial-brand:visible').count() == 1
                 document = page.locator('.industrial-document:visible')
+                assert document.locator('.lp-method').count() == 0
                 assert document.bounding_box()['width'] == pytest.approx(820 if width == 1440 else width - 16)
                 assert document.locator('h1').first.evaluate('(el) => parseFloat(getComputedStyle(el).fontSize)') == pytest.approx(36 if width == 1440 else 25)
                 assert document.get_by_text('生产执行摘要', exact=True).count() == int(kind in {'leadership', 'workshop', 'alarm', 'custom'})
@@ -67,7 +68,7 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                 elif kind == 'workshop':
                     priority = document.locator('.lp-analysis').get_by_text('需优先核查：1 项记录：发现负数数据', exact=False)
                     assert priority.bounding_box()['y'] > document.get_by_role(
-                        'heading', name='核心生产指标（今日）', exact=False).bounding_box()['y']
+                        'heading', name='核心生产指标（本期）', exact=False).bounding_box()['y']
                     assert document.get_by_role('heading', name='数据质量提示', exact=True).count() == 0
                     findings = document.locator('.lp-finding h3')
                     assert findings.filter(has_text='本期实际切割记录').inner_text() == '本期实际切割记录'
@@ -78,6 +79,9 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                         '(el) => getComputedStyle(el).backgroundColor') == 'rgb(254, 243, 199)'
                     assert '电耗已匹配 1/1 项' in document.inner_text()
                 elif kind == 'alarm':
+                    assert document.get_by_role('heading', name='核心告警指标（本次分析）', exact=True).count() == 1
+                    assert document.locator('.lp-kpi strong').all_text_contents() == ['1', '1', '0', '0']
+                    assert document.locator('table tbody tr').count() == 1
                     assert document.get_by_text('发现需要现场核查的告警记录。', exact=True).count() == 1
                     assert document.get_by_text('风险等级', exact=False).count() == 1
                     assert document.locator('.lp-context').get_by_text('严重', exact=True).evaluate(
@@ -90,14 +94,13 @@ def test_all_report_styles_keep_complete_html_pdf_and_continuous_email(tmp_path,
                     assert alarm_kpis.filter(has_text='高').evaluate(
                         '(el) => getComputedStyle(el).backgroundColor') == 'rgba(0, 0, 0, 0)'
                 elif kind.startswith('welding-'):
-                    assert document.get_by_text('仅使用已记录的焊接生产数据。', exact=True).count() == 1
+                    assert document.get_by_text('仅使用已记录的焊接生产数据。', exact=True).count() == 0
                     assert document.get_by_text('筛选条件：设备：0', exact=True).count() == 1
                     assert document.get_by_text('长度无效 1', exact=True).evaluate(
                         '(el) => getComputedStyle(el).backgroundColor') == 'rgb(254, 243, 199)'
                     assert '用时无效 0' in document.inner_text()
                 elif kind == 'custom':
-                    assert document.get_by_text('查询共 2 行', exact=False).count() == 1
-                    assert '明细与图表仅展示按查询返回顺序的前 1 行' in document.inner_text()
+                    assert document.get_by_text('查询共 2 行 · 显示 1 行', exact=True).count() == 1
                 assert page.locator('table:visible th,table:visible td').evaluate_all(
                     "cells => cells.every(cell => getComputedStyle(cell).whiteSpace === 'nowrap')")
                 if kind == 'custom':

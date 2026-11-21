@@ -75,8 +75,13 @@ def analysis_operation(settings: Settings, report_type: str, report_date: str,
             event(logger, logging.INFO, '报表版本已变化，分析请求需要刷新数据', error_code='ANALYSIS_REPORT_VERSION_CHANGED',
                   analysis_id=execution.analysis_id, line_id=settings.device_id, stage=report_type)
         elif isinstance(exc, Exception) and not isinstance(exc, SqlRequestCancelled):
+            cause = exc.__cause__ or exc
+            error_type = type(cause.__cause__ or cause).__name__
+            if not settings.llm_enabled and error_type == 'AnalysisUnavailableError':
+                error_type = 'AnalysisDisabled'
             event(logger, logging.ERROR, '智能分析流程失败', error_code='ANALYSIS_FAILED',
-                  incident=not execution.output_rejected, exc_info=True, analysis_id=execution.analysis_id, line_id=settings.device_id,
+                  incident=not execution.output_rejected, exc_info=True, error_type=error_type,
+                  analysis_id=execution.analysis_id, line_id=settings.device_id,
                   stage=report_type, resource_id=report_type, duration_ms=(monotonic() - execution.started) * 1000)
         raise
     finally:

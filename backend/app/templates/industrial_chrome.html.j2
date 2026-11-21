@@ -45,13 +45,11 @@
 {% if demo %}<p class="lp-demo">演示数据 · 非生产统计，请勿用于生产决策。</p>{% endif %}
 {%- endmacro %}
 
-{% macro executive(title, detail, boundary='') -%}
+{% macro executive(title, detail) -%}
 {{ section_title('生产执行摘要') }}
 <div class="lp-executive">
   <div class="lp-executive-icon">{{ metric_icon('tasks') }}</div>
-  <div><h3>{{ title }}</h3><p>{{ detail }}</p>
-    {% if boundary %}<p class="lp-boundary">{{ metric_icon('alert') }}{{ boundary }}</p>{% endif %}
-  </div>
+  <div><h3>{{ title }}</h3><p>{{ detail }}</p></div>
 </div>
 {%- endmacro %}
 

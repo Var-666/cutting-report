@@ -383,8 +383,8 @@ test('filter popup shows refresh feedback without the option timestamp', async (
   const html = await renderComponent('components/pdm/PdmFilterBar', { modelValue: createPdmFilters(), kind: 'equipment', status: 'ready',
     options: { equipment: { meta: { report_data: { data_as_of: '2026-11-19T02:21:57Z', stale: true, refreshing: true } } } } })
   assert.ok(html.includes('设备资料筛选选项状态'))
-  assert.ok(html.includes('后台更新中'))
-  assert.doesNotMatch(html, /2026年11月19日|数据待更新/)
+  assert.match(html, /<button[^>]*>[\s\S]*刷新旧数据/)
+  assert.doesNotMatch(html, /2026年11月19日|数据待更新|后台更新中/)
 })
 
 test('popup retains valid selected professions and clears only unavailable ones after project changes', async () => {

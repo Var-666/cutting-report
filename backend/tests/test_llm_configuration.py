@@ -1,9 +1,9 @@
+from tests.web_fixtures import embedded_app
 from dataclasses import replace
 from datetime import date
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
@@ -97,7 +97,7 @@ def test_catalog_failures_never_include_upstream_body_or_address(service, monkey
 
 
 def test_model_configuration_http_requires_admin_and_redacts_validation(service):
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
     app.dependency_overrides[llm_configuration_service] = lambda: service
@@ -159,7 +159,7 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
             result=dict(status='success', mode='model', overview='旧焊接模型结果',
                         data_version='a' * 64, generated_at='2026-11-11T10:00:00+08:00'),
         )
-        app = FastAPI()
+        app = embedded_app()
         app.state.runtime = runtimes[0]
         app.include_router(router)
         app.dependency_overrides[require_user] = lambda: {"role": "admin"}

@@ -13,7 +13,6 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path,
     configured = state_settings(configuration(tmp_path, real=True), postgres_state)
     repository = AlarmRepository(postgres_state[0], machine_no="Cutter01", source_name="Cutter01:" + DatabaseSourceRegistry.from_json(configured.database_sources_json).connection_identity("cutting-production"))
     repository.initialize()
-    monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
 
     class Source:
         def __init__(self, _settings, *, client):
@@ -24,7 +23,7 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path,
 
     monkeypatch.setattr(prepare_alarm_monitor, "SqlServerAlarmSource", Source)
     monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "Cutter01"])
-    assert prepare_alarm_monitor.main() == 0
+    assert prepare_alarm_monitor.main(settings=configured) == 0
     assert repository.get_sync_state()["last_success_at"] is None
 
     monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "Cutter01", "--apply"])
@@ -32,9 +31,9 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path,
     coordination = CoordinationRepository(postgres_state[0])
     owner = coordination.acquire('worker:another-consumer', ttl=30)
     with pytest.raises(RuntimeError, match='所有后台角色'):
-        prepare_alarm_monitor.main()
+        prepare_alarm_monitor.main(settings=configured)
     coordination.release('worker:another-consumer', owner)
-    assert prepare_alarm_monitor.main() == 0
+    assert prepare_alarm_monitor.main(settings=configured) == 0
     state = repository.get_sync_state()
     assert state["last_alarm_id"] == 0
     assert state["last_success_at"] is None
@@ -44,10 +43,9 @@ def test_monitoring_window_preview_and_apply_reset_cursor(monkeypatch, tmp_path,
 
 def test_monitoring_window_reset_requires_known_device(monkeypatch, tmp_path) -> None:
     configured = configuration(tmp_path, real=True)
-    monkeypatch.setattr(prepare_alarm_monitor, "settings", configured)
     monkeypatch.setattr("sys.argv", ["prepare_alarm_monitor.py", "--device-id", "missing", "--apply"])
     try:
-        prepare_alarm_monitor.main()
+        prepare_alarm_monitor.main(settings=configured)
     except SystemExit as exc:
         assert exc.code == 2
     else:

@@ -10,6 +10,7 @@ import sqlite3
 
 import pytest
 
+from app.config import Settings
 from app.database.postgres import ExecutionLeaseLost
 from tests.postgres_fixtures import state_settings
 from app.services.application_runtime import build_runtime
@@ -138,7 +139,7 @@ def test_web_health_distinguishes_worker_failure_from_database_failure(database_
     from types import SimpleNamespace
     from app.main import health
     status = {"state": worker_state, "report_alive": False, "database_available": database_available}
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=Settings(),
         worker_status_reader=SimpleNamespace(status=lambda: status))), state=SimpleNamespace(request_id="health-test"))
     response = anyio.run(health, request)
     if expected_status == 503:

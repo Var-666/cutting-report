@@ -10,9 +10,9 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
+from app.api.runtime import request_settings
 from app.api.report_reads import statistics_page
 from app.api.auth import require_admin
-from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
@@ -40,6 +40,7 @@ def get_equipment_report(
     report_date: date | None = Query(default=None),
     refresh: bool = Query(default=False, description="忽略缓存并重新查询"),
 ) -> dict:
+    configuration = request_settings(request)
     selected = report_date or datetime.now(ZoneInfo(device_settings(request).timezone)).date()
     data = statistics_page(request, 'equipment', {'report_date': selected}, refresh=refresh)
     if data is not None:
@@ -48,7 +49,7 @@ def get_equipment_report(
         selected_date = report_date
         if selected_date is None:
             energy = device_state(request).energy_service.enrich([])
-            today = datetime.now(ZoneInfo(settings.timezone)).date()
+            today = datetime.now(ZoneInfo(configuration.timezone)).date()
             selected_date = device_state(request).query_service.latest_production_date(
                 today, force=refresh
             )
@@ -83,12 +84,12 @@ def get_equipment_report(
         "success": True,
         "data": {
             "report_date": selected_date.isoformat(),
-            "records": to_primitive(records[: settings.report_max_detail_rows]),
+            "records": to_primitive(records[: configuration.report_max_detail_rows]),
             "summary": to_primitive(summarize_equipment(records, energy.mode)),
             "data_updated_at": to_primitive(equipment_data.data_updated_at),
             "energy_notice": energy.notice,
             "units": energy.units,
-            "truncated": len(records) > settings.report_max_detail_rows,
+            "truncated": len(records) > configuration.report_max_detail_rows,
         },
         "request_id": request.state.request_id,
     }

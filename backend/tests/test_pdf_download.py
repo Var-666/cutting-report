@@ -1,12 +1,12 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import as_line_services, runtime_line
-from dataclasses import replace
+from tests.line_fixtures import configuration
 from concurrent.futures import ThreadPoolExecutor
 import os
 from types import SimpleNamespace
 from urllib.parse import unquote
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import reports
@@ -27,13 +27,12 @@ def report_client(tmp_path, monkeypatch):
         pdf.write_bytes(b"%PDF-1.7\nreport content")
         return pdf
 
-    app = FastAPI()
+    app = embedded_app(configuration(tmp_path))
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
     app.state.metadata = SimpleNamespace(get_job=lambda report_id: job if report_id == "saved" else None)
     app.state.lines = as_line_services({'Cutter01': SimpleNamespace(metadata=app.state.metadata)})
     app.state.pdf_service = SimpleNamespace(render=render)
-    monkeypatch.setattr(reports, "settings", replace(reports.settings, project_root=tmp_path))
     # Settings resolves report files under project_root/reports.
     (tmp_path / "reports").mkdir()
     html = html.rename(tmp_path / "reports" / html.name)
@@ -95,9 +94,9 @@ def test_completed_record_with_a_missing_archive_is_unavailable_in_status_and_hi
                project_code=None, ship_no=None, created_at="2026-08-18T09:00:00+08:00", file_size=html.stat().st_size)
     from app.api import reports
 
-    assert reports._serialize_job(job)["status"] == 'completed'
+    assert reports._serialize_job(job, html.parent)["status"] == 'completed'
     html.unlink()
-    item = reports._serialize_job(job)
+    item = reports._serialize_job(job, html.parent)
     assert item['status'] == 'failed' and item['error']['code'] == 'REPORT_FILE_UNAVAILABLE'
     assert 'download_url' not in item and 'view_url' not in item
     assert client.get('/api/v1/reports/saved/download?device_id=Cutter01').status_code == 404

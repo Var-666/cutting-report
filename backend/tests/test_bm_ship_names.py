@@ -228,8 +228,9 @@ def test_bm_runtime_registration_hot_reload_protection_and_old_request(postgres_
     runtime.database_runtime.close()
 
 
-def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_database, tmp_path):
+def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_database, tmp_path, monkeypatch):
     from app.database.metadata import MetadataRepository
+    from app.models.domain import AnalysisResult
     from app.models.workshop_requests import ConfirmTaskRequest
     from app.services.pipeline import ReportPipeline
     vendor = tmp_path/'vendor'
@@ -240,11 +241,17 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_
     query = QueryService(cfg,ship_names=ShipNameService(
         SimpleNamespace(ship_names=lambda numbers:{'CMYZ0170':'18600DWT-02'}),cache_seconds=600), client=source_client(cfg))
     rows = [dict(task_id='1',project_code='CMYZ0170',ship_no='CMYZ0170',segment_name='S1',program_no='N1',
-                cut_length=Decimal('1.2'),groove_length=Decimal('0.1'),work_time=Decimal('60'),production_time=datetime(2026,11,1,8)),
+                cut_length=Decimal('1.2'),groove_length=Decimal('0.1'),work_time=Decimal('60'),
+                production_time=datetime(2026,11,1,8),source_updated_at=datetime(2026,11,1,8,1)),
             dict(task_id='2',project_code='MISSING',ship_no='MISSING',segment_name='S2',program_no='N2',
-                cut_length=Decimal('2.4'),groove_length=Decimal('0.2'),work_time=Decimal('120'),production_time=datetime(2026,11,1,9))]
-    query.client = SimpleNamespace(fetch_all=lambda sql,values:rows)
+                cut_length=Decimal('2.4'),groove_length=Decimal('0.2'),work_time=Decimal('120'),
+                production_time=datetime(2026,11,1,9),source_updated_at=datetime(2026,11,1,9,2))]
+    query.client = SimpleNamespace(fetch_all=lambda sql, values: [
+        row for row in rows if values[1] <= row['source_updated_at'] < values[2]
+    ])
     pipeline = ReportPipeline(cfg,metadata,query_service=query)
+    monkeypatch.setattr(pipeline.analysis_service, 'analyze_workshop', lambda *args, **kwargs: AnalysisResult(
+        status='success', overview='测试分析', features='', alerts='', suggestions=''))
     repo = pipeline.workshop_repository
     now = '2026-11-01T10:00:00+08:00'
     admin = repo.bootstrap_admin(username='admin',display_name='管理员',password='test-password',now=now)

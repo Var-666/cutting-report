@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.services.magic_box_service import (
     MagicBoxClient,
     MagicBoxConfig,
@@ -16,6 +16,9 @@ from app.core.report_deadline import operation_deadline
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
 from app.core.sql_capacity import SqlCapacityError
+
+
+settings = Settings()
 
 
 class ConfigRows:

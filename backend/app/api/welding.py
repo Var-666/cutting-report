@@ -15,7 +15,6 @@ from app.api.runtime import application_state, runtime_state
 from app.services.production_lines import resolve_line_service
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
-from app.config import settings
 from app.models.domain import to_primitive
 from app.models.welding import WeldingAnalysisRequest, WeldingQuery, ReportType
 from app.models.contracts import ApiEnvelope

@@ -7,8 +7,11 @@ import json
 import anyio
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.workers.report_worker import ReportWorker
+
+
+settings = Settings()
 
 
 def test_claim_and_failure_record_errors_do_not_kill_report_worker():
@@ -121,7 +124,7 @@ def test_health_is_degraded_when_background_thread_stopped(stopped):
     from app.main import health
 
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(worker_status_reader=SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(settings=settings, worker_status_reader=SimpleNamespace(
             status=lambda: {key: key != stopped for key in (
                 "report_alive", "automation_alive", "email_alive"
             )}

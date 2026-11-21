@@ -4,7 +4,8 @@ import { onBeforeRouteUpdate, RouterLink } from 'vue-router'
 import { NAlert, NButton, NDrawer, NDrawerContent, NInput, NSpin, NTag } from 'naive-ui'
 import type { Incident, LogRecord, RelatedOperation } from '../../api/generated/types.gen'
 import { operations } from '../../api/operations'
-import { incidentExplanation, incidentLevels, incidentLogQuery, incidentStatus, operationStages, roles, stamp, tone, workStatus } from './presentation'
+import { incidentExplanation, incidentLevels, incidentLogQuery, incidentStatus, operationFeature, operationLocation, operationMessage, operationSource, operationStages, roles, stamp, tone, workStatus } from './presentation'
+import { formatChineseDate } from '../../utils/dateDisplay'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { deviceSelection } from '../../state/devices'
 
@@ -32,10 +33,7 @@ async function close() {
 const record = computed(() => incident.value || log)
 const context = computed(() => incident.value?.context ?? log)
 const explanation = computed(() => record.value && (incident.value || ['WARNING', 'ERROR', 'CRITICAL'].includes(record.value.level))
-  ? incidentExplanation(record.value.error_code, record.value.message) : null)
-const lineName = computed(() => record.value?.line_id
-  ? deviceSelection.items.find(line => line.id === record.value?.line_id)?.name || '产线名称未登记'
-  : '公共系统')
+  ? incidentExplanation(record.value.error_code, operationMessage(record.value)) : null)
 const dataLabels = {
   period_start: '影响开始日期', period_end: '影响结束日期', data_as_of: '数据截至时间',
   missing_count: '缺失项数', estimated_count: '插值及估算项数',
@@ -43,7 +41,8 @@ const dataLabels = {
 } as const
 const dataDetails = computed(() => (Object.keys(dataLabels) as Array<keyof typeof dataLabels>).flatMap(key => {
   const value = incident.value?.context[key] ?? log?.data_quality?.[key]
-  return value == null ? [] : [{ label: dataLabels[key], value: key === 'data_as_of' ? value.replace('T', ' ') : value }]
+  return value == null ? [] : [{ label: dataLabels[key], value: key === 'data_as_of' ? stamp(value)
+    : key === 'period_start' || key === 'period_end' ? formatChineseDate(value, value) : value }]
 }))
 const linkedRecord = computed(() => {
   const kind = incident.value?.context.related_kind || log?.related_kind
@@ -127,7 +126,7 @@ async function copyLog() {
           <div class="headline">
             <NTag size="small" :type="tone(record.level)">{{ incidentLevels[record.level] }}</NTag>
             <NTag v-if="incident" size="small">{{ incidentStatus[incident.status] }}</NTag>
-            <h3>{{ record.message }}</h3>
+            <h3>{{ operationMessage(record) }}</h3>
           </div>
           <div v-if="explanation" class="explanation">
             <h4>发生了什么</h4><p>{{ explanation.meaning }}</p>
@@ -135,8 +134,9 @@ async function copyLog() {
             <h4>建议怎么处理</h4><p>{{ explanation.action }}</p>
           </div>
           <dl class="details">
-            <dt>影响产线</dt><dd>{{ lineName }}</dd>
-            <dt v-if="context?.stage">处理环节</dt><dd v-if="context?.stage">{{ operationStages[context.stage] || '其他处理环节（见技术详情）' }}</dd>
+            <dt>设备 / 产线</dt><dd>{{ operationLocation(record, deviceSelection.items) }}</dd>
+            <dt>业务功能</dt><dd>{{ operationFeature(record) }}</dd>
+            <dt>来源</dt><dd>{{ operationSource(record) }}</dd>
             <template v-if="incident">
               <dt>首次发生</dt><dd>{{ stamp(incident.first_seen_at) }}</dd>
               <dt>最近发生</dt><dd>{{ stamp(incident.last_seen_at) }}</dd>
@@ -145,9 +145,7 @@ async function copyLog() {
             <template v-if="log">
               <dt>时间</dt><dd>{{ stamp(log.timestamp) }}</dd>
               <dt>耗时</dt><dd>{{ log.duration_ms == null ? '—' : log.duration_ms + ' ms' }}</dd>
-              <dt v-if="log.run_id">计划执行 ID</dt><dd v-if="log.run_id">{{ log.run_id }}</dd>
               <dt v-if="log.attempt != null">发送尝试</dt><dd v-if="log.attempt != null">{{ log.attempt }}</dd>
-              <dt v-if="log.error_type">错误类型</dt><dd v-if="log.error_type">{{ log.error_type }}</dd>
             </template>
             <template v-for="detail in dataDetails" :key="detail.label">
               <dt>{{ detail.label }}</dt><dd>{{ detail.value }}</dd>
@@ -188,12 +186,14 @@ async function copyLog() {
             <dl class="details">
               <dt>来源</dt><dd>{{ roles[record.role] }} {{ record.instance_id }} / {{ record.component }}</dd>
               <dt>错误代码</dt><dd>{{ record.error_code || '—' }}</dd>
+              <template v-if="operationMessage(record) !== record.message"><dt>原始消息</dt><dd>{{ record.message }}</dd></template>
               <dt v-if="record.line_id">产线编号</dt><dd v-if="record.line_id">{{ record.line_id }}</dd>
               <dt v-if="record.source_id">数据源标识</dt><dd v-if="record.source_id">{{ record.source_id }}</dd>
               <template v-for="field in [
                 { label: '请求 ID', value: context?.request_id }, { label: '分析 ID', value: context?.analysis_id },
                 { label: '后台任务 ID', value: context?.task_id }, { label: '报表 ID', value: context?.report_id },
                 { label: '关联资源 ID', value: record.resource_id }, { label: '阶段代码', value: context?.stage },
+                { label: '计划执行 ID', value: log?.run_id }, { label: '错误类型', value: incident?.context.error_type || log?.error_type || log?.exception?.type },
                 { label: '报表版本', value: incident?.context.data_version || log?.data_quality?.data_version },
                 { label: '关联记录 ID', value: related?.id }, { label: '关联状态代码', value: related?.status },
                 { label: '关联阶段代码', value: related?.stage }, { label: '确认管理员 ID', value: incident?.acknowledged_by },

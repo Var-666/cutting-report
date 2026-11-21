@@ -1,10 +1,10 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import as_line_services, runtime_line
 from tests.line_fixtures import cutting_settings
 from types import SimpleNamespace
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user, require_worker
@@ -58,7 +58,7 @@ def test_legacy_snapshot_does_not_block_worker_revoke_or_admin_correction(state_
         now=confirmed_at,
     )
 
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.workshop = repository
     app.state.lines = as_line_services({'Cutter01': SimpleNamespace(

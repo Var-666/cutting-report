@@ -6,6 +6,7 @@ import logging
 import uuid
 from time import monotonic
 from contextlib import asynccontextmanager
+from functools import cache, partial
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -36,9 +37,10 @@ from app.api.reports import router as reports_router
 from app.api.reports import view_router
 from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
 from app.api.workshop import router as workshop_router
-from app.config import settings
+from app.config import Settings
 from app.api.devices import router as devices_router
-from app.api.runtime import application_state, runtime_state
+from app.api.runtime import application_state, request_settings, runtime_state
+from app.api.workloads import build_workloads
 from app.api.welding import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.api.pdm_statistics import router as pdm_statistics_router
@@ -73,7 +75,7 @@ logging.getLogger('uvicorn.access').addFilter(_redact_sso_callback)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI, *, settings: Settings):
     # Dispatch recovery is safe only after the previous Web process has exited.
     lock = FileLock(settings.data_dir / ".web-process.lock")
     if not lock.acquire(blocking=False):
@@ -82,6 +84,7 @@ async def lifespan(app: FastAPI):
         with configured_logging(settings.logs_dir, 'web', 'web', settings.operations_log_retention_days) as logs:
             runtime = build_runtime(settings, role="web")
             app.state.runtime = runtime
+            app.state.workloads = build_workloads(settings, runtime.database_runtime.current_context.database_sources.capacity)
             try:
                 with runtime.operations.collect(logs):
                     yield
@@ -94,16 +97,6 @@ async def lifespan(app: FastAPI):
         lock.release()
 
 
-app = FastAPI(
-    title="切割生产智能产报系统 API",
-    version=settings.app_version,
-    lifespan=lifespan,
-    docs_url="/api/docs" if settings.app_env != "production" else None,
-    redoc_url=None,
-)
-
-
-@app.exception_handler(RequestValidationError)
 async def safe_connection_validation(request: Request, exc: RequestValidationError):
     if request.url.path == '/api/v1/magic-box/callbacks/task-finished':
         event(logger, logging.WARNING, '魔盒完成通知参数校验失败', error_code='CALLBACK_VALIDATION')
@@ -117,17 +110,6 @@ async def safe_connection_validation(request: Request, exc: RequestValidationErr
         return JSONResponse(status_code=422, content={'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': '请求参数无效，请检查日期、筛选或连接配置'}})
     return await request_validation_exception_handler(request, exc)
 
-if settings.cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(settings.cors_origins),
-        allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Content-Type", "X-Request-ID", "X-SQL-Workbench-Token", "X-Production-Line"],
-    )
-
-
-@app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     # A client scope can restrict capabilities, but never grants access or replaces role checks.
     if request.url.path == '/api/v1/operations/browser' and request.method == 'POST':
@@ -164,12 +146,13 @@ async def request_id_middleware(request: Request, call_next):
             if line is not None:
                 sql_line, source_key = line.config.id, line.config.source_key
         elif request.url.path.startswith(('/api/v1/cutting', '/api/v1/pdm-statistics')):
-            context = await run_in_threadpool(runtime_state, request)
-            source_key = (context.settings.dispatch_source_key if request.url.path.endswith(('/machines', '/status'))
-                          else context.settings.file_source_key)
+            settings = await run_in_threadpool(request_settings, request)
+            source_key = (settings.dispatch_source_key if request.url.path.endswith(('/machines', '/status'))
+                          else settings.file_source_key)
         with sql_identity(sql_line, source_key), operation_context(request_id=request_id, line_id=sql_line, source_id=source_key):
             response = await call_next(request)
-            route = getattr(request.scope.get('route'), 'name', None)
+            matched_route = request.scope.get('route')
+            route = getattr(matched_route, 'name', None)
             if (route and request.url.path.startswith('/api/v1/')
                     and not request.url.path.startswith('/api/v1/operations') and request.url.path != '/api/v1/health'
                     and not getattr(request.state, 'operation_timeout_logged', False)
@@ -180,15 +163,18 @@ async def request_id_middleware(request: Request, call_next):
                 repeated = operations is not None and operations.repeated_http_failure(route, sql_line, source_key, status)
                 if status >= 500:
                     code = {503: 'HTTP_UNAVAILABLE', 504: 'HTTP_TIMEOUT'}.get(status, 'HTTP_SERVER_ERROR')
+                    feature = getattr(matched_route, 'path', '').removeprefix('/api/v1/').partition('/')[0]
                     event(logger, logging.WARNING if transient else logging.ERROR, 'HTTP 接口返回服务端错误',
-                          error_code=code, resource_id=route, incident=repeated or not transient,
+                          error_code=code, resource_id=route, stage=feature, incident=repeated or not transient,
                           duration_ms=(monotonic() - started) * 1000)
         response.headers["X-Request-ID"] = request_id
         return response
     except Exception:
         with operation_context(request_id=request_id, line_id=sql_line, source_id=source_key):
+            matched_route = request.scope.get('route')
+            feature = getattr(matched_route, 'path', '').removeprefix('/api/v1/').partition('/')[0]
             event(logger, logging.ERROR, 'HTTP 请求发生未处理异常', error_code='INTERNAL_ERROR',
-                  incident=True, exc_info=True, resource_id=getattr(request.scope.get('route'), 'name', None),
+                  incident=True, exc_info=True, resource_id=getattr(matched_route, 'name', None), stage=feature,
                   duration_ms=(monotonic() - started) * 1000)
         raise
     finally:
@@ -196,14 +182,12 @@ async def request_id_middleware(request: Request, call_next):
         sql_request_cancellations.finish(execution_id)
 
 
-@app.exception_handler(SqlCapacityError)
 async def sql_capacity_error_handler(request: Request, exc: SqlCapacityError):
     return JSONResponse(status_code=503, headers={'Retry-After': '1', 'X-SQL-Resource-Error': exc.reason},
         content={'success': False, 'error': {'code': 'SQL_' + exc.reason.upper(), 'message': str(exc)},
                  'request_id': getattr(request.state, 'request_id', 'unknown')})
 
 
-@app.exception_handler(SqlRequestCancelled)
 async def sql_request_cancelled_handler(request: Request, exc: SqlRequestCancelled):
     return JSONResponse(
         status_code=499,
@@ -215,7 +199,6 @@ async def sql_request_cancelled_handler(request: Request, exc: SqlRequestCancell
     )
 
 
-@app.exception_handler(ReportOperationTimeout)
 async def operation_timeout_handler(request: Request, exc: ReportOperationTimeout):
     request.state.operation_timeout_logged = True
     event(logger, logging.WARNING, '请求执行超过期限', error_code='OPERATION_TIMEOUT', incident=True,
@@ -225,7 +208,6 @@ async def operation_timeout_handler(request: Request, exc: ReportOperationTimeou
                  'request_id': getattr(request.state, 'request_id', 'unknown')})
 
 
-@app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, 'request_id', 'unknown')
     return JSONResponse(
@@ -239,38 +221,9 @@ async def unexpected_error_handler(request: Request, exc: Exception):
     )
 
 
-app.include_router(devices_router)
-app.include_router(production_lines_router)
-app.include_router(pdm_statistics_router)
-app.include_router(welding_router)
-app.include_router(reports_router)
-app.include_router(auth_router)
-app.include_router(alarms_router)
-app.include_router(database_monitors_router)
-app.include_router(operations_router)
-app.include_router(llm_usage_router)
-app.include_router(options_router)
-app.include_router(database_router)
-app.include_router(configuration_router)
-app.include_router(designer_router)
-app.include_router(leadership_router)
-app.include_router(equipment_router)
-app.include_router(energy_router)
-app.include_router(workshop_router)
-app.include_router(analysis_router)
-app.include_router(automation_router)
-app.include_router(cutting_router)
-app.include_router(magic_box_callback_router)
-app.include_router(downloads_router)
-app.include_router(conditions_router)
-app.include_router(requests_router)
-app.include_router(view_router)
-
-
-@app.get("/api/v1/health")
 async def health(request: Request) -> dict:
-    configuration = await to_thread.run_sync(runtime_state, request, limiter=_health_threads)
-    mode = getattr(configuration, "settings", settings).effective_data_source_mode
+    settings = await to_thread.run_sync(request_settings, request, limiter=_health_threads)
+    mode = settings.effective_data_source_mode
     reader = getattr(application_state(request), "worker_status_reader", None)
     worker_status = await to_thread.run_sync(reader.status, limiter=_health_threads) if reader else {"state": "missing", "report_alive": False}
     ready = background_ready(worker_status)
@@ -294,22 +247,15 @@ async def health(request: Request) -> dict:
     return result if web_ready else JSONResponse(status_code=503, content=result)
 
 
-assets_dir = settings.frontend_dist_dir / "assets"
-if assets_dir.is_dir():
-    app.mount("/assets", FrontendAssets(directory=assets_dir), name="frontend-assets")
-
-
-@app.get("/favicon.svg", include_in_schema=False)
-def frontend_favicon():
-    favicon_path = settings.frontend_dist_dir / "favicon.svg"
+def frontend_favicon(request: Request):
+    favicon_path = request_settings(request).frontend_dist_dir / "favicon.svg"
     if favicon_path.is_file():
         return FileResponse(favicon_path, media_type="image/svg+xml")
     return HTMLResponse(status_code=404)
 
 
-@app.get("/", include_in_schema=False)
-def frontend_index():
-    index_path = settings.frontend_dist_dir / "index.html"
+def frontend_index(request: Request):
+    index_path = request_settings(request).frontend_dist_dir / "index.html"
     if index_path.is_file():
         return FileResponse(index_path, headers={'Cache-Control': 'no-store'})
     return HTMLResponse(
@@ -325,11 +271,82 @@ def frontend_index():
     )
 
 
-@app.get("/{frontend_path:path}", include_in_schema=False)
-def frontend_spa(frontend_path: str):
+def frontend_spa(frontend_path: str, request: Request):
     if frontend_path.startswith(("api/", "reports/", "assets/")):
         raise HTTPException(status_code=404, detail="Not Found")
-    index_path = settings.frontend_dist_dir / "index.html"
+    index_path = request_settings(request).frontend_dist_dir / "index.html"
     if index_path.is_file():
         return FileResponse(index_path, headers={'Cache-Control': 'no-store'})
     raise HTTPException(status_code=404, detail="Vue 前端尚未构建")
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = Settings() if settings is None else settings
+    app = FastAPI(
+        title="切割生产智能产报系统 API",
+        version=settings.app_version,
+        lifespan=partial(lifespan, settings=settings),
+        docs_url="/api/docs" if settings.app_env != "production" else None,
+        redoc_url=None,
+    )
+    app.add_exception_handler(RequestValidationError, safe_connection_validation)
+    app.add_exception_handler(SqlCapacityError, sql_capacity_error_handler)
+    app.add_exception_handler(SqlRequestCancelled, sql_request_cancelled_handler)
+    app.add_exception_handler(ReportOperationTimeout, operation_timeout_handler)
+    app.add_exception_handler(Exception, unexpected_error_handler)
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            allow_headers=["Content-Type", "X-Request-ID", "X-SQL-Workbench-Token", "X-Production-Line"],
+        )
+    app.middleware("http")(request_id_middleware)
+
+    app.include_router(devices_router)
+    app.include_router(production_lines_router)
+    app.include_router(pdm_statistics_router)
+    app.include_router(welding_router)
+    app.include_router(reports_router)
+    app.include_router(auth_router)
+    app.include_router(alarms_router)
+    app.include_router(database_monitors_router)
+    app.include_router(operations_router)
+    app.include_router(llm_usage_router)
+    app.include_router(options_router)
+    app.include_router(database_router)
+    app.include_router(configuration_router)
+    app.include_router(designer_router)
+    app.include_router(leadership_router)
+    app.include_router(equipment_router)
+    app.include_router(energy_router)
+    app.include_router(workshop_router)
+    app.include_router(analysis_router)
+    app.include_router(automation_router)
+    app.include_router(cutting_router)
+    app.include_router(magic_box_callback_router)
+    app.include_router(downloads_router)
+    app.include_router(conditions_router)
+    app.include_router(requests_router)
+    app.include_router(view_router)
+
+    app.add_api_route("/api/v1/health", health)
+    assets_dir = settings.frontend_dist_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", FrontendAssets(directory=assets_dir), name="frontend-assets")
+    app.add_api_route("/favicon.svg", frontend_favicon, include_in_schema=False)
+    app.add_api_route("/", frontend_index, include_in_schema=False)
+    app.add_api_route("/{frontend_path:path}", frontend_spa, include_in_schema=False)
+    return app
+
+
+@cache
+def _process_app() -> FastAPI:
+    return create_app()
+
+
+def __getattr__(name: str):
+    if name == 'app':
+        return _process_app()
+    raise AttributeError(name)

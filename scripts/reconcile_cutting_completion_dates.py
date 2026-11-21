@@ -11,7 +11,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 
-from app.config import settings
+from app.config import Settings
+from app.core.sql_capacity import SqlCapacity
 from app.database.cutting_queries import CuttingQueryRepository
 from app.database.postgres import PostgresDatabase
 from app.database.source_registry import DatabaseSourceRegistry
@@ -21,7 +22,8 @@ from app.device_config import load_line_catalog
 from app.services.cache_revision import CacheRevision
 
 
-def main(argv=None):
+def main(argv=None, *, settings: Settings | None = None):
+    settings = Settings() if settings is None else settings
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--line', required=True, help='已登记的切割产线ID，如 Cutter01')
     parser.add_argument('--apply', action='store_true', help='提交校正；默认仅预览')
@@ -31,7 +33,7 @@ def main(argv=None):
         line = next((line for line in load_line_catalog(settings.production_lines_json).lines if line.id == args.line), None)
         if line is None or line.type != 'cutting':
             raise ValueError('必须指定已登记的切割产线')
-        sources = DatabaseSourceRegistry.from_json(settings.database_sources_json)
+        sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, capacity=SqlCapacity(settings))
         if sources.get(line.source_key).engine != 'sqlserver':
             raise ValueError('切割产线必须绑定 SQL Server')
         source = CuttingQueryRepository(sources.client(line.source_key), line.machine_no)

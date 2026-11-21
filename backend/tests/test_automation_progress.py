@@ -1,6 +1,7 @@
 from datetime import timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
+from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 import pytest
 
@@ -15,8 +16,8 @@ def test_pause_and_resume_schedule_preserves_runs_and_skips_missed_occurrences(w
     schedule_id = run['schedule_id']
     original = repository.get_schedule(schedule_id)
     now = NOW + timedelta(days=3)
-    monkeypatch.setattr('app.api.automation._now', lambda: now)
-    app = FastAPI()
+    monkeypatch.setattr('app.api.automation._now', lambda _request: now)
+    app = embedded_app()
     app.include_router(router)
     app.state.automation_service = service
 
@@ -80,7 +81,7 @@ def test_run_progress_tracks_its_report_and_delivery_without_changing_persisted_
 
 def test_run_progress_http_requires_admin_and_returns_only_requested_run(workflow):
     repository, _, service, run = workflow
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.automation_service = service
 

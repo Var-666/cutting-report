@@ -1,7 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
+from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
@@ -113,7 +114,7 @@ def test_audit_and_run_update_failure_roll_back_delivery_resolution(workflow, mo
 def test_api_requires_admin_and_rejects_stale_verification(workflow):
     repository, _, _, _ = workflow
     delivery = unknown_delivery(workflow)
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.automation = repository
 

@@ -15,7 +15,7 @@ const status = computed(() => {
   const { row } = props
   if (row.loading) return { text: '正在更新', type: 'info' } as const
   if (result.value?.refreshing && result.value.refreshFailed && !row.error) return { text: '正在重试', type: 'warning' } as const
-  if (row.error || result.value?.refreshFailed) return { text: '刷新失败，保留上次结果', type: 'warning' } as const
+  if (row.error || result.value?.refreshFailed) return { text: '刷新失败', type: 'warning' } as const
   if (result.value?.refreshing) return { text: '后台更新中', type: 'info' } as const
   if (result.value?.stale) return { text: '历史结果待更新', type: 'warning' } as const
   if (result.value?.empty) return { text: '本月暂无生产记录', type: 'default' } as const

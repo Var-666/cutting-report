@@ -26,12 +26,11 @@
     {{ render_closing_comparison(report.closing_comparison,
       [('task_count','任务数（项）','count'), ('cut_length_m','切割长度（米）','number'),
        ('groove_length_m','坡口长度（米）','number'), ('work_time_seconds','切割工时','duration')],
-      '按实际完工时间归属', title='月、季度、年同期对比',
-      calendar_note='月、季度和年累计完整自然日，同期按相同天数比较。') }}
+      title='月、季度、年同期对比') }}
     {% endif %}
 
-    {{ section_title('核心生产指标（' ~ (day.label if day else '本期') ~ '）') }}
-    {% if day %}<p class="lp-method">{{ closing_range(day.start, day.end) }}</p>{% endif %}
+    {{ section_title('核心生产指标（业务日）' if report.daily_production is defined else '核心生产指标（本期）') }}
+    {% if day %}<div>{{ closing_range(day.start, day.end) }}</div>{% endif %}
     {% if day or report.daily_production is undefined %}
     {% set metrics = day.totals if day else total %}
     <div class="lp-kpis">
@@ -48,14 +47,13 @@
       {% if leadership.daily_records %}<div id="lp-daily-chart" class="chart lp-chart"></div>{% else %}<div class="lp-empty">{{ metric_icon('chart') }}<strong>当前区间暂无可视化数据</strong></div>{% endif %}
     </div>
     {% if leadership.daily_records %}<div class="lp-daily-detail">{{ production_table(leadership.daily_records, total) }}</div>{% endif %}
-    <p class="lp-method">所选周期有 {{ leadership.daily_records|length }} 个日期记录了生产任务。任务按实际结束日期归属，仅统计已完成且工时非负的任务。无记录日期不推断为停机，累计切割工时不等于设备开机时间。</p>
   </section>
 
   <section class="lp-sheet lp-trends">
     {{ hero('近 12 个月生产趋势', cover) }}
     {% set months = leadership.monthly_records %}
     {% set chronological = months|sort(attribute='period_start') %}
-    {% if chronological %}<p class="lp-method">{{ chronological[0].period_start|chinese_month }} 至 {{ chronological[-1].period_start|chinese_month }}</p>{% endif %}
+    {% if chronological %}<div>{{ chronological[0].period_start|chinese_month }} 至 {{ chronological[-1].period_start|chinese_month }}</div>{% endif %}
     <div class="lp-chart-panel lp-monthly-panel">{% if months %}<div id="lp-monthly-chart" class="chart lp-chart"></div>{% else %}<div class="lp-empty">{{ metric_icon('chart') }}<strong>近 12 个月暂无月度趋势数据</strong></div>{% endif %}</div>
     {% if months %}
     {% set length_peak = months|sort(attribute='cut_length_m')|last %}
@@ -67,7 +65,6 @@
     {% endif %}
     {{ section_title('月度明细') }}
     {% if months %}<div class="lp-daily-detail">{{ production_table(months, leadership.twelve_month_total, true) }}</div>{% else %}<p class="lp-empty">当前区间暂无已完成任务。</p>{% endif %}
-    <p class="lp-method">当前未结束月份仅反映已记录的生产进度，不直接与完整月份判断生产表现。</p>
   </section>
 
   {% if analysis %}{{ render_analysis(analysis, report, report.meta.period_start, report.meta.period_end, summary_shown) }}{% endif %}

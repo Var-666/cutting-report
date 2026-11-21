@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 
 from app.config import Settings, settings_for_line
+from app.core.sql_capacity import SqlCapacity
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from app.models.database_sources import DatabaseSourceConfig
@@ -66,4 +67,4 @@ def as_line_services(services):
 
 def source_client(cfg):
     config = DatabaseSourceRegistry.from_json(cfg.database_sources_json).get(cfg.production_data_source)
-    return DatabaseSourceRegistry([config.model_copy(update={"enabled": True})]).client(config.id)
+    return DatabaseSourceRegistry([config.model_copy(update={"enabled": True})], capacity=SqlCapacity(cfg)).client(config.id)

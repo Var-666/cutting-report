@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.runtime import application_state, runtime_state
+from app.api.runtime import application_state, request_settings
 from app.api.auth import require_admin
 from app.models.contracts import ApiEnvelope
 from app.models.configuration_contracts import (
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/configuration", tags=["configuration"], depen
 
 
 def llm_configuration_service(request: Request) -> LlmConfigurationService:
-    return LlmConfigurationService(runtime_state(request).settings, application_state(request).database_runtime)
+    return LlmConfigurationService(request_settings(request), application_state(request).database_runtime)
 
 
 @router.get("/llm", response_model=ApiEnvelope[LlmConfiguration])

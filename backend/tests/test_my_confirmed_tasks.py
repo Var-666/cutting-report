@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime
@@ -5,7 +6,6 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
@@ -86,7 +86,7 @@ def test_revoke_and_reassignment_remove_personal_tasks_without_changing_snapshot
 
 def test_personal_http_auth_device_scope_validation_and_no_external_dependency(personal):
     p = personal
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.workshop = p.repository
     app.state.lines = as_line_services({})

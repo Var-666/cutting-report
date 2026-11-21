@@ -272,8 +272,7 @@ def test_http_burst_queues_before_threads_and_other_lines_and_snapshots_still_ru
     from app.api import workloads
     resource = capacity(tmp_path)
     resource.register_sources([source('a'), source('b')])
-    monkeypatch.setattr(workloads, 'default_sql_capacity', lambda: resource)
-    pool = workloads.RequestWorkload(4, 'SQL test', max_waiters=32, partitioned=True)
+    pool = workloads.RequestWorkload(4, 'SQL test', max_waiters=32, sql_capacity=resource)
     local = workloads.RequestWorkload(1, 'SQLite test', max_waiters=1)
     entered, release = Event(), Event()
     def slow():
@@ -403,7 +402,8 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
 @pytest.mark.parametrize('failure', ['queue_timeout', 'operation_timeout'])
 def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_statistics(postgres_state, tmp_path, monkeypatch, failure):
     from fastapi.testclient import TestClient
-    from app.main import app
+    from app.main import create_app
+    from tests.web_fixtures import configure_web
     from app.api.auth import require_admin
     from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
     from app.services.application_runtime import build_runtime
@@ -411,11 +411,18 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     cfg = configuration(tmp_path, real=True, sql_queue_timeout_seconds=.05)
     configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
-    runtime = build_runtime(state_settings(replace(cfg, database_sources_json=source_configs_json(configs)),postgres_state), role='web')
+    cfg = state_settings(replace(cfg, database_sources_json=source_configs_json(configs)), postgres_state)
+    runtime = build_runtime(cfg, role='web')
     context = database_context(runtime)
+    app = create_app(cfg)
+    configure_web(app, cfg)
     if failure == 'operation_timeout':
-        from app.api import workloads
-        monkeypatch.setattr(workloads, 'settings', SimpleNamespace(report_operation_timeout_seconds=.02))
+        @app.middleware('http')
+        async def short_outer_deadline(request, call_next):
+            if request.headers.get('X-Test-Short-Deadline'):
+                with operation_deadline(.02):
+                    return await call_next(request)
+            return await call_next(request)
     resource = context.database_sources.capacity
     config = context.database_sources.get('cutting-production')
     monkeypatch.setattr(app.state, 'runtime', runtime, raising=False)
@@ -434,7 +441,8 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     client = TestClient(app)
     body = {'dataset': 'equipment', 'report_date': '2026-11-03', 'limit': 10}
     with resource.slot(config):
-        blocked = client.post('/api/v1/database/preview?device_id=Cutter01', json=body)
+        blocked = client.post('/api/v1/database/preview?device_id=Cutter01', json=body,
+                              headers={'X-Test-Short-Deadline': '1'})
     if failure == 'operation_timeout':
         assert blocked.status_code == 504 and blocked.json()['error']['code'] == 'OPERATION_TIMEOUT'
     else:
@@ -546,8 +554,10 @@ def test_unsaved_probe_ids_share_fixed_slots_without_polluting_source_registrati
 def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monkeypatch, boundary, error):
     from datetime import date
     from app.api import energy, equipment, leadership
+    from tests.line_fixtures import as_line_services, cutting_settings
     def fail(*args, **kwargs): raise error
-    device = SimpleNamespace(query_service=SimpleNamespace(fetch_equipment_data=fail),
+    settings = cutting_settings()
+    device = SimpleNamespace(settings=settings, query_service=SimpleNamespace(fetch_equipment_data=fail),
         energy_period_service=SimpleNamespace(get_monthly_range=fail),
         range_report_service=SimpleNamespace(leadership=fail, equipment=fail))
     day = date(2026, 11, 3)
@@ -559,6 +569,8 @@ def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monk
         'energy_monthly_range': (energy, energy.get_energy_monthly_range, dict(start_date=day, end_date=day)),
     }[boundary]
     monkeypatch.setattr(module, 'device_state', lambda request: device)
+    request = SimpleNamespace(state=SimpleNamespace(), query_params={'device_id': 'Cutter01'}, headers={},
+        app=SimpleNamespace(state=SimpleNamespace(settings=settings, lines=as_line_services({'Cutter01': device}))))
     with pytest.raises(type(error)) as caught:
-        handler(SimpleNamespace(), **args)
+        handler(request, **args)
     assert caught.value is error

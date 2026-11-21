@@ -1,15 +1,16 @@
-from tests.line_fixtures import source_client
-from tests.line_fixtures import as_line_services, runtime_line
 """Check serialized core responses against the fields consumed by the frontend.
 
 External production sources are replaced; routes, services and JSON conversion run.
 """
+
+from tests.web_fixtures import embedded_app
+from tests.line_fixtures import source_client
+from tests.line_fixtures import as_line_services, runtime_line
 from contextlib import contextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import auth, leadership, welding
@@ -27,14 +28,13 @@ def client(state_database, tmp_path, monkeypatch):
                    weld_enabled=True, worker_database_auth_enabled=False, auth_cookie_secure=False)
     cfg.ensure_runtime_dirs()
     users = WorkshopRepository(state_database)
-    app = FastAPI()
+    app = embedded_app(cfg)
     for router in (auth.router, leadership.router, welding.router):
         app.include_router(router)
     app.state.settings = cfg
     app.state.workshop = users
     app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=cfg, leadership_report_service=LeadershipReportService(cfg, client=source_client(cfg)))})
     app.dependency_overrides[auth.require_admin] = lambda: {'role': 'admin'}
-    monkeypatch.setattr(auth, 'settings', cfg)
 
     @app.middleware('http')
     async def request_id(request, call_next):

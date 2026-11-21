@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.workloads import query_requests
-from app.api.runtime import runtime_state
+from app.api.runtime import runtime_state, request_settings
 from app.api.auth import require_admin
 from app.models.conditions import ConditionSearch
 from app.models.conditions import ConditionError
@@ -38,7 +38,7 @@ callback_router = APIRouter(prefix="/api/v1/magic-box/callbacks", tags=["magic-b
 
 
 def require_callback_source(request: Request) -> None:
-    configuration = runtime_state(request).settings
+    configuration = request_settings(request)
     if not configuration.magic_box_callback_enabled:
         raise HTTPException(status_code=404, detail="魔盒回调未启用")
     peer = request.client.host if request.client else ""

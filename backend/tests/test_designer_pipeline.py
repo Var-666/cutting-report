@@ -140,8 +140,7 @@ def test_custom_demo_pipeline_generates_configured_report(state_database, tmp_pa
     assert "演示数据 · 非生产统计" in html
     assert completed["filename"].startswith("演示数据_")
     if detail_limit == 2:
-        assert "查询共 10 行，核心指标按完整查询计算" in html
-        assert "前 2 行" in html
+        assert "查询共 10 行 · 显示 2 行" in html
     assert "每日产量自定义报表" in html
     assert "每日切割长度" in html
     assert 'id="custom-chart"' in html

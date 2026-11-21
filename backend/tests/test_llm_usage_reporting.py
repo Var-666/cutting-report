@@ -1,9 +1,9 @@
+from tests.web_fixtures import embedded_app
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import optional_user
@@ -112,7 +112,7 @@ def test_pagination_is_stable_and_summary_does_not_change_with_page(repository):
 
 
 def test_usage_api_is_admin_only_bounded_and_exposes_no_provider_credentials(repository):
-    app = FastAPI()
+    app = embedded_app()
     app.state.llm_usage = repository
     app.include_router(router)
 

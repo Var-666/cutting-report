@@ -19,13 +19,7 @@ const emit = defineEmits<{ page: [page: number] }>()
 
 function formatHistoryTime(value: string | null | undefined) {
   if (!value) return '--'
-  const timestamp = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`)
-  if (Number.isNaN(timestamp.getTime())) return '--'
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
-    timeZone: props.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  }).formatToParts(timestamp).map(part => [part.type, part.value]))
-  return formatTime(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`)
+  return formatTime(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`, '--', props.timezone)
 }
 
 const historyTableColumns = [

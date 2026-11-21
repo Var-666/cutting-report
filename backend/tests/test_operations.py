@@ -3,10 +3,12 @@ from datetime import UTC, datetime, timedelta
 import json
 import logging
 import os
+from threading import Lock
 from traceback import format_exception
 from types import SimpleNamespace
 
-from fastapi import FastAPI, Request
+from fastapi import Request
+from tests.web_fixtures import embedded_app
 from fastapi.responses import Response
 from fastapi.testclient import TestClient
 from psycopg_pool import PoolTimeout
@@ -228,7 +230,7 @@ def test_log_query_keeps_failure_and_recovery_for_the_same_resource(tmp_path):
             event(logger, logging.WARNING, 'TCP 检测状态变化', error_code=code,
                   source_id=source, resource_id=resource, related_kind='database-monitor')
     logs = OperationsLogQuery(tmp_path, 14)
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=SimpleNamespace(logs=logs))
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin-1'}
     web.include_router(router)
@@ -255,7 +257,7 @@ def test_incident_pagination_preserves_three_thousand_record_range_at_ten_rows()
         requests.append((filters.page, filters.page_size))
         return dict(items=[], page=filters.page, page_size=filters.page_size, total=2993)
 
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=SimpleNamespace(list=list_incidents)))
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin'}
     web.include_router(router)
@@ -291,7 +293,7 @@ def test_admin_exports_filtered_logs_across_pages(tmp_path, monkeypatch):
         row['unsupported_field'] = 'private-extra-field'
     segment.write_text(''.join(json.dumps(row) + '\n' for row in rows))
 
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=SimpleNamespace(logs=OperationsLogQuery(tmp_path, 14)))
     web.include_router(router)
 
@@ -328,11 +330,46 @@ def test_admin_exports_filtered_logs_across_pages(tmp_path, monkeypatch):
         assert client.get(endpoint, params={**query, 'keyword': '测'}).status_code == 422
 
 
+def test_snapshot_task_logs_identify_the_report_and_device(tmp_path):
+    from app.worker import WorkerProcess
+
+    completed = []
+    worker = SimpleNamespace(_handle=lambda task: None, _lock=Lock(), _completed=completed)
+    task = dict(kind='report_snapshot_refresh', device_id='cut-a', task_id='snapshot-a',
+                payload={'report_type': 'energy:tasks', 'query': {}})
+    with configured_logging(tmp_path, 'worker', 'consumer-a'):
+        WorkerProcess._execute(worker, task)
+    rows = OperationsLogQuery(tmp_path, 14).query(LogFilters(task_id='snapshot-a'))['items']
+    assert {row['message'] for row in rows} == {'后台任务开始', '后台任务完成'}
+    assert {(row['line_id'], row['stage']) for row in rows} == {('cut-a', 'energy:tasks')}
+    assert completed == [(task, None)]
+
+
+@pytest.mark.parametrize(('model_enabled', 'expected'), [(False, 'AnalysisDisabled'), (True, 'LlmRequestTimeout')])
+def test_analysis_logs_keep_a_safe_cause_after_http_mapping(tmp_path, model_enabled, expected):
+    from fastapi import HTTPException
+    from app.config import Settings
+    from app.services.analysis_execution import analysis_operation
+    from app.services.llm_service import LlmRequestTimeout
+    from app.services.report_analysis_service import AnalysisUnavailableError
+
+    settings = Settings(project_root=tmp_path, device_id='cut-a', llm_enabled=model_enabled)
+    cause = AnalysisUnavailableError('private upstream detail')
+    if model_enabled:
+        cause.__cause__ = LlmRequestTimeout('private network detail')
+    with configured_logging(tmp_path, 'web', 'web') as logs:
+        with pytest.raises(HTTPException), analysis_operation(settings, 'workshop', '2026-11-20'):
+            raise HTTPException(status_code=503) from cause
+        incident = logs.incidents.get_nowait()
+    assert (incident['line_id'], incident['stage'], incident['error_type']) == ('cut-a', 'workshop', expected)
+    assert 'private' not in json.dumps(incident)
+
+
 def test_web_repeated_transient_failures_become_incidents(tmp_path, monkeypatch):
     from app.main import request_id_middleware
     from app.services import operations_service
 
-    web = FastAPI()
+    web = embedded_app()
     operations = operations_service.OperationsService(
         SimpleNamespace(logs_dir=tmp_path, operations_log_retention_days=14), None, None, None, None, None, 'web',
     )
@@ -369,6 +406,7 @@ def test_web_repeated_transient_failures_become_incidents(tmp_path, monkeypatch)
         incident = logs.incidents.get_nowait()
         assert incident['error_code'] == 'HTTP_TIMEOUT'
         assert incident['resource_id'] == 'probe'
+        assert incident['stage'] == 'probe'
         assert incident['request_id'] == response.headers['X-Request-ID']
 
 
@@ -378,7 +416,7 @@ def test_workshop_conflicts_stay_expected_and_server_failures_are_correlated(tmp
     from app.api import workshop
     from app.database.workshop_errors import ConfirmationConflictError
 
-    web = FastAPI()
+    web = embedded_app()
     web.middleware('http')(main.request_id_middleware)
     web.add_exception_handler(Exception, main.unexpected_error_handler)
     web.include_router(workshop.router)
@@ -417,6 +455,7 @@ def test_workshop_conflicts_stay_expected_and_server_failures_are_correlated(tmp
         assert logs.incidents.empty()
 
     assert (failures[0]['resource_id'], failures[0]['line_id'], failures[0]['source_id']) == ('confirm_task', 'cut-a', 'source-a')
+    assert failures[0]['stage'] == 'workshop'
     assert 'resource_id' not in failures[1]
     for incident in failures:
         row, = OperationsLogQuery(tmp_path, 14).query(LogFilters(request_id=incident['request_id']))['items']
@@ -430,7 +469,7 @@ def test_incident_minimum_error_level_filters_counts_and_pages(postgres_state):
     repository.record([dict(timestamp=now, level=level, error_code='FILTER_TEST', component='fixture',
                             role='worker', resource_id=level, message='测试异常')
                        for level in ('WARNING', 'ERROR', 'CRITICAL')])
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=repository))
     web.include_router(router)
     @web.middleware('http')
@@ -465,7 +504,7 @@ def test_incident_concurrency_confirmation_recovery_and_admin_routes(postgres_st
     assert repository.list(IncidentFilters())['total'] == 2
 
     service = SimpleNamespace(repository=repository, logs=OperationsLogQuery(cfg.logs_dir, 14))
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=service)
     web.include_router(router)
     @web.middleware('http')
@@ -908,7 +947,7 @@ def test_pool_wait_queue_rejection_is_a_service_unavailable_response():
     def busy(_):
         raise TooManyRequests('private pool details')
 
-    web = FastAPI()
+    web = embedded_app()
     web.state.runtime = SimpleNamespace(operations=SimpleNamespace(repository=SimpleNamespace(get=busy)))
     web.dependency_overrides[require_user] = lambda: {'role': 'admin', 'user_id': 'admin-1'}
     web.include_router(router)

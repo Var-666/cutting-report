@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { createActivationBinding } from '../utils/activationTimer.ts'
+import { formatChineseDate } from '../utils/dateDisplay'
 import AppIcon from './AppIcon.vue'
 import { NPopover, NButton } from 'naive-ui'
 
@@ -96,8 +97,8 @@ const draftPreset = computed(() => matchingPreset(draftStart.value, draftEnd.val
 const buttonLabel = computed(() => {
   const prefix = currentPreset.value?.label || '自定义'
   const period = props.startDate === props.endDate
-    ? props.startDate
-    : `${props.startDate} 至 ${props.endDate}`
+    ? formatChineseDate(props.startDate)
+    : `${formatChineseDate(props.startDate)} 至 ${formatChineseDate(props.endDate)}`
   return `${prefix} · ${period}`
 })
 
@@ -192,6 +193,7 @@ onBeforeUnmount(pause)
       ref="trigger"
       attr-type="button"
       class="report-period-picker__trigger"
+      :title="buttonLabel"
       :disabled="disabled"
       aria-haspopup="dialog"
       :aria-labelledby="`${labelId} ${valueId}`"

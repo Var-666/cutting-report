@@ -1,10 +1,10 @@
+from tests.web_fixtures import embedded_app
 from datetime import date
 import sqlite3
 from types import SimpleNamespace
 
 import pytest
 import sqlglot
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -417,7 +417,7 @@ def test_empty_period_keeps_selected_project_and_profession_in_title(source):
 
 def test_report_http_contract_role_validation_and_failure_redaction(source, monkeypatch):
     source.add('first')
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(api.router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     monkeypatch.setattr(api, 'service', lambda request: PdmStatisticsService(PdmStatisticsRepository(source)))
@@ -450,26 +450,32 @@ def test_report_http_contract_role_validation_and_failure_redaction(source, monk
         assert client.get('/api/v1/pdm-statistics/overview').status_code == 403
 
 
-def test_disabled_source_does_not_fall_back_to_mock(monkeypatch):
-    monkeypatch.setattr(api, 'runtime_state', lambda request: SimpleNamespace(settings=SimpleNamespace(file_database_enabled=False)))
+def test_disabled_source_does_not_fall_back_to_mock(tmp_path):
+    from tests.line_fixtures import configuration
+
+    context = SimpleNamespace(settings=configuration(tmp_path, file_database_enabled=False))
+    request = SimpleNamespace(state=SimpleNamespace(database_context=context))
     with pytest.raises(Exception) as error:
-        api.service(None)
+        api.service(request)
     assert error.value.status_code == 503
 
 
 def test_main_mount_and_shared_source_identity(source, monkeypatch):
     from app import main
     from app.core.sql_capacity import current_sql_identity
+    from tests.line_fixtures import cutting_settings
+    from tests.web_fixtures import configure_web
     source.add('first')
-    context = SimpleNamespace(settings=SimpleNamespace(file_source_key='pdm-source', dispatch_source_key='magic-source'))
-    monkeypatch.setattr(main, 'runtime_state', lambda request: context)
+    cfg = cutting_settings(file_source_key='pdm-source', dispatch_source_key='magic-source')
+    app = main.create_app(cfg)
+    configure_web(app, cfg)
     def current_service(request):
         assert current_sql_identity.get().source_key == 'pdm-source'
         return PdmStatisticsService(PdmStatisticsRepository(source))
     monkeypatch.setattr(api, 'service', current_service)
-    monkeypatch.setattr(main.app, 'dependency_overrides', {require_admin: lambda: {'role': 'admin'}})
+    monkeypatch.setattr(app, 'dependency_overrides', {require_admin: lambda: {'role': 'admin'}})
     # No lifespan: this isolated request must not build a production Runtime.
-    client = TestClient(main.app)
+    client = TestClient(app)
     try:
         response = client.post('/api/v1/pdm-statistics/report', json=query().model_dump(mode='json'))
         assert response.status_code == 200

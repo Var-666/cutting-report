@@ -1,7 +1,10 @@
 """Shared HR authentication rows, configuration and recording SQL client."""
 from dataclasses import replace
 
-from app.config import settings
+from app.config import Settings
+
+
+settings = Settings()
 
 
 class FakeSqlServerClient:

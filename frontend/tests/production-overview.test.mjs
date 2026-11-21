@@ -221,11 +221,11 @@ test('overview cards render disabled, loading, preparing, empty and retained fai
     [{ data: data() }, '本月暂无生产记录'],
     [{ data: data({ preparing: true, empty: false, refreshing: true }) }, '生产数据准备中'],
     [{ data: data({ stale: true }) }, '历史结果待更新'],
-    [{ data: data({ metrics: [{ title: '任务数', value: null, unit: '项', precision: 0 }], empty: false, stale: true, refreshFailed: true, refreshing: true }), error: '失败' }, '刷新失败，保留上次结果'],
+    [{ data: data({ metrics: [{ title: '任务数', value: null, unit: '项', precision: 0 }], empty: false, stale: true, refreshFailed: true, refreshing: true }), error: '失败' }, '刷新失败'],
   ]) {
     const html = await renderComponent('components/ProductionOverviewCard', { row: { ...row, ...changes } })
     assert.ok(html.includes(expected), expected)
-    assert.doesNotMatch(html, /统计截止|统计生成|统计时区/)
+    assert.doesNotMatch(html, /统计截止|统计生成|统计时区|保留上次结果/)
     if (changes.error && !changes.data) assert.ok(!html.includes('任务数：0'))
     if (changes.data?.preparing) assert.ok(!html.includes('任务数：0'))
     if (changes.error && changes.data) {

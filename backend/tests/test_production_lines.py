@@ -3,7 +3,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import Request
+from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
@@ -38,7 +39,7 @@ def test_api_resolves_explicit_instances_and_public_metadata_has_no_credentials(
     cfg = configuration(tmp_path, welding=True)
     runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     context = database_context(runtime)
-    app = FastAPI()
+    app = embedded_app()
     app.state.runtime = runtime
     selected = Request({'type': 'http', 'app': app, 'headers': [(b'x-production-line', b'welding')]})
     assert service(selected) is context.lines['welding'].service

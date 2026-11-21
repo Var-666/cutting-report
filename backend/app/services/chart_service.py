@@ -253,7 +253,7 @@ class ChartService:
             [_chart_number(row.get("gas_consumption")) for row in task_rows],
         )
         monthly = option(
-            [str(row.get("report_date") or "")[-2:] for row in month_rows],
+            [str(row.get("report_date") or "") for row in month_rows],
             [_chart_number((row.get("electricity") or {}).get("value")) for row in month_rows],
             [_chart_number((row.get("gas") or {}).get("value")) for row in month_rows],
         )

@@ -7,10 +7,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
-from app.api.runtime import application_state
+from app.api.runtime import application_state, request_settings
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import settings
 from app.models.contracts import ApiEnvelope
 from app.models.alarm_contracts import (
     AlarmStatus, AlarmIncident, AlarmIncidentPage, AlarmReport, AlarmReportPage,
@@ -156,7 +155,7 @@ def _report_path(request: Request, report_id: str, field: str) -> tuple[dict, Pa
     relative_path = report.get(field)
     if report["status"] != "completed" or not relative_path:
         raise HTTPException(status_code=404, detail="告警报告文件尚未生成")
-    root = settings.reports_dir.resolve()
+    root = request_settings(request).reports_dir.resolve()
     path = (root / relative_path).resolve()
     if not path.is_relative_to(root) or not path.is_file():
         raise HTTPException(status_code=404, detail="告警报告文件不存在")

@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.energy_period_fixtures import DAY, START, NOW, samples, service
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
@@ -7,7 +8,6 @@ import logging
 import re
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -562,7 +562,7 @@ def test_snapshots_do_not_contain_credentials(tmp_path, state_database):
 
 def test_day_month_routes_and_bad_month(tmp_path, state_database):
     energy, meter = service(tmp_path, state_database)
-    app = FastAPI()
+    app = embedded_app()
     app.state.energy_period_service = energy
     app.state.lines = as_line_services({"Cutter01": app.state})
     start = START + timedelta(hours=8)

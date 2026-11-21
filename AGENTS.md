@@ -27,6 +27,14 @@
 
 ## 主要架构约定
 
+## Coding Style: Fail Fast, No Defensive Bloat
+
+- **Fail fast, never swallow errors**: Do NOT wrap code in broad `try/except` or `try/catch` blocks that silently return fallback values (`null`, `None`, `[]`, `{}`). Let unexpected errors crash loudly.
+- **Validate at boundaries only**: Only validate untrusted inputs at system boundaries (API endpoints, CLI args, external I/O). Inside core/domain logic, trust the type system and upstream invariants.
+- **No redundant guards**: Do NOT add repetitive `if x is not None`, `typeof`, `isinstance`, `getattr(..., default)`, or optional chaining (`?.`) when types already guarantee the shape.
+- **No speculative fallbacks**: Do NOT invent multi-format parsers, fallback key names, or backward-compatibility shims unless explicitly requested.
+- **Clean up instead of patching**: If an old branch or edge case is no longer needed, delete it rather than wrapping it in a conditional check.
+
 - API 层保持精简；业务规则放在 service，持久化放在 repository/database 层。
 - 生产 SQL Server、HR 库、PDM 库和能管平台均按外部系统处理。除非需求和设计明确授权，不对其执行写入。
 - PostgreSQL 是唯一应用自有状态库；多仓储原子操作遵循 `docs/design/PostgreSQL仓储与事务设计.md`。
@@ -61,7 +69,7 @@
 - `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配切割业务实现，所有实例统一登记在 `DatabaseServices.lines`。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
 - Web 只在 `app.state.runtime` 挂载类型化 `ApplicationRuntime`；API 通过 `application_state(request)` 获取进程共享资源，通过 `runtime_state(request)`/`Depends(runtime_state)` 获取 `DatabaseServices` 请求快照。旧式平铺 state 仅在公共入口兼容，不在新路由继续散落属性探测。ApplicationRuntime 不保留初始产线服务字段，业务一律从当前 DatabaseServices.lines 访问。
 - Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
-- `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。启动全局 `settings` 不代表当前热加载状态。
+- `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。请求及进程配置入口见[运行时约定](docs/project/architecture.md#runtime与配置)。
 - 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
 - 配置来源由 `configuration_sources.load_environment` 统一解析：`data/settings.env > 进程环境变量 > .env > Settings 默认值`；`.env` 保留已有变量插值与 `PYTHON_DOTENV_DISABLED` 兼容，管理页文件按字面值读取，不展开密码中的 `${...}`。产线只取 `PRODUCTION_LINES_JSON`，连接只取 `DATABASE_SOURCES_JSON`；旧设备目录及连接环境键仅由独立 `scripts/migrate_production_lines.py` 升级工具读取，正常运行不回退。
 - 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
@@ -95,6 +103,7 @@
 - 后端验证：`./.venv/bin/python -m pytest backend/tests`。
 - 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
+- 报表改动完成后，用同一组筛选与统计区间核对摘要、KPI、图表和明细的数量、单位及时间边界。报表页面、HTML、PDF 和邮件禁止展示辅助说明，包括图表或表格下的小字段落、脚注以及统计方法、比较规则或颜色规则的解释。必要的统计区间、单位、展示数量及异常状态直接使用标题、字段名、数据或状态标签。验收时发现辅助说明须删除后方可交付。
 - 多个测试文件共用的构造函数、记录和桩放在对应业务的测试辅助模块，调用方直接引用辅助模块，不从其他 `test_*.py` 导入。pytest 公共夹具通过 `conftest.py` 注册；仅供单个用例或文件使用的桩就地保留，不为减少文件数合并不同职责的测试。
 - 测试优先验证用户行为、渲染状态和公开契约，不用源码正则锁定内部函数名、变量名、组件布局或 CSS 写法。前端组件测试可复用 `tests/vue-component-helpers.mjs` 编译真实 SFC；已有有效的源码提取行为测试逐步迁移，稳定依赖/权限边界检查可保留。
 - 复用已有公共能力，不新增无明确职责的兼容转发模块；少量重复不必建立新抽象。删除兼容入口前检查源码、脚本、测试及嵌入式调用，不因层次多而合并 Runtime、缓存或快照机制。

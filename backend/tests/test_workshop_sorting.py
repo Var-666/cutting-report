@@ -32,7 +32,7 @@ def test_manager_sort_puts_latest_production_first():
         _record("confirmed-new", 10, 16),
     ]
 
-    ordered = sort_workshop_records(records, "manager")
+    ordered = sort_workshop_records(records, "manager", timezone="Asia/Shanghai")
 
     assert [row.task_id for row in ordered] == [
         "unconfirmed-late",
@@ -50,7 +50,7 @@ def test_worker_sort_puts_latest_production_first():
         _record("unconfirmed-early", 8),
     ]
 
-    ordered = sort_workshop_records(records, "worker")
+    ordered = sort_workshop_records(records, "worker", timezone="Asia/Shanghai")
 
     assert [row.task_id for row in ordered] == [
         "unconfirmed-late",

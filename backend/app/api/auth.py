@@ -13,8 +13,8 @@ from starlette.responses import RedirectResponse
 
 from app.core.operations_logging import event
 from app.api.workloads import authentication_requests
-from app.api.runtime import application_state, runtime_state
-from app.config import settings
+from app.api.runtime import application_state, request_settings, runtime_state
+from app.config import Settings
 from app.core.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
 )
@@ -91,7 +91,7 @@ class AdminRevokeRequest(BaseModel):
     current_password: SecretStr = Field(min_length=1, max_length=128)
 
 
-def _now() -> datetime:
+def _now(settings: Settings) -> datetime:
     return datetime.now(ZoneInfo(settings.timezone))
 
 
@@ -103,7 +103,7 @@ def _envelope(request: Request, data: object) -> dict:
     }
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _set_session_cookie(response: Response, token: str, settings: Settings) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         token,
@@ -130,9 +130,10 @@ async def optional_user(
     request: Request,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict | None:
+    settings = await run_in_threadpool(request_settings, request)
     user = await run_in_threadpool(
         _sessions(request).user_for_session,
-        session_token, now=_now().isoformat(timespec="seconds"),
+        session_token, now=_now(settings).isoformat(timespec="seconds"),
     )
     if user is not None and user.get("auth_source") == "hr_database":
         try:
@@ -217,8 +218,8 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
         request,
         {
             "setup_required": _users(request).admin_count() == 0,
-            "worker_database_auth_enabled": getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled,
-            "sso_enabled": getattr(application_state(request), 'sso', None) is not None and application_state(request).sso.settings.sso_enabled,
+            "worker_database_auth_enabled": request_settings(request).worker_database_auth_enabled,
+            "sso_enabled": getattr(application_state(request), 'sso', None) is not None and request_settings(request).sso_enabled,
             "authenticated": user is not None,
             "user": user,
         },
@@ -236,19 +237,21 @@ def sso_login(request: Request, return_to: str = '/') -> RedirectResponse:
     response = RedirectResponse(login.url, status_code=302,
                                 headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
     response.set_cookie(SSO_BROWSER_COOKIE, login.browser, max_age=300, httponly=True,
-                        secure=service.settings.auth_cookie_secure, samesite='lax', path='/api/v1/auth/sso')
+                        secure=request_settings(request).auth_cookie_secure, samesite='lax', path='/api/v1/auth/sso')
     return response
 
 
 @authentication_requests.route(router.get('/sso/callback', response_class=RedirectResponse, status_code=302))
 def sso_callback(request: Request) -> RedirectResponse:
+    settings = request_settings(request)
     try:
         service = application_state(request).sso
         if any(len(request.query_params.getlist(key)) > 1 for key in ('code', 'state', 'error')):
             raise SsoError('state')
         result = service.finish(state=request.query_params.get('state', ''),
             browser=request.cookies.get(SSO_BROWSER_COOKIE, ''), code=request.query_params.get('code', ''),
-            error=request.query_params.get('error', ''), worker_auth=runtime_state(request).worker_auth)
+            error=request.query_params.get('error', ''), worker_auth=runtime_state(request).worker_auth,
+            session_hours=settings.auth_session_hours)
     except SsoError as exc:
         if exc.code in ('state', 'token', 'unavailable'):
             event(logger, logging.WARNING, 'SSO 回调校验或身份交换失败',
@@ -257,13 +260,14 @@ def sso_callback(request: Request) -> RedirectResponse:
                                 headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
     response = RedirectResponse(result.return_to, status_code=302,
                                 headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
-    _set_session_cookie(response, result.token)
+    _set_session_cookie(response, result.token, settings)
     return response
 
 
 @authentication_requests.route(router.post("/bootstrap"))
 def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -> dict:
-    now = _now()
+    settings = request_settings(request)
+    now = _now(settings)
     try:
         user = _users(request).bootstrap_admin(
             username=payload.username,
@@ -276,23 +280,24 @@ def bootstrap(payload: BootstrapRequest, request: Request, response: Response) -
     token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, settings)
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
 @authentication_requests.route(router.post("/login"))
 def login(payload: LoginRequest, request: Request, response: Response) -> dict:
+    settings = request_settings(request)
     user = None
     try:
         local_user = _users(request).authenticate(
             payload.username, payload.password
         )
-        if not getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled or local_user["role"] == "admin":
+        if not settings.worker_database_auth_enabled or local_user["role"] == "admin":
             user = local_user
     except AuthenticationError:
         pass
 
-    if user is None and getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled:
+    if user is None and settings.worker_database_auth_enabled:
         try:
             identity = runtime_state(request).worker_auth.authenticate(
                 payload.username, payload.password
@@ -305,17 +310,17 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         user = _users(request).upsert_external_worker(
             **identity,
-            now=_now().isoformat(timespec="seconds"),
+            now=_now(settings).isoformat(timespec="seconds"),
         )
 
     if user is None:
         raise HTTPException(status_code=401, detail="账号或密码错误")
 
-    now = _now()
+    now = _now(settings)
     token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, settings)
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
@@ -326,6 +331,7 @@ def worker_login(
     request: Request,
     response: Response,
 ) -> dict:
+    settings = request_settings(request)
     try:
         identity = runtime_state(request).worker_auth.authenticate(
             payload.group_no, payload.password
@@ -335,7 +341,7 @@ def worker_login(
     except WorkerAuthenticationUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    now = _now()
+    now = _now(settings)
     user = _users(request).upsert_external_worker(
         **identity,
         now=now.isoformat(timespec="seconds"),
@@ -343,7 +349,7 @@ def worker_login(
     token, expires_at = _sessions(request).create_session(
         user["user_id"], now=now, hours=settings.auth_session_hours
     )
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, settings)
     return _envelope(request, {"user": user, "expires_at": expires_at})
 
 
@@ -371,7 +377,7 @@ def create_user(
     request: Request,
     _: dict = Depends(require_admin),
 ) -> dict:
-    if getattr(runtime_state(request), "settings", settings).worker_database_auth_enabled:
+    if request_settings(request).worker_database_auth_enabled:
         raise HTTPException(status_code=409, detail="账号与管理员权限由HR数据库统一管理")
     try:
         user = _users(request).create_user(
@@ -379,7 +385,7 @@ def create_user(
             display_name=payload.display_name,
             password=payload.password,
             role=payload.role,
-            now=_now().isoformat(timespec="seconds"),
+            now=_now(request_settings(request)).isoformat(timespec="seconds"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -421,7 +427,7 @@ def grant_admin(
         user = _users(request).grant_external_admin(
             identity=identity,
             operator=admin,
-            now=_now().isoformat(timespec="seconds"),
+            now=_now(request_settings(request)).isoformat(timespec="seconds"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -440,7 +446,7 @@ def revoke_admin(
         user = _users(request).revoke_external_admin(
             user_id,
             operator=admin,
-            now=_now().isoformat(timespec="seconds"),
+            now=_now(request_settings(request)).isoformat(timespec="seconds"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

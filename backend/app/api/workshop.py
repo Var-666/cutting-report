@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin, require_user, require_worker
-from app.config import settings
 from app.database.sqlserver import SqlServerConfigurationError
 from app.database.workshop_errors import (
     ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError,
@@ -64,8 +63,8 @@ def _invoke(operation, *, value_error_status=None, **kwargs):
         raise HTTPException(status_code=value_error_status, detail=str(exc)) from exc
 
 
-def sort_workshop_records(records: list, sort_mode: Literal['manager', 'worker']):
-    return sort_workshop_by_recency(records, settings.timezone)
+def sort_workshop_records(records: list, sort_mode: Literal['manager', 'worker'], *, timezone: str):
+    return sort_workshop_by_recency(records, timezone)
 
 
 @query_requests.route(router.get('/latest-date', response_model=ApiEnvelope[LatestProductionDate], response_model_exclude_unset=True))

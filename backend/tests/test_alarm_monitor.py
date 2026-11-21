@@ -9,11 +9,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.alarms import AlarmRepository
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_monitor_service import AlarmMonitorService
+
+
+settings = Settings()
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -891,7 +894,6 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
             incident_ids=[f"other-{index}"], now=f"2026-10-07T08:{index:02d}:00+08:00",
         )
     assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
-    monkeypatch.setattr(alarm_api, "settings", SimpleNamespace(alarm_monitor_start_at=cutoff))
     runtime = SimpleNamespace(alarm_repository=repository, settings=SimpleNamespace(device_id="Cutter01", alarm_monitor_start_at=cutoff))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(lines=as_line_services({"Cutter01": runtime}))), query_params={"device_id": "Cutter01"}, state=SimpleNamespace(request_id="test"), headers={})
     result = alarm_api.page_alarm_incidents(request, page=1, page_size=15)["data"]

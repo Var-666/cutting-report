@@ -338,7 +338,7 @@ class WeldingService:
             'unlinked_part_count': association['unlinked'], 'ambiguous_part_count': association['ambiguous'],
             'notices': ['按作业结束时间计入生产日；作业统计包含所有已记录状态，状态业务含义待确认。',
                         '工件字段为累计值，不能当作所选区间新增产出；机器人编号按作业表统计，跨表映射待核实。',
-                        '各异常原因可重叠；无法归入时间区间的记录仅在源库核验报告统计。',
+                        '各异常原因可重叠；结束时间无效的作业不计入作业次数、长度和用时汇总。',
                         '速度分布使用源表记录，不代表整线实测平均速度。', *limits.values()],
         }
         if kind == 'parts' and summary.get('ambiguous_part_rows'):

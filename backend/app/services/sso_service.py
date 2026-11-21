@@ -142,7 +142,7 @@ class SsoService:
         return user if user and user['user_id'] not in self.bindings.values() else None
 
     def finish(self, *, state: str, browser: str, code: str, error: str,
-               worker_auth: WorkerAuthService) -> SsoSession:
+               worker_auth: WorkerAuthService, session_hours: int) -> SsoSession:
         self._enabled()
         if not state or len(state) > 128 or not browser or len(browser) > 128:
             raise SsoError('state')
@@ -183,5 +183,5 @@ class SsoService:
                 raise SsoError('account')
             if identity is not None and not unit.users.refresh_external_profile(user_id, identity, now=now.isoformat(timespec='seconds')):
                 raise SsoError('account')
-            token, _ = unit.sessions.create_session(user_id, now=now, hours=self.settings.auth_session_hours)
+            token, _ = unit.sessions.create_session(user_id, now=now, hours=session_hours)
         return SsoSession(token, safe_return_to(flow['return_to']))

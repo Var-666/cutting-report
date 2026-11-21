@@ -13,7 +13,7 @@ import sys
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "backend"))
 
-from app.config import settings, settings_for_line
+from app.config import Settings, settings_for_line
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
 from app.database.alarm_source import SqlServerAlarmSource
@@ -22,17 +22,18 @@ from app.database.postgres import PostgresDatabase
 from app.database.coordination import CoordinationRepository
 from app.database.postgres_migrations import MIGRATION_LOCK
 from app.core.process_lock import FileLock
-from app.core.sql_capacity import sql_identity
+from app.core.sql_capacity import SqlCapacity, sql_identity
 
 
-def main() -> int:
+def main(*, settings: Settings | None = None) -> int:
+    settings = Settings() if settings is None else settings
     parser = argparse.ArgumentParser(description="检查或重置指定设备告警统计起点")
     parser.add_argument("--device-id", required=True, choices=[item.id for item in load_line_catalog(settings.production_lines_json).lines if item.type == "cutting"])
     parser.add_argument("--apply", action="store_true", help="确认服务已停止后，重置游标并重新补录起始日数据")
     args = parser.parse_args()
 
     catalog = load_line_catalog(settings.production_lines_json)
-    sources = DatabaseSourceRegistry.from_json(settings.database_sources_json)
+    sources = DatabaseSourceRegistry.from_json(settings.database_sources_json, capacity=SqlCapacity(settings))
     line = catalog.get(args.device_id)
     cfg = settings_for_line(settings, line, sources.fingerprint(line.source_key))
     cfg = replace(cfg, alarm_source_name=f'{line.id}:{sources.connection_identity(line.source_key)}')

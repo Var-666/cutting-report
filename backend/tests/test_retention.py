@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.config import settings
+from app.config import Settings
 from app.database.alarms import AlarmRepository
 from app.database.automation import AutomationRepository
 from app.database.dispatch import DispatchRepository
@@ -16,6 +16,9 @@ from app.database.retention import RetentionRepository
 from app.database.workshop import WorkshopRepository
 from app.services.retention_service import RetentionService
 from app.workers.retention_worker import RetentionWorker
+
+
+settings = Settings()
 
 
 TZ = ZoneInfo("Asia/Shanghai")

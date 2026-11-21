@@ -20,6 +20,10 @@ export function formatChineseDate(value: unknown, fallback = '--') {
 }
 
 export function formatChineseDateTime(value: unknown, fallback = '--', timeZone?: string) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return fallback
+    value = value.toISOString()
+  }
   if (timeZone && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(value))) {
     const instant = new Date(String(value))
     if (!Number.isFinite(instant.getTime())) return fallback

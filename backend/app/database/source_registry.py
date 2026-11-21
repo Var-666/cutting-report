@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceView
 from app.database.sqlserver import SqlServerClient
 from app.database.mysql import MySqlClient
-from app.core.sql_capacity import SqlCapacity, default_sql_capacity
+from app.core.sql_capacity import SqlCapacity
 
 SOURCE_CONFIGS = TypeAdapter(list[DatabaseSourceConfig])
 RESERVED_SOURCES = {'production', 'worker', 'file', 'welding', 'sqlite'}
@@ -35,18 +35,24 @@ class DatabaseSourceRegistry:
         if any(config.enabled and not config.password.get_secret_value() for config in configs):
             raise ValueError('启用的数据源必须配置密码')
         self._sources = MappingProxyType(sources)
-        self.capacity = capacity or default_sql_capacity()
-        if register:
-            self.capacity.register_sources(configs)
+        self._capacity = capacity
+        if register and capacity is not None:
+            capacity.register_sources(configs)
         # Declared consumers can be deployed before their optional source is registered.
         self._bindings = MappingProxyType({key: refs for key, refs in (bindings or {}).items() if key in sources})
         self._clients: dict[str, SqlServerClient | MySqlClient] = {}
         self._lock = RLock()
 
+    @property
+    def capacity(self) -> SqlCapacity:
+        if self._capacity is None:
+            raise RuntimeError("数据源目录未装配 SQL 容量")
+        return self._capacity
+
     @classmethod
     def from_json(cls, value: str, *, previous: DatabaseSourceRegistry | None = None,
                   bindings: Mapping[str, tuple[str, ...]] | None = None, capacity: SqlCapacity | None = None) -> DatabaseSourceRegistry:
-        registry = cls(SOURCE_CONFIGS.validate_json(value), bindings=bindings, capacity=previous.capacity if previous else capacity,
+        registry = cls(SOURCE_CONFIGS.validate_json(value), bindings=bindings, capacity=previous._capacity if previous else capacity,
                        register=previous is None)
         if previous is not None:
             with previous._lock:

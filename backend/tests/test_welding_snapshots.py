@@ -609,7 +609,6 @@ def test_hot_configuration_never_reuses_previous_source_snapshots(configured, mo
     from app.api import database
     from test_database_runtime import request
     cfg, _, _, _, _ = configured
-    monkeypatch.setattr(database, 'settings', cfg)
     runtime = build_runtime(cfg, role='web')
     old = database_context(runtime).lines['welding'].service
     old.repository = Source()

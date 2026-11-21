@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from functools import partial
 import logging
 from pathlib import Path
 from threading import Lock
@@ -16,7 +17,7 @@ from app.database.cutting_queries import CuttingQueryRepository
 from app.services.ship_name_service import ShipNameService
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache as _QueryCache
-from app.services.report_closing_comparison import Totals, closing_bucket
+from app.services.report_closing_comparison import CUTOFF, Totals, business_day_window, closing_bucket
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import (
     EquipmentRecord,
@@ -162,13 +163,22 @@ class QueryService:
         return QueryBundle(bundle.summary_records, [], [], bundle.data_updated_at)
 
     def fetch_workshop_data(
-        self, filters: ReportFilter, *, force: bool = False
+        self, filters: ReportFilter, *, force: bool = False, business_days: bool = False
     ) -> QueryBundle:
         if self.settings.effective_data_source_mode == "sqlserver":
-            bundle = self._fetch_cached_bundle(
-                "workshop", filters, self._sqlserver_workshop_data, force=force
-            )
+            loader = partial(self._sqlserver_workshop_data, business_days=True) if business_days else self._sqlserver_workshop_data
+            kind = "workshop:business_days" if business_days else "workshop"
+            bundle = self._fetch_cached_bundle(kind, filters, loader, force=force)
             return replace(bundle, workshop_records=self._ship_records(bundle.workshop_records, filters, force=force))
+        if business_days:
+            zone = ZoneInfo(self.settings.timezone)
+            start, end = business_day_window(filters.start_date, filters.end_date, zone)
+            bundle = self._demo_data(replace(filters, report_date=start.date(), period_start=start.date(), period_end=end.date()))
+            completed = {row.task_id: row.production_end_time for row in bundle.equipment_records
+                         if row.production_end_time is not None and start <= row.production_end_time < end}
+            records = [replace(row, production_date=self._workshop_business_date(completed[row.task_id]))
+                       for row in bundle.workshop_records if row.task_id in completed]
+            return QueryBundle([], records, [], max(completed.values(), default=None))
         bundle = self.fetch_report_data(filters)
         return QueryBundle([], bundle.workshop_records, [], bundle.data_updated_at)
 
@@ -509,14 +519,17 @@ class QueryService:
         )
         return QueryBundle(records, [], [], latest_update)
 
-    def _sqlserver_workshop_data(self, filters: ReportFilter) -> QueryBundle:
-        timezone = ZoneInfo(self.settings.timezone)
-        start = datetime.combine(filters.start_date, time.min, tzinfo=timezone).replace(
-            tzinfo=None
-        )
-        end = datetime.combine(
-            filters.end_exclusive, time.min, tzinfo=timezone
-        ).replace(tzinfo=None)
+    @staticmethod
+    def _workshop_business_date(completed_at: datetime) -> date:
+        return completed_at.date() + timedelta(days=completed_at.time() >= CUTOFF)
+
+    def _sqlserver_workshop_data(self, filters: ReportFilter, *, business_days: bool = False) -> QueryBundle:
+        if business_days:
+            start, end = business_day_window(filters.start_date, filters.end_date, ZoneInfo(self.settings.timezone))
+            start, end = start.replace(tzinfo=None), end.replace(tzinfo=None)
+        else:
+            start = datetime.combine(filters.start_date, time.min)
+            end = datetime.combine(filters.end_exclusive, time.min)
         parameters = (
             self.settings.report_machine_no,
             start,
@@ -539,7 +552,8 @@ class QueryService:
                 work_time=_decimal(row.get("work_time")),
                 remark=row.get("remark"),
                 production_time=row.get("production_time"),
-                production_date=_date(row.get("production_date")),
+                production_date=(self._workshop_business_date(row["source_updated_at"]) if business_days
+                                 else _date(row.get("production_date"))),
             )
             for row in rows
         ]

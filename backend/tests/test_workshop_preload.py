@@ -1,9 +1,9 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -24,7 +24,7 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(st
     repo = WorkshopRepository(state_database, scope_machine_no='Cutter01')
     admin = repo.bootstrap_admin(username="testadmin", display_name="测试管理员",
                                  password="test-only-password", now="2026-09-03T08:00:00+08:00")
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.workshop = repo
     app.state.query_service = service

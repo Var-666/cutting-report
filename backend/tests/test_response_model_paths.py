@@ -1,12 +1,13 @@
-from tests.line_fixtures import as_line_services, runtime_line
 """Exercise the new response models through real services and PostgreSQL repositories."""
+
+from tests.web_fixtures import embedded_app
+from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import alarms, cutting, workshop
@@ -47,7 +48,7 @@ def api(tmp_path, state_database):
                                   bundle, repository.get_daily_report_records('2026-10-01')[1])),
                               alarm_repository=alarm_repository,
                               alarm_worker=SimpleNamespace(enabled=True, thread=None))
-    app = FastAPI()
+    app = embedded_app()
     for router in (cutting.router, workshop.router, alarms.router):
         app.include_router(router)
     app.state.lines = as_line_services({'Cutter01': runtime})
@@ -59,7 +60,10 @@ def api(tmp_path, state_database):
     @app.middleware('http')
     async def context(request, call_next):
         request.state.request_id = 'response-model-paths'
-        request.state.database_context = SimpleNamespace(cutting_dispatch=service, lines=app.state.lines)
+        request.state.database_context = SimpleNamespace(
+            settings=service.settings, cutting_dispatch=service, lines=app.state.lines,
+            database_sources=app.state.database_sources,
+        )
         return await call_next(request)
 
     with TestClient(app) as client:

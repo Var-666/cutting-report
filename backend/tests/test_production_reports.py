@@ -99,8 +99,10 @@ def test_worker_dispatches_instance_provider_without_a_global_welding_field(post
         scheduler._schedule()
         scheduler._schedule()
         with runtime.coordination.connect() as connection:
-            tasks = connection.execute("SELECT * FROM background_tasks WHERE kind='report_snapshot_refresh'").fetchall()
-        assert len(tasks) == 1 and tasks[0]['device_id'] == 'welding'
+            tasks = connection.execute(
+                "SELECT * FROM background_tasks WHERE kind='report_snapshot_refresh' AND device_id='welding'"
+            ).fetchall()
+        assert len(tasks) == 1
         task = {'kind': 'report_snapshot_refresh', 'device_id': 'welding', 'payload': payload, 'created_at': tasks[0]['created_at']}
         process._handle(task)
         assert refreshed == [('dashboard', payload['query'], {'requested_at': task['created_at']})]

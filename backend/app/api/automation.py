@@ -8,12 +8,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.runtime import application_state
+from app.api.runtime import application_state, request_automation_settings, request_settings, runtime_state
 from app.api.auth import require_admin
 from app.services.automation_configuration import AutomationConfigurationRequest, automation_configuration_data
 from app.services.runtime_settings_store import RuntimeSettingsSaveError
-from app.config import settings
-from app.api.runtime import runtime_state
 from app.models.contracts import ApiEnvelope, Items, Page
 from app.models.automation_contracts import (AutomationConfiguration, AutomationStatus, AutomationSchedule, ScheduledRun, EmailDelivery, EmailResolution, Deleted, Queued, Resolved)
 from app.models.configuration_contracts import ConfigurationSaved
@@ -112,8 +110,8 @@ class SchedulePayload(BaseModel):
         return self
 
 
-def _now() -> datetime:
-    return datetime.now(ZoneInfo(settings.timezone))
+def _now(request: Request) -> datetime:
+    return datetime.now(ZoneInfo(request_settings(request).timezone))
 
 
 def _envelope(request: Request, data: object) -> dict:
@@ -122,8 +120,7 @@ def _envelope(request: Request, data: object) -> dict:
 
 @router.get("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[AutomationConfiguration]}})
 def get_automation_configuration(request: Request) -> dict:
-    current_settings, _ = application_state(request).automation_runtime.snapshot()
-    return _envelope(request, automation_configuration_data(current_settings))
+    return _envelope(request, automation_configuration_data(request_automation_settings(request)))
 
 
 @router.put("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[ConfigurationSaved]}})
@@ -148,7 +145,7 @@ def save_automation_configuration(
 
 @router.get("/status", response_model=None, responses={200: {"model": ApiEnvelope[AutomationStatus]}})
 def status(request: Request) -> dict:
-    current_settings, _ = application_state(request).automation_runtime.snapshot()
+    current_settings = request_automation_settings(request)
     return _envelope(
         request,
         {
@@ -176,7 +173,7 @@ def create_schedule(
     if line is None or not line.config.enabled or line.pipeline is None:
         raise HTTPException(status_code=422, detail="产线未启用或不支持自动化报表")
 
-    now = _now()
+    now = _now(request)
     data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now
     )
@@ -196,7 +193,7 @@ def update_schedule(
     if line is None or not line.config.enabled or line.pipeline is None:
         raise HTTPException(status_code=422, detail="产线未启用或不支持自动化报表")
 
-    now = _now()
+    now = _now(request)
     data = application_state(request).automation_service.enrich_schedule(
         payload.model_dump(), now
     )
@@ -210,7 +207,7 @@ def update_schedule(
 
 @router.patch("/schedules/{schedule_id}", response_model=None, responses={200: {"model": ApiEnvelope[AutomationSchedule]}})
 def set_schedule_enabled(schedule_id: str, payload: ScheduleEnabledRequest, request: Request) -> dict:
-    item = application_state(request).automation_service.set_schedule_enabled(schedule_id, payload.enabled, _now())
+    item = application_state(request).automation_service.set_schedule_enabled(schedule_id, payload.enabled, _now(request))
     if item is None:
         raise HTTPException(status_code=404, detail="定时任务不存在")
     return _envelope(request, item)
@@ -225,7 +222,7 @@ def delete_schedule(schedule_id: str, request: Request) -> dict:
 
 @router.post("/schedules/{schedule_id}/run", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[ScheduledRun]}})
 def run_schedule(schedule_id: str, request: Request) -> dict:
-    run = application_state(request).automation_service.run_now(schedule_id, _now())
+    run = application_state(request).automation_service.run_now(schedule_id, _now(request))
     if run is None:
         raise HTTPException(status_code=404, detail="定时任务不存在或无法执行")
     return _envelope(request, run)
@@ -242,7 +239,7 @@ def get_run(run_id: str, request: Request) -> dict:
 @router.post('/runs/{run_id}/cancel', response_model=ApiEnvelope[ScheduledRun])
 def cancel_run(run_id: str, request: Request) -> dict:
     try:
-        run = application_state(request).automation_service.cancel_run(run_id, _now())
+        run = application_state(request).automation_service.cancel_run(run_id, _now(request))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if run is None:
@@ -268,7 +265,7 @@ def list_deliveries(
 
 @router.post("/deliveries/{delivery_id}/retry", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[Queued]}})
 def retry_delivery(delivery_id: str, request: Request) -> dict:
-    now = _now().isoformat(timespec="seconds")
+    now = _now(request).isoformat(timespec="seconds")
     if application_state(request).automation.delivery_state(delivery_id) is None:
         raise HTTPException(status_code=404, detail="邮件发送记录不存在")
     if not application_state(request).automation.retry_delivery(delivery_id, now=now):
@@ -284,7 +281,7 @@ def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, reque
             delivery_id, message_id=payload.message_id,
             outcomes=[item.model_dump() for item in payload.outcomes],
             evidence_note=payload.evidence_note, user=user,
-            now=_now().isoformat(timespec="seconds"),
+            now=_now(request).isoformat(timespec="seconds"),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

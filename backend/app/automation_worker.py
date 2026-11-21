@@ -8,7 +8,7 @@ import threading
 from time import monotonic
 from zoneinfo import ZoneInfo
 
-from app.config import settings
+from app.config import Settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
 from app.core.operations_logging import configured_logging, event
 from app.services.application_runtime import build_runtime
@@ -172,6 +172,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--health',action='store_true')
     args = parser.parse_args()
+    settings = Settings()
     if args.health: return role_health(settings,'automation')
     with configured_logging(settings.logs_dir, 'automation', 'automation', settings.operations_log_retention_days) as logs:
         process = AutomationProcess(settings)

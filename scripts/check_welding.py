@@ -11,7 +11,7 @@ from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 
-from app.core.sql_capacity import sql_identity
+from app.core.sql_capacity import SqlCapacity, sql_identity
 from app.config import Settings
 from app.device_config import load_line_catalog
 from app.database.mysql import MySqlClient
@@ -60,7 +60,7 @@ def main() -> int:
     line = load_line_catalog(cfg.production_lines_json).get(args.line_id)
     if line.type != 'welding' or not line.enabled:
         parser.error('请选择已启用的焊接产线')
-    sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json)
+    sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json, capacity=SqlCapacity(cfg))
     cfg = settings_for_line(cfg, line, sources.fingerprint(line.source_key))
     client = sources.client(line.source_key)
     service = WeldingService(cfg, WeldingRepository(client, device_nos=line.device_nos))

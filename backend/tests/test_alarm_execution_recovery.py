@@ -8,11 +8,14 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.config import settings
+from app.config import Settings
 from app.database.alarms import AlarmLeaseLostError, AlarmRepository
 from app.services.alarm_report_service import AlarmReportService
 from test_alarm_recheck import NOW, START, monitor
 from test_alarm_monitor import alarm
+
+
+settings = Settings()
 
 
 class Source:

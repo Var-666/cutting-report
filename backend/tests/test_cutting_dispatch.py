@@ -17,12 +17,15 @@ from app.api.cutting import (
     create_dispatch as create_dispatch_api,
     get_dispatch as get_dispatch_api,
 )
-from app.config import settings
+from app.config import Settings
 from app.database.dispatch import DispatchRepository
 from app.services.cutting_dispatch_service import CuttingDispatchError, DispatchConflictError, DispatchNotFoundError, DuplicateDispatchError, standard_instruction_parameters, standard_instruction_segment
 from app.services.file_download_service import DownloadError
 from app.services.file_source import LocalFileSource, MockFileSource, normalize_relative_path
 from app.services.magic_box_service import MagicBoxError
+
+
+settings = Settings()
 
 
 def test_dispatch_history_saves_ship_and_segment_without_reading_pdm_when_listing(state_database, tmp_path):

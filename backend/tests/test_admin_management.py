@@ -3,9 +3,11 @@ from threading import BoundedSemaphore
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.workloads import authentication_requests
 
 from app.main import app
+
+
+pytestmark = pytest.mark.usefixtures("shared_web")
 
 
 class _AdminRepository:
@@ -126,7 +128,7 @@ def test_wrong_current_password_cannot_grant_admin(monkeypatch) -> None:
 @pytest.mark.parametrize(('password', 'expected_status'), [('hr-password', 201), ('wrong-password', 401)])
 def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch, stored_group_no, password, expected_status) -> None:
     # Dependency HR revalidation must release its slot before endpoint reauthentication.
-    monkeypatch.setattr(authentication_requests, "_slots", BoundedSemaphore(1))
+    monkeypatch.setattr(app.state.workloads['authentication'], "_slots", BoundedSemaphore(1))
     current = {
         **_local_admin(),
         "user_id": "usr_current_hr_admin",

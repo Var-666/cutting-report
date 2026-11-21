@@ -29,8 +29,9 @@ esac
 
 mapfile -t APP_BIND < <(
   PYTHONPATH="${PROJECT_ROOT}/backend" "${PYTHON_BIN}" - <<'PY'
-from app.config import settings
+from app.config import Settings
 
+settings = Settings()
 print(settings.app_host)
 print(settings.app_port)
 PY

@@ -98,7 +98,7 @@ function comparisonStatus(current: unknown, previous: unknown) {
 const taskComparison = computed(() => comparisonStatus(total.value.task_count, previousTotal.value.task_count))
 const lengthComparison = computed(() => comparisonStatus(total.value.cut_length_m, previousTotal.value.cut_length_m))
 const timeComparison = computed(() => comparisonStatus(total.value.work_time_seconds, previousTotal.value.work_time_seconds))
-const overviewStatus = computed(() => !overview.value ? '' : moduleErrors.value.production ? '保留上次结果'
+const overviewStatus = computed(() => !overview.value ? '' : moduleErrors.value.production ? '刷新失败'
   : overviewLoading.value || overviewFreshness.value.refreshing ? '正在更新' : overview.value.source_mode === 'demo' ? '演示数据'
   : overviewFreshness.value.stale ? '历史结果' : total.value.task_count === 0 ? '本月无生产记录' : '')
 const insightTrend = computed(() => {
@@ -110,11 +110,6 @@ const insightAdvice = computed(() => openAlarms.value.length ? '优先处理未�
 function reportPeriod(item: ReportJob | null) {
   if (!item?.report_date) return '--'
   return item.report_type === 'leadership' ? formatChineseMonth(item.report_date) : formatChineseDate(item.report_date)
-}
-
-function shortDateTime(value: unknown) {
-  if (!value) return '--'
-  return formatChineseDateTime(value).replace(/年|月/g, '-').replace('日', '')
 }
 
 function resizeCharts() { trendChart?.resize(); statusChart?.resize() }
@@ -244,7 +239,7 @@ onBeforeUnmount(() => {
     </header>
 
     <NAlert v-if="error" title="部分概览数据读取失败" type="error" role="alert">
-      <div class="flex-y-center flex-wrap gap-12px"><span>{{ error }}未能更新；仍有数据的模块保留上次结果。</span><NButton size="small" @click="loadDashboard(true)">重试失败项目</NButton></div>
+      <div class="flex-y-center flex-wrap gap-12px"><span>{{ error }}未能更新</span><NButton size="small" @click="loadDashboard(true)">重试失败项目</NButton></div>
     </NAlert>
 
     <NCard :bordered="false" class="card-wrapper bg-container" content-style="padding: 0">
@@ -300,7 +295,7 @@ onBeforeUnmount(() => {
             <RouterLink v-for="item in incidents.slice(0, 3)" :key="item.incident_id" to="/admin/alarms" class="h-72px min-w-0 flex-col-stretch gap-4px rd-8px p-4px no-underline transition-all-300 hover:bg-primary/10">
               <div class="flex-y-center justify-between gap-8px"><NText class="min-w-0 flex-1 truncate">{{ item.alarm_desc || item.alarm_code || '设备告警' }}</NText><NTag size="small" :bordered="false" :type="item.status === 'open' ? 'error' : 'success'">{{ item.status === 'open' ? '未解除' : '已解除' }}</NTag></div>
               <NText depth="3" class="truncate text-12px leading-16px">{{ severityText[item.severity] || '告警' }} · {{ formatDeviceDisplay(item.machine_no) || '切割设备' }} · {{ item.alarm_class || '运行监控' }}</NText>
-              <NText depth="3" class="truncate text-12px leading-16px">{{ shortDateTime(item.last_seen_at) }}</NText>
+              <NText depth="3" class="truncate text-12px leading-16px">{{ formatChineseDateTime(item.last_seen_at) }}</NText>
             </RouterLink>
           </div>
         </Transition>
@@ -312,7 +307,7 @@ onBeforeUnmount(() => {
           <NEmpty v-else-if="!recentReports.length" key="empty" class="h-full min-h-120px flex-center" :description="moduleErrors.history ? '报告列表读取失败' : '暂无已生成报告'" />
           <div v-else key="reports" class="flex-col-stretch gap-8px">
             <div v-for="item in recentReports" :key="item.report_id" class="h-72px min-w-0 flex-y-center justify-between gap-12px">
-              <div class="min-w-0 flex-1 flex-col-stretch gap-4px"><NText class="line-clamp-2 break-words leading-20px">{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</NText><NText depth="3" class="truncate text-12px leading-16px">{{ reportPeriod(item) }} · {{ item.task_count ?? '--' }} 项 · {{ shortDateTime(item.generated_at || item.created_at) }}</NText></div>
+              <div class="min-w-0 flex-1 flex-col-stretch gap-4px"><NText class="line-clamp-2 break-words leading-20px">{{ item.report_title || reportTypeText[item.report_type] || '生产报表' }}</NText><NText depth="3" class="truncate text-12px leading-16px">{{ reportPeriod(item) }} · {{ item.task_count ?? '--' }} 项 · {{ formatChineseDateTime(item.generated_at || item.created_at) }}</NText></div>
               <NTag size="small" :bordered="false" :type="item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'info'">{{ statusText[item.status] || item.status }}</NTag>
               <NButton v-if="item.view_url" tag="a" :href="item.view_url" target="_blank" rel="noopener" text type="primary">打开</NButton><NText v-else depth="3">—</NText>
             </div>

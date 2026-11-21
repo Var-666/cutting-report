@@ -7,10 +7,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api import automation
-from app.config import settings
+from app.api.runtime import request_automation_settings
+from app.config import Settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.email_service import EmailService
 from app.services.runtime_settings_store import write_runtime_env
+
+
+settings = Settings()
 
 
 def _runtime_settings(tmp_path, **changes):
@@ -34,14 +38,14 @@ def _runtime_settings(tmp_path, **changes):
     return replace(settings, **values)
 
 
-def _request(runtime=None):
-    runtime = runtime or AutomationRuntime(automation.settings)
+def _request(runtime, settings=None):
+    settings = settings or runtime.inspect()['settings']
     return SimpleNamespace(
         state=SimpleNamespace(request_id="test-request"),
         app=SimpleNamespace(
             state=SimpleNamespace(
-                automation_runtime=runtime,
-                email_service=EmailService(automation.settings, runtime=runtime),
+                automation_runtime=runtime, settings=settings,
+                email_service=EmailService(settings, runtime=runtime),
                 automation=SimpleNamespace(summary=lambda: {}),
             )
         ),
@@ -51,9 +55,7 @@ def _request(runtime=None):
 def test_configuration_response_never_contains_smtp_password(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setattr(automation, "settings", _runtime_settings(tmp_path))
-
-    payload = automation.automation_configuration_data(automation.settings)
+    payload = automation.automation_configuration_data(_runtime_settings(tmp_path))
 
     assert payload["smtp_password_configured"] is True
     assert "smtp_password" not in payload
@@ -70,7 +72,6 @@ def test_configuration_save_preserves_other_settings_and_existing_password(
         "SQLSERVER_HOST='production-db'\nSMTP_HOST='smtp.old.example'\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(automation, "settings", runtime_settings)
     payload = automation.AutomationConfigurationRequest(
         automation_enabled=True,
         automation_scan_seconds=30,
@@ -87,7 +88,7 @@ def test_configuration_save_preserves_other_settings_and_existing_password(
         smtp_timeout_seconds=25,
     )
 
-    response = automation.save_automation_configuration(payload, _request())
+    response = automation.save_automation_configuration(payload, _request(AutomationRuntime(runtime_settings)))
 
     saved = dotenv_values(path, interpolate=False)
     assert response["data"]["restart_required"] is False
@@ -104,9 +105,9 @@ def test_configuration_save_updates_live_status_and_preserves_password(
     tmp_path, monkeypatch
 ) -> None:
     runtime_settings = _runtime_settings(tmp_path)
-    monkeypatch.setattr(automation, "settings", runtime_settings)
     runtime = AutomationRuntime(runtime_settings)
     request = _request(runtime)
+    before = request_automation_settings(request)
 
     response = automation.save_automation_configuration(
         automation.AutomationConfigurationRequest(
@@ -123,11 +124,13 @@ def test_configuration_save_updates_live_status_and_preserves_password(
             smtp_use_ssl=True,
             smtp_timeout_seconds=8,
         ),
-        request,
+        _request(runtime),
     )
 
-    live = automation.get_automation_configuration(request)["data"]
-    status = automation.status(request)["data"]
+    assert request_automation_settings(request) is before is runtime_settings
+    assert automation.status(request)["data"]["smtp"]["host"] == "smtp.old.example"
+    live = automation.get_automation_configuration(_request(runtime))["data"]
+    status = automation.status(_request(runtime))["data"]
     current, revision = runtime.snapshot()
     assert response["data"]["restart_required"] is False
     assert revision == 1
@@ -144,7 +147,6 @@ def test_configuration_save_updates_live_status_and_preserves_password(
 
 def test_failed_save_keeps_active_configuration(tmp_path, monkeypatch) -> None:
     runtime_settings = _runtime_settings(tmp_path)
-    monkeypatch.setattr(automation, "settings", runtime_settings)
     runtime = AutomationRuntime(runtime_settings)
     request = _request(runtime)
 
@@ -188,7 +190,7 @@ def test_save_uses_runtime_root_and_keeps_existing_operation_snapshot(tmp_path, 
     runtime = AutomationRuntime(initial)
     request = _request(runtime)
     unrelated = _runtime_settings(tmp_path / 'other-app', smtp_password='wrong-global-secret')
-    monkeypatch.setattr(automation, 'settings', unrelated)
+    request = _request(runtime, unrelated)
     payload = automation.AutomationConfigurationRequest(smtp_enabled=True, smtp_host='new-smtp',
         smtp_from_email='new@example.com', smtp_password='')
     automation.save_automation_configuration(payload, request)
@@ -216,7 +218,6 @@ def test_blank_password_keeps_the_latest_value_saved_before_restart(
     tmp_path, monkeypatch
 ) -> None:
     runtime_settings = _runtime_settings(tmp_path, smtp_password="old-secret")
-    monkeypatch.setattr(automation, "settings", runtime_settings)
     base = {
         "smtp_enabled": True,
         "smtp_host": "smtp.example.com",
@@ -229,11 +230,11 @@ def test_blank_password_keeps_the_latest_value_saved_before_restart(
         automation.AutomationConfigurationRequest(
             **base, smtp_password="new-secret"
         ),
-        _request(),
+        _request(AutomationRuntime(runtime_settings)),
     )
     automation.save_automation_configuration(
         automation.AutomationConfigurationRequest(**base, smtp_password=None),
-        _request(),
+        _request(AutomationRuntime(runtime_settings)),
     )
 
     saved = dotenv_values(

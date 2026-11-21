@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.postgres_fixtures import state_settings
 """Opt-in integration against an isolated MySQL fixture; never a production host.
 
@@ -14,6 +15,7 @@ from app.config import Settings
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from tests.line_fixtures import line_settings
 from app.services.application_runtime import build_runtime
+from app.core.sql_capacity import SqlCapacity
 from app.database.mysql import MySqlClient
 from app.models.database_sources import DatabaseSourceConfig
 from tests.line_fixtures import welding_settings
@@ -77,7 +79,7 @@ def weld_mysql():
     configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     configs = [item if item.id != 'welding-production' else source.model_copy(update={'id': item.id}) for item in configs]
     cfg = line_settings(replace(cfg, database_sources_json=source_configs_json(configs)), 'welding')
-    service = WeldingService(cfg, WeldingRepository(MySqlClient(source)))
+    service = WeldingService(cfg, WeldingRepository(MySqlClient(source, capacity=SqlCapacity(cfg))))
     yield service
     service.repository.client.close()
     cursor.execute('DROP DATABASE codex_welding_test')
@@ -318,13 +320,14 @@ def test_real_mysql_snapshot_is_repeatable_and_account_is_readonly(weld_mysql):
 
 
 def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
-    from dataclasses import replace
-    client = MySqlClient(weld_mysql.repository.client.config.model_copy(update={'query_timeout': 1}))
+    from mysql.connector.errors import ReadTimeoutError
+
+    client = MySqlClient(weld_mysql.repository.client.config.model_copy(update={'query_timeout': 1}), capacity=weld_mysql.repository.client.capacity)
     previous_pool = client._get_pool()
     with pytest.raises(WeldingUnavailable):
         with client.snapshot() as session:
             session.fetch('SELECT SLEEP(2) AS wait_result', limit=1)
-    assert 'type=ReadTimeoutError' in caplog.text
+    assert any(record.exc_info and isinstance(record.exc_info[1], ReadTimeoutError) for record in caplog.records)
     assert client._pool is None
     with client.snapshot() as session:
         assert session.fetch('SELECT 1 AS healthy', limit=1) == [{'healthy': 1}]
@@ -333,20 +336,25 @@ def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
     assert service.report('daily', period())['summary']['weld_length_m'] == 10
 
 
-def test_real_mysql_api_exports_and_pdf(postgres_state, weld_mysql):
-    from fastapi import FastAPI
+def test_real_mysql_api_exports_and_pdf(postgres_state, weld_mysql, monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
     from app.api.welding import router
     from app.api.database import router as database_router
-    from app.services.pdf_service import PdfService
-    app = FastAPI()
+    from app.services.llm_service import LlmService
+    from tests.analysis_fakes import model_analysis
+
+    cfg = state_settings(replace(weld_mysql.settings, llm_enabled=True), postgres_state)
+    monkeypatch.setattr(LlmService, 'analyze_context', lambda _self, kind, context: model_analysis(kind, context))
+    app = embedded_app(cfg)
     app.include_router(router)
     app.include_router(database_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    runtime = build_runtime(state_settings(weld_mysql.settings,postgres_state), role="web")
+    runtime = build_runtime(cfg, role="web")
     app.state.runtime = runtime
-    app.state.pdf_service = PdfService(operation_timeout_seconds=60)
+    service = runtime.database_runtime.current_context.lines['welding'].service
+    for kind in ('daily', 'parts', 'jobs'):
+        service.refresh_summary(f'page:{kind}', period().model_dump(mode='json'))
     @app.middleware('http')
     async def request_id(request, call_next):
         request.state.request_id = 'welding-mysql-test'
@@ -376,7 +384,8 @@ def test_source_audit_and_timing_script_against_local_fixture(weld_mysql, monkey
     script = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'scripts' / 'check_welding.py'))
     main = script['main']
     monkeypatch.setitem(main.__globals__, 'Settings', lambda: weld_mysql.settings)
-    monkeypatch.setattr(sys, 'argv', ['check_welding.py', '--end', '2026-10-01', '--runs', '1'])
+    monkeypatch.setattr(sys, 'argv', ['check_welding.py', '--line-id', weld_mysql.settings.device_id,
+                                     '--end', '2026-10-01', '--runs', '1'])
     assert main() == 0
     output = capsys.readouterr().out
     audit = json.loads(output)

@@ -1,8 +1,8 @@
+from tests.web_fixtures import embedded_app
 from dataclasses import replace
 from datetime import date
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user
@@ -75,7 +75,7 @@ def test_success_date_uses_configured_timezone_and_daylight_saving_boundaries(hi
 def test_dispatch_trend_http_contract_filters_validation_and_admin_scope(history):
     service, _, add = history
     item = add(sent_at='2026-11-02T09:00:00+08:00')
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     app.state.cutting_dispatch = service
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}

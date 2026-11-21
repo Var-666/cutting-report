@@ -92,11 +92,11 @@ async function applyPeriod() {
 </template>
 
 <style scoped>
-.standard-report-query-shell { min-width:0; container-type:inline-size; }
-.standard-report-query { width:100%; display:grid; grid-template-columns:minmax(220px,1.3fr) minmax(110px,.55fr) 110px 132px; grid-template-areas:"period chart query export"; align-items:start; gap:var(--space-2); margin:0; padding:0; border:0; background:transparent; box-shadow:none; }
-.standard-report-query__period { grid-area:period; min-width:0; }
+.standard-report-query-shell { min-width:0; max-width:672px; justify-self:end; container-type:inline-size; }
+.standard-report-query { width:100%; display:grid; grid-template-columns:minmax(0,max-content) 110px 110px 132px; grid-template-areas:"period chart query export"; align-items:start; gap:var(--space-2); margin:0; padding:0; border:0; background:transparent; box-shadow:none; }
+.standard-report-query__period { grid-area:period; min-width:0; max-width:100%; justify-self:start; }
 .standard-report-query :deep(.report-period-picker) { display:grid; grid-template-rows:var(--space-4) var(--control-height); align-self:start; row-gap:var(--space-2); }
-.standard-report-query__pending { min-height:16px; display:flex; align-items:center; gap:6px; margin:5px 0 0; color:rgb(var(--warning-color)); font-size:var(--font-control); font-weight:600; line-height:16px; }
+.standard-report-query__pending { min-height:16px; display:flex; align-items:center; gap:6px; margin:5px 0 0; color:rgb(var(--warning-color)); font-size:var(--font-control); font-weight:600; line-height:16px; contain:inline-size; }
 .standard-report-query__pending::before { width:6px; height:6px; flex:0 0 auto; border-radius:50%; background:rgb(var(--warning-color)); box-shadow:var(--theme-shadow); content:""; }
 .standard-report-query__chart { grid-area:chart; min-width:0; display:grid; grid-template-rows:var(--space-4) var(--control-height); align-self:start; row-gap:var(--space-2); }
 .standard-report-query__chart > span,
@@ -116,6 +116,9 @@ async function applyPeriod() {
 }
 @container (max-width:440px) {
   .standard-report-query { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-areas:"period period" "chart chart" "query export"; }
+  .standard-report-query :deep(.report-period-picker) { grid-template-rows:var(--space-4) auto; }
+  .standard-report-query :deep(.report-period-picker__trigger) { height:auto!important; padding-block:var(--space-1); }
+  .standard-report-query :deep(.report-period-picker__value) { white-space:normal; overflow-wrap:anywhere; text-align:start; line-height:1.35; }
   .standard-report-query__submit,.standard-report-query__export { margin-top:0; }
 }
 @container (max-width:360px) {

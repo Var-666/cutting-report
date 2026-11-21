@@ -1,4 +1,14 @@
+from dataclasses import replace
+
+from app.config import Settings
 from app.models.domain import AnalysisResult
+from app.services.llm_service import LlmService
+
+
+def worker_settings_with_fake_model(settings: Settings) -> Settings:
+    """Install the offline provider inside a spawned Worker test process."""
+    LlmService.analyze_context = lambda _self, kind, context: model_analysis(kind, context)
+    return replace(settings, llm_enabled=True)
 
 
 def model_analysis(_report_type: str, context: dict) -> AnalysisResult:

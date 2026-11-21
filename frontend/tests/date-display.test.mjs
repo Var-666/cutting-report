@@ -34,6 +34,18 @@ test('explicit timestamp display zones convert instants without shifting naive p
   assert.equal(formatChineseDateTime('2026-11-19T10:21:57+08:00', '--', 'Asia/Shanghai'), '2026年11月19日 10:21:57')
   assert.equal(formatChineseDateTime('2026-11-19 02:21:57', '--', 'Asia/Shanghai'), '2026年11月19日 02:21:57')
   assert.equal(formatChineseDateTime('badZ', '--', 'Asia/Shanghai'), '--')
+  assert.equal(formatChineseDateTime(new Date('2026-11-19T02:21:57Z'), '--', 'Asia/Shanghai'), '2026年11月19日 10:21:57')
+})
+
+test('report period picker displays the selected date or date range in the shared format', async () => {
+  const single = await renderComponent('components/ReportPeriodPicker', {
+    startDate: '2026-11-20', endDate: '2026-11-20', anchorDate: '2026-11-20',
+  })
+  assert.match(single, /单日 · 2026年11月20日/)
+  const range = await renderComponent('components/ReportPeriodPicker', {
+    startDate: '2026-11-01', endDate: '2026-11-20', anchorDate: '2026-11-20',
+  })
+  assert.match(range, /本月 · 2026年11月01日 至 2026年11月20日/)
 })
 
 test('report history renders monthly periods with matching two-digit months', async () => {

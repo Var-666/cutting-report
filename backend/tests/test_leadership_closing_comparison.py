@@ -191,7 +191,9 @@ def test_generated_leadership_html_shows_its_month_quarter_year_ranges(monkeypat
                  "2025-12-29 00:00", "2025-03-31 00:00"):
         assert f">{text}<" in table, text
     assert all(label not in table for label in ("今日", "当日", "本周累计"))
-    assert "核心生产指标（今日）" in html and "2026-03-31 17:00" in html
+    assert "核心生产指标（业务日）" in html and "2026-03-31 17:00" in html
+    assert "涨跌达到" not in html
+    assert sum(row['task_count'] for row in prepared.report['leadership']['daily_records']) == prepared.task_count != 27
     assert re.findall(r'<strong>([^<]+)</strong>', html.split('<div class="lp-kpis">', 1)[1])[:4] == [
         '27', '1,350.3', '180.3', '07:24:10',
     ]
@@ -210,7 +212,7 @@ def test_comparison_highlights_large_changes_and_keeps_missing_data_distinct(tmp
     render = renderer.environment.get_template("closing_comparison.html.j2").module.render_closing_comparison
     table = render([column], [("task_count", "任务数", "count"), ("cut_length_m", "切割长度", "number"),
                               ("groove_length_m", "坡口长度", "number"), ("work_time_seconds", "切割工时", "duration"), ("electricity", "电耗", "number"),
-                              ("gas", "气耗", "number")], "")
+                              ("gas", "气耗", "number")])
 
     assert 'lp-closing-change--unfavorable" title="不利变化">-50.0%</span>' in table
     assert 'lp-closing-change--favorable" title="有利变化">+20.0%</span>' in table
@@ -233,7 +235,7 @@ def test_comparison_colors_follow_metric_direction_and_threshold(tmp_path, metri
         column = dict(label="今日", start=start, end=end, comparable_end=end, comparison_label="上一业务日",
                       comparison_start=start - timedelta(days=1), comparison_end=start,
                       totals={metric: 10}, previous_totals={metric: 10}, comparable_totals={metric: 10}, changes={metric: delta})
-        html = render([column], [(metric, "指标", "number")], "")
+        html = render([column], [(metric, "指标", "number")])
         significant = abs(float(delta[:-1])) >= 20 and not neutral
         favorable = significant and (delta.startswith('-') if lower_is_better else delta.startswith('+'))
         assert ('lp-closing-change--favorable' in html) == favorable
@@ -335,18 +337,22 @@ def test_generated_cutting_export_renders_its_own_comparison(kind, own_metrics, 
     table = html.split('<table aria-label="日、周、月同期对比">', 1)[1].split("</table>", 1)[0]
     for expected in ("今日", "本周累计", "本月累计", "2026-11-17 17:00", "2026-11-16 00:00", "2026-11-01 00:00", *own_metrics):
         assert expected in table
-    assert '核心生产指标（今日）' in html
     kpis = re.findall(r'<strong>([^<]+)</strong>', html.split('<div class="lp-kpis">', 1)[1])[:4]
-    assert '暂无已截止业务日的生产指标' in render({**prepared.report, 'closing_comparison': []})
     if kind == "equipment":
+        assert '核心生产指标（业务日）' in html
+        assert '仪表气耗 23/24 小时' in html
+        assert '暂无已截止业务日的生产指标' in render({**prepared.report, 'closing_comparison': []})
         assert kpis == ['27', '07:24:10', '23.0', '48.0']
         today = prepared.report["closing_comparison"][0]
         assert today["totals"]["gas"] is None and today["changes"]["gas"] is None
         assert today["previous_totals"]["gas"] == 24 and today["changes"]["electricity"] == "0.0%"
         assert "23.0" in table and "23/24 小时" in table
         assert "电耗（kWh）" in html and "气耗（Nm³）" in html
+        assert len(prepared.report['equipment_records']) == prepared.task_count != 27
     else:
-        assert kpis == ['27', '1,350.3', '180.3', '07:24:10']
-        for average in ('50.0 米', '6.7 米', '00:16:27'):
-            assert f'{average}</div>' in html
+        assert '核心生产指标（本期）' in html
+        assert kpis == ['14', '1,303.4', '118.3', '01:04:38']
+        assert '<td>14' in table
+        assert '<strong>14</strong>' in render({**prepared.report, 'closing_comparison': []})
         assert "仪表电耗" not in table
+    assert "统计区间含起点" not in html and "涨跌达到" not in html

@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from pathlib import Path
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
@@ -6,11 +7,11 @@ from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -251,12 +252,12 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
 
 @pytest.mark.parametrize('default_device_id', ['Cutter01', 'Cutter02'])
 @pytest.mark.parametrize('device_id', ['Cutter01', 'Cutter02'])
-def test_device_api_validates_selection_and_scopes_history_and_exports(database, monkeypatch, default_device_id, device_id):
-    from app.api import devices as devices_api, reports as reports_api, alarms as alarms_api
+def test_device_api_validates_selection_and_scopes_history_and_exports(database, tmp_path, default_device_id, device_id):
+    from app.api import alarms as alarms_api
     db, admin = database
-    app = FastAPI()
-    app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
-    app.state.catalog = load_line_catalog(configuration(Path("/tmp/isolated-state-fixture")).production_lines_json).model_copy(update={"default_line_id": default_device_id})
+    cfg = configuration(tmp_path)
+    app = embedded_app(cfg)
+    app.state.catalog = load_line_catalog(cfg.production_lines_json).model_copy(update={"default_line_id": default_device_id})
     for router in (devices_router, options_router, reports_router):
         app.include_router(router)
     app.dependency_overrides[require_user] = lambda: admin
@@ -286,8 +287,16 @@ def test_device_api_validates_selection_and_scopes_history_and_exports(database,
         assert client.get(f'/api/v1/reports/{report_id}/status?device_id={other}').status_code == 404
         assert client.get(f'/api/v1/reports?device_id={other}').json()['data']['total'] == 0
         assert client.get(f'/api/v1/reports?device_id={device_id}').json()['data']['total'] == 1
-        job = {**app.state.lines[device_id].service.metadata.get_job(report_id), 'status': 'completed'}
-        serialized = reports_api._serialize_job(job)
+        metadata = app.state.lines[device_id].service.metadata
+        path = cfg.reports_dir / f'{report_id}.html'
+        path.parent.mkdir(parents=True)
+        content = device_id.encode()
+        path.write_bytes(content)
+        metadata.save_report(report_id=report_id, filename=path.name, relative_path=path.name,
+                             file_size=len(content), sha256=sha256(content).hexdigest(), task_count=1,
+                             generated_at=STAMP, system_version='test')
+        metadata.update_status(report_id, 'completed', '报告生成成功')
+        serialized = client.get(created.json()['data']['status_url']).json()['data']
         alarm_url = alarms_api._device_url(SimpleNamespace(app=app, query_params={'device_id': device_id}, state=SimpleNamespace(), headers={}), '/api/v1/alarms/reports/a1/view')
         for url in (serialized['view_url'], serialized['download_url'], alarm_url):
             resolved_device = parse_qs(urlsplit(url).query)['device_id'][0]
@@ -355,7 +364,7 @@ def test_global_repositories_cannot_implicitly_create_device_data(database):
 def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
     from app.api import alarms, analysis, conditions, database as database_api, designer, energy, equipment, leadership, workshop
     db, admin = database
-    app = FastAPI()
+    app = embedded_app()
     app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
     for router in (devices_router, options_router, reports_router, alarms.router, analysis.router, conditions.router,
                    database_api.router, designer.router, energy.router, equipment.router, leadership.router, workshop.router):
@@ -381,18 +390,17 @@ def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(
                 assert 'device_id' in response.text or '设备不存在' in response.text
 
 
-def test_database_preview_and_pdf_download_use_only_the_requested_runtime(database, tmp_path, monkeypatch):
+def test_database_preview_and_pdf_download_use_only_the_requested_runtime(database, tmp_path):
     from app.api import database as database_api, reports
     db, admin = database
-    app = FastAPI()
+    base = cutting_settings(project_root=tmp_path)
+    app = embedded_app(base)
     app.state.catalog = load_line_catalog(cutting_settings().production_lines_json)
     app.include_router(database_api.router)
     app.include_router(reports_router)
     app.include_router(reports.view_router)
     app.dependency_overrides[require_admin] = lambda: admin
-    base = cutting_settings(project_root=tmp_path)
     base.ensure_runtime_dirs()
-    monkeypatch.setattr(reports,'settings',base)
     app.state.lines = as_line_services({})
     render_calls = []
     def render(path):
@@ -405,8 +413,10 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
         metadata = MetadataRepository(db,device_id=key)
         metadata.create_job(report_id=key,report_date=DAY,project_code=None,ship_no=None,request_id=key,created_at=STAMP)
         path = base.reports_dir / f'{key}.html'
-        path.write_text(key)
-        metadata.save_report(report_id=key,filename=path.name,relative_path=path.name,file_size=len(key),sha256='0'*64,task_count=1,generated_at=STAMP,system_version='test')
+        content = key.encode()
+        path.write_bytes(content)
+        metadata.save_report(report_id=key,filename=path.name,relative_path=path.name,file_size=len(content),sha256=sha256(content).hexdigest(),task_count=1,generated_at=STAMP,system_version='test')
+        metadata.update_status(key, 'completed', '报告生成成功')
         app.state.lines[key] = runtime_line(SimpleNamespace(settings=line_settings(base,key),metadata=metadata,
             query_service=SimpleNamespace(fetch_summary_data=lambda _,key=key: SimpleNamespace(summary_records=[{'device':key}]))), key)
     @app.middleware('http')

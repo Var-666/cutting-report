@@ -4,7 +4,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import lru_cache
 from hashlib import sha256
 import logging
 from threading import Event, Lock
@@ -250,9 +249,3 @@ class SqlCapacity:
             if held is not None:
                 for slot in reversed(held): slot.release()
                 if pool is not None: pool.release()
-
-
-@lru_cache(maxsize=1)
-def default_sql_capacity() -> SqlCapacity:
-    from app.config import settings
-    return SqlCapacity(settings)

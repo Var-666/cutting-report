@@ -21,6 +21,9 @@ from app.core.request_cancellation import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("shared_web")
+
+
 class _Cursor:
     def __init__(self) -> None:
         self.cancel_calls = 0

@@ -6,11 +6,13 @@ import gc
 import weakref
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 
 from app.api import database
-from app.api.runtime import application_state, runtime_state
+from app.api.runtime import CurrentSettings, application_state, request_settings, runtime_state
+from app.models.configuration_contracts import ReportCacheConfiguration
 from app.models.database_sources import DatabaseSourceRequest
 from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import DatabaseServices, database_context
@@ -120,7 +122,7 @@ def test_runtime_graph_uses_fixed_repositories_and_immutable_snapshot(environmen
 
 def test_direct_and_injected_dependencies_share_one_request_snapshot(environment, monkeypatch):
     cfg, state = environment
-    app = FastAPI()
+    app = embedded_app(cfg)
     app.state.runtime = state
     original = state.database_runtime.snapshot
     reads = []
@@ -129,14 +131,58 @@ def test_direct_and_injected_dependencies_share_one_request_snapshot(environment
         return original()
     monkeypatch.setattr(state.database_runtime, 'snapshot', snapshot)
     @app.get('/probe')
-    def probe(request: Request, context: DatabaseServices = Depends(runtime_state), runtime: ApplicationRuntime = Depends(application_state)):
-        runtime.database_runtime.publish(replace(context, settings=replace(context.settings, app_version='next')), {})
+    def probe(request: Request, settings: CurrentSettings, save: bool = False,
+              context: DatabaseServices = Depends(runtime_state), runtime: ApplicationRuntime = Depends(application_state)):
+        if save:
+            runtime.database_runtime.save_report_cache(ReportCacheConfiguration(
+                current_seconds=73, history_seconds=119, query_seconds=0, refresh_seconds=37))
         assert runtime_state(request) is context
-        return {'version': context.settings.app_version}
+        assert settings is request_settings(request) is context.settings
+        return {'seconds': settings.leadership_report_cache_seconds}
     with TestClient(app) as client:
-        assert client.get('/probe').json() == {'version': cfg.app_version}
-        assert client.get('/probe').json() == {'version': 'next'}
+        assert client.get('/probe?save=true').json() == {'seconds': cfg.leadership_report_cache_seconds}
+        assert client.get('/probe').json() == {'seconds': 73}
     assert len(reads) == 2
+
+
+def test_cold_http_capacity_matches_diagnostics_after_save(postgres_state, tmp_path, monkeypatch):
+    from fastapi.routing import APIRoute
+
+    from app.main import create_app
+
+    cfg = state_settings(configuration(tmp_path, http_query_max_concurrent=3), postgres_state)
+    app = create_app(cfg)
+
+    def probe(settings: CurrentSettings):
+        return {'capacity': settings.http_query_max_concurrent}
+
+    app.router.routes.insert(0, APIRoute('/probe', probe, methods=['GET']))
+    with TestClient(app) as client:
+        runtime = app.state.runtime
+        pool = app.state.workloads['query']
+        assert pool.sql_capacity is runtime.database_runtime.current_context.database_sources.capacity
+        diagnostics = runtime.configuration_diagnostics
+        monkeypatch.setitem(diagnostics.process, 'HTTP_QUERY_MAX_CONCURRENT', '3')
+        write_runtime_env(cfg.runtime_settings_env_path, {'HTTP_QUERY_MAX_CONCURRENT': '4'})
+        read = client.get('/probe').json()['capacity']
+        row = next(item for item in diagnostics.report({'state': 'missing'})['items']
+                   if item['key'] == 'HTTP_QUERY_MAX_CONCURRENT')
+    assert row['processes']['web']['value'] == read == pool.limit == 3
+    assert row['saved_value'] == 4 and row['restart_required']
+    assert '覆盖进程环境变量' in row['saved_source']
+
+
+@pytest.mark.parametrize('root_path', ['', '/cutting'])
+def test_diagnostics_authentication_uses_published_context_without_reloading(environment, monkeypatch, root_path):
+    from app.api.configuration import router
+    cfg, state = environment
+    app = embedded_app(cfg)
+    app.state.runtime = state
+    app.include_router(router)
+    monkeypatch.setattr(state.sessions, 'user_for_session', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state.database_runtime, 'snapshot', lambda: pytest.fail('只读诊断不得加载快照'))
+    with TestClient(app, root_path=root_path) as client:
+        assert client.get(f'{root_path}/api/v1/configuration/diagnostics').status_code == 401
 
 
 def test_welding_save_uses_selected_instance_and_keeps_other_lines_and_password(environment):

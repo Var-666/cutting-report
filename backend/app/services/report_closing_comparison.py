@@ -15,6 +15,10 @@ Totals = dict[str, Decimal | int | None]
 ClosingGrouping = Literal["day_week_month", "month_quarter_year"]
 
 
+def business_day_window(start: date, end: date, zone: tzinfo) -> Window:
+    return datetime.combine(start - DAY, CUTOFF, zone), datetime.combine(end, CUTOFF, zone)
+
+
 def closing_bucket(stamp: datetime) -> datetime:
     return stamp.replace(hour=17 if stamp.hour >= 17 else 0, minute=0, second=0, microsecond=0)
 
@@ -43,9 +47,6 @@ def closing_comparison(
     if grouping == "month_quarter_year" and day.year <= 2:
         return []
 
-    def business_window(date_: date) -> Window:
-        return datetime.combine(date_ - DAY, CUTOFF, zone), datetime.combine(date_, CUTOFF, zone)
-
     calendar_end = day if day == local.date() else day + DAY
 
     def calendar_period(label: str, comparison_label: str, first: date, prior_first: date):
@@ -57,8 +58,9 @@ def closing_comparison(
                 (start, datetime.combine(comparable_end, time.min, zone)))
 
     today = "今日" if day == local.date() else "当日"
-    current_day = business_window(day)
-    daily = (today, "上一业务日", current_day, business_window(day - DAY), current_day)
+    current_day = business_day_window(day, day, zone)
+    previous_day = day - DAY
+    daily = (today, "上一业务日", current_day, business_day_window(previous_day, previous_day, zone), current_day)
     month = day.replace(day=1)
     prior_month = (month - DAY).replace(day=1)
     if grouping == "month_quarter_year":

@@ -3,9 +3,10 @@ import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { NAlert, NButton, NCard, NEmpty, NSpin, NTag } from 'naive-ui'
 import AppReportTable from '../components/AppReportTable.vue'
+import AppIcon from '../components/AppIcon.vue'
 import HomeKpiCard from '../components/HomeKpiCard.vue'
 import OperationsPageHeader from '../components/operations/OperationsPageHeader.vue'
-import { health, incidentStatus, links, roles, stamp, tone, workGroup, workStatus } from '../components/operations/presentation'
+import { health, incidentLevels, incidentStatus, links, operationMessage, roles, stamp, tone, workGroup, workStatus } from '../components/operations/presentation'
 import type { OperationsOverview, OperationsStatus } from '../api/generated/types.gen'
 import { operations } from '../api/operations'
 
@@ -129,8 +130,8 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
       </template>
       <AppReportTable :items="overview?.recent ?? []" :columns="incidentColumns" :row-key="row => row.incident_id" :paginate="false" :loading="loading && !overview">
         <template #c0="{ row }">{{ stamp(row.last_seen_at) }}</template>
-        <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ row.level }}</NTag></template>
-        <template #c2="{ row }"><RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { incident: row.incident_id } }">{{ row.message }}</RouterLink></template>
+        <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ incidentLevels[row.level] }}</NTag></template>
+        <template #c2="{ row }"><RouterLink class="incident-link" :title="operationMessage(row)" :to="{ name: 'operations-incidents', query: { incident: row.incident_id } }"><span>{{ operationMessage(row) }}</span><AppIcon name="chevron-right" :size="14" tone="current" /></RouterLink></template>
         <template #c3="{ row }">{{ row.occurrences }}</template>
         <template #c4="{ row }">{{ incidentStatus[row.status] }}</template>
         <template #empty><NEmpty :description="overview?.recent ? '暂无异常事件' : '事件状态未知'" /></template>
@@ -139,8 +140,8 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
     <NCard v-if="!statusOnly && overview?.recurring?.length" size="small" title="持续性异常">
       <ul class="recurring">
         <li v-for="item in overview.recurring" :key="item.incident_id">
-          <NTag size="small" :type="tone(item.level)">{{ item.level }}</NTag>
-          <RouterLink class="inline-link" :to="{ name: 'operations-incidents', query: { incident: item.incident_id } }">{{ item.message }}</RouterLink>
+          <NTag size="small" :type="tone(item.level)">{{ incidentLevels[item.level] }}</NTag>
+          <RouterLink class="incident-link" :title="operationMessage(item)" :to="{ name: 'operations-incidents', query: { incident: item.incident_id } }"><span>{{ operationMessage(item) }}</span><AppIcon name="chevron-right" :size="14" tone="current" /></RouterLink>
           <span>{{ item.occurrences }} 次 · {{ stamp(item.last_seen_at) }}</span>
         </li>
       </ul>
@@ -199,13 +200,15 @@ onBeforeUnmount(() => { mounted = false; active?.abort(); clearTimeout(timer) })
 .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 176px),1fr)); gap:var(--space-3); }
 .metric-link { display:flex; min-width:0; color:inherit; text-decoration:none; border-radius:var(--report-panel-radius); }
 .summary-card { width:100%; min-height:114px; }
-.inline-link { color:rgb(var(--primary-color)); text-decoration:none; }
-.inline-link:hover { text-decoration:underline; }
-.inline-link:focus-visible, .metric-link:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
+.incident-link { display:inline-flex; align-items:center; vertical-align:middle; gap:var(--space-1); max-width:100%; padding:2px var(--space-2); border-radius:var(--control-radius); background:rgb(var(--primary-color) / .09); color:var(--text-color-1); font-weight:600; text-decoration:none; }
+.incident-link > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.incident-link > .app-icon { flex:none; color:rgb(var(--primary-color)); }
+.incident-link:hover { background:rgb(var(--primary-color) / .17); }
+.incident-link:focus-visible, .metric-link:focus-visible { outline:2px solid rgb(var(--primary-color)); outline-offset:2px; }
 .metric-link:hover .summary-card { border-color:var(--kpi-color); }
 .recurring { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 .recurring li { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
-.recurring span { color:var(--text-color-3); font-size:var(--font-auxiliary); }
+.recurring li > span:not(.n-tag) { color:var(--text-color-3); font-size:var(--font-auxiliary); }
 .runtime-bottom { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 @media (max-width:820px) { .runtime-bottom { grid-template-columns:minmax(0,1fr); } }
 </style>

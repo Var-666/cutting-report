@@ -2,11 +2,12 @@
 import type { PropType } from 'vue'
 import type { WeldingAnalysis, WeldingPart, WeldingQuery, WeldingReport, WeldingReportKind, WeldingJobRow, WeldingPartRow } from '../types/welding'
 import { toError } from '../utils/errors'
+import { formatChineseDate } from '../utils/dateDisplay'
 import { REPORT_POLL_INTERVAL, REPORT_POLL_LIMIT } from '../api/reportRequests'
 import { selectedLineType } from '../utils/productionLines.ts'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NDrawer, NDrawerContent, NTag } from 'naive-ui'
+import { NDrawer, NDrawerContent } from 'naive-ui'
 import ReportPeriodPicker from '../components/ReportPeriodPicker.vue'
 import AppIcon from '../components/AppIcon.vue'
 import HomeSectionHeader from '../components/HomeSectionHeader.vue'
@@ -84,7 +85,7 @@ const appliedQueryLabel = computed(() => {
   const query = parseWeldingRouteQuery(weldingRouteQuery({}, activeQuery.value), props.kind, today)
   const labels = { robot_no: '机器人', weld_type: '焊接类型', state: '作业状态代码', part_state: '工件状态代码', serial_number: '流水号', project_no: '项目', section_no: '分段', part_no: '工件' } as const
   return [
-    `${query.start} 至 ${query.end}`,
+    `${formatChineseDate(query.start)} 至 ${formatChineseDate(query.end)}`,
     query.device_no === '' ? '全部设备' : `设备 ${query.device_no}`,
     ...Object.entries(labels).flatMap(([key, label]) => {
       const value = query[key as keyof typeof labels]
@@ -385,17 +386,16 @@ onBeforeUnmount(() => { disposed = true; cancel() })
         </div>
       </form>
       </ReportFilterDialog>
-      <p v-if="filtersDirty && !filtersOpen" class="welding-query-pending" role="status">筛选条件已修改{{ report ? '，当前仍展示上次成功查询结果' : '，请查询报表' }}</p>
+      <p v-if="filtersDirty && !filtersOpen" class="welding-query-pending" role="status">筛选条件已修改{{ report ? '' : '，请查询报表' }}</p>
       </section>
     </section>
     <ReportFeedback v-if="!sourceEnabled" title="焊接数据库尚未启用" message="请先保存数据库连接参数并启用小组立焊接线。" action-label="配置数据库" @action="router.push('/admin/settings/database')" />
-    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="`${error}${report ? '；当前保留上次成功查询结果。' : ''}`" action-label="重试" @action="retryReport" />
+    <ReportFeedback v-else-if="error" type="error" title="焊接数据读取失败" :message="error" action-label="重试" @action="retryReport" />
     <ReportPanelState v-else-if="loading && !report" type="loading" class="card-wrapper" title="正在读取焊接数据" message="首次统计可能需要较长时间，准备完成后会自动显示，请勿重复刷新。" />
     <ReportFeedback v-if="actionError && !filtersOpen" type="error" title="操作未完成" :message="actionError" dismissible @dismiss="actionError = ''" />
     <div v-if="report && activeQuery" class="welding-freshness" role="status">
       <span class="welding-applied-query" :title="deviceSelection.items?.find(line => line.id === appliedLine)?.name || appliedLine">当前结果：{{ appliedQueryLabel }}</span>
       <ReportDataStatus v-if="report.meta.report_data" :meta="report.meta" :busy="loading" @refresh="read(activeQuery, true, false)" />
-      <NTag v-if="loading" size="small" type="info" :bordered="false">正在更新，当前展示上次结果</NTag>
       <span v-if="report.meta.ambiguous_part_count">工件关联待核实：{{ report.meta.ambiguous_part_count }} 个流水号</span>
     </div>
     <WeldingKpiCards v-if="sourceEnabled && kind === 'daily'" :kind="kind" :report="report" :loading="loading" />
@@ -404,7 +404,7 @@ onBeforeUnmount(() => { disposed = true; cancel() })
       <ReportFeedback v-if="kind === 'equipment' && report.meta.pending_metrics?.equipment_groups" type="warning" title="机器人工位明细" :message="report.meta.pending_metrics.equipment_groups" />
       <ReportFeedback v-if="!report.summary.job_count" title="当前区间暂无可归属的作业记录" message="可调整日期或设备后重新查询；无效时间候选记录见数据核查说明。" />
       <WeldingCharts v-else :kind="kind" :report="report" :loading="loading" />
-      <section class="panel welding-detail-table"><div class="welding-detail-header"><HomeSectionHeader :title="kind === 'parts' ? '工件生产明细' : kind === 'jobs' ? '焊接作业明细' : kind === 'equipment' ? '机器人工位明细' : '每日生产明细'" icon="tasks" /><span>{{ activeQuery.start }} 至 {{ activeQuery.end }} · {{ report.total }} 条记录</span></div><WeldingTable :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="activeQuery.page_size" :loading="loading" @page="changePage" @detail="openDetail" @copy="copy" /></section>
+      <section class="panel welding-detail-table"><div class="welding-detail-header"><HomeSectionHeader :title="kind === 'parts' ? '工件生产明细' : kind === 'jobs' ? '焊接作业明细' : kind === 'equipment' ? '机器人工位明细' : '每日生产明细'" icon="tasks" /><span>{{ formatChineseDate(activeQuery.start) }} 至 {{ formatChineseDate(activeQuery.end) }} · {{ report.total }} 条记录</span></div><WeldingTable :kind="reportKind" :items="report.items" :total="report.total" :page="activeQuery.page" :page-size="activeQuery.page_size" :loading="loading" @page="changePage" @detail="openDetail" @copy="copy" /></section>
       <details v-if="kind === 'jobs' && report.speed_distribution?.length" class="panel welding-quality"><summary>源表速度分布（mm/min）</summary><dl><template v-for="band in report.speed_distribution" :key="band.speed_band"><dt>{{ band.speed_band }}</dt><dd>{{ band.job_count }} 次</dd></template></dl><p>只统计可归属生产日的作业；不将字段均值作为整线速度。</p></details>
       <ReportAnalysis v-if="kind === 'daily'" :analysis="analysis" :welding-report="report" :show-metrics="false" :loading="analyzing" :error="analysisError" :ready="!loading && Boolean(report.summary.job_count)" :action-label="analysis ? '重新生成分析' : '生成当前区间分析'" empty-message="点击“生成当前区间分析”，查看产出趋势、工艺结构和数据核查建议。" @reload="runAnalysis" @retry="runAnalysis" />
       <details class="panel welding-quality"><summary>统计口径与数据核查</summary><p v-for="notice in report.meta.notices" :key="notice">{{ notice }}</p><dl><template v-for="(label, key) in qualityLabels" :key="key"><dt>{{ label }}</dt><dd>{{ report.meta.quality[key] ?? '未提供' }}</dd></template><dt>未关联工件的有效流水号</dt><dd>{{ report.meta.unlinked_part_count ?? '未提供' }}</dd><dt>待核查关联流水号</dt><dd>{{ report.meta.ambiguous_part_count ?? '未提供' }}</dd></dl><p v-if="report.projects_truncated">项目图展示工件数最多的前100个项目，可按项目筛选查看。</p></details>

@@ -1,9 +1,11 @@
+from tests.web_fixtures import embedded_app
 from tests.postgres_fixtures import state_settings
 from dataclasses import replace
 from datetime import date
 import gc
 import json
 from pathlib import Path
+from time import time
 from types import SimpleNamespace
 import weakref
 
@@ -75,11 +77,14 @@ def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_oper
         process = WorkerProcess(cfg, web)
         called = []
         fresh.lines['Cutter01'].background.handle_background = lambda *args: called.append(args)
+        task = {'kind': 'current_refresh', 'device_id': 'Cutter01',
+                'dedup_key': 'current_refresh:Cutter01:round', 'created_at': time()}
         with pytest.raises(RuntimeError, match='来源'):
-            process._handle({'kind': 'current_refresh', 'device_id': 'Cutter01', 'payload': {'source_fingerprint': old.lines['Cutter01'].settings.source_fingerprint}})
+            process._handle({**task, 'payload': {'source_fingerprint': old.lines['Cutter01'].settings.source_fingerprint}})
         assert not called
-        process._handle({'kind': 'current_refresh', 'device_id': 'Cutter01', 'payload': {'source_fingerprint': fresh.lines['Cutter01'].settings.source_fingerprint}})
-        assert len(called) == 1
+        fingerprint = fresh.lines['Cutter01'].settings.source_fingerprint
+        process._handle({**task, 'payload': {'source_fingerprint': fingerprint}})
+        assert called == [('current_refresh', {'source_fingerprint': fingerprint, 'requested_at': task['created_at']})]
     finally:
         web.database_runtime.close()
         worker.database_runtime.close()
@@ -180,7 +185,6 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
 
 
 def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(postgres_state, tmp_path):
-    from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
     from app.api.reports import router
@@ -191,7 +195,7 @@ def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(postg
         report_date='2026-11-01', project_code=None, ship_no=None, request_id='old', created_at='2026-11-01T08:00:00+08:00')
     catalog = original.catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'Cutter01' else line for line in original.catalog.lines)})
     runtime.database_runtime.save_lines(catalog)
-    app = FastAPI()
+    app = embedded_app()
     app.state.runtime = runtime
     app.include_router(router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}

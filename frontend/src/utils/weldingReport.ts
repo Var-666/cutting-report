@@ -1,4 +1,5 @@
 import type { DataTableBaseColumn } from 'naive-ui'
+import { formatChineseDate, formatChineseDateTime } from './dateDisplay'
 import type { WeldingReport, WeldingReportKind, WeldingRow, WeldingMetrics } from '../types/welding'
 export const weldingTitles = { dashboard: '生产首页', daily: '生产统计报表', parts: '工件生产报表', jobs: '焊接作业报表', equipment: '设备效能报表' }
 const common = [['device_no', '设备'], ['robot_no', '机器人']]
@@ -70,6 +71,8 @@ export const weldingColumnLayout: Record<string, Pick<DataTableBaseColumn<Weldin
 
 export function weldingDisplay(value: unknown, key = '') {
   if (value === null || value === undefined || value === '') return ['completed_part_count', 'arc_rate'].includes(key) ? '待核实' : '未记录'
+  if (key === 'production_date') return formatChineseDate(value, '未记录')
+  if (key === 'start_time' || key === 'end_time') return formatChineseDateTime(value, '未记录')
   if (Array.isArray(value)) return value.join('；') || '—'
   if (typeof value === 'number') {
     if (!/length|hours|count|output|speed|duration|seconds|consumption|rate/.test(key)) return String(value)

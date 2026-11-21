@@ -16,7 +16,7 @@ import sys
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "backend"))
 
-from app.config import settings, settings_for_line
+from app.config import Settings, settings_for_line
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
 from app.models.domain import to_primitive
@@ -25,6 +25,7 @@ from app.services.energy_service import make_series
 
 
 def main():
+    settings = Settings()
     parser = argparse.ArgumentParser(description="只读核对能管四个累计量参数，结果不代表全天用量。")
     parser.add_argument("--device-id", required=True, choices=[item.id for item in load_line_catalog(settings.production_lines_json).lines if item.type == "cutting"])
     parser.add_argument("--date", type=date.fromisoformat, required=True, help="YYYY-MM-DD")

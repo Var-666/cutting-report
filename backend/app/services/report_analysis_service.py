@@ -43,6 +43,7 @@ from app.services.report_analysis.workshop import build_context as build_worksho
 from app.services.report_analysis.equipment import build_context as build_equipment_context
 from app.services.report_analysis.brief import period_scope
 from app.services.query_service import QueryService
+from app.services.report_closing_comparison import Window
 
 
 logger = logging.getLogger(__name__)
@@ -211,8 +212,12 @@ class ReportAnalysisService:
                              if row.get('period_start') or row.get('month') or row.get('report_date')})
         identity = dict(scope=scope, filters=filters, summary_months=months, units=units, date_basis='end_time',
                         machine_no=self.settings.report_machine_no, summary_row_months=row_months)
+        business_window = options.get('business_window')
+        if business_window is not None:
+            identity['business_window'] = tuple(stamp.isoformat() for stamp in business_window)
         key = generate_data_version(identity)
-        default = scope['period_mode'] in {'month', 'day'} and not filters and (report_type == 'workshop' or months == default_months)
+        default = (business_window is None and scope['period_mode'] in {'month', 'day'} and not filters
+                   and (report_type == 'workshop' or months == default_months))
         lookup = scope['period_start'][:7] if report_type == 'leadership' else scope['period_start']
         return key, lookup if default else None
 
@@ -400,6 +405,7 @@ class ReportAnalysisService:
         publish_latest: bool = False,
         reuse_key: str | None = None,
         record_source_version: bool = True,
+        ongoing_until: datetime | None = None,
     ) -> AnalysisResult:
         if not self.settings.llm_enabled:
             raise AnalysisUnavailableError(
@@ -408,8 +414,10 @@ class ReportAnalysisService:
         context['scope'].update(device_id=self.settings.device_id, line_name=self.settings.device_name)
         ongoing_notice = '当前统计周期尚未结束（包含今日实时数据），与上一完整周期的任务量对比仅作进度参考，不代表全天最终产出下降。'
         quality = [item for item in context['data_quality'] if item != ongoing_notice]
-        today = datetime.now(self.timezone).date().isoformat()
-        if context['scope']['period_start'] <= today <= context['scope']['period_end']:
+        now = datetime.now(self.timezone)
+        today = now.date().isoformat()
+        if (now < ongoing_until if ongoing_until is not None
+                else context['scope']['period_start'] <= today <= context['scope']['period_end']):
             quality.append(ongoing_notice)
         context['data_quality'] = quality
         for references in context['_references'].values():
@@ -573,6 +581,7 @@ class ReportAnalysisService:
         force: bool = False,
         publish_latest: bool = False,
         cache_filters: dict | None = None,
+        business_window: Window | None = None,
         _reuse_key: str | None = None,
     ) -> AnalysisResult:
         source_data_version = combined_analysis_source_version(
@@ -586,6 +595,9 @@ class ReportAnalysisService:
             year_ago_records=year_ago_records,
             year_ago_date=year_ago_date,
         )
+        if business_window is not None:
+            start, end = business_window
+            context['scope'].update(window_start=start.isoformat(), window_end=end.isoformat())
         return self._analyze(
             report_type="workshop",
             report_date=report_date,
@@ -594,10 +606,11 @@ class ReportAnalysisService:
             source_data_version=source_data_version,
             publish_latest=publish_latest,
             reuse_key=_reuse_key,
-            record_source_version=not any(
+            record_source_version=business_window is None and not any(
                 value and (key != 'confirmation_status' or value != 'all')
                 for key, value in (cache_filters or {}).items()
             ),
+            ongoing_until=business_window[1] if business_window is not None else None,
         )
 
     @_report_analysis_operation("equipment")

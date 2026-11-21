@@ -7,7 +7,7 @@ import AppIcon from '../components/AppIcon.vue'
 import ReportFilterDialog from '../components/ReportFilterDialog.vue'
 import OperationsDrawer from '../components/operations/OperationsDrawer.vue'
 import OperationsPageHeader from '../components/operations/OperationsPageHeader.vue'
-import { incidentStatus, roles, stamp, tone } from '../components/operations/presentation'
+import { incidentLevels, incidentStatus, operationFeature, operationLocation, operationMessage, operationSource, roles, stamp, tone } from '../components/operations/presentation'
 import { operations, type IncidentQuery, type LogQuery } from '../api/operations'
 import type { Incident, LogPage, LogRecord, PageIncident } from '../api/generated/types.gen'
 import { deviceSelection } from '../state/devices'
@@ -33,7 +33,7 @@ const appliedRange = shallowRef<[number, number] | null>(null)
 const filtersOpen = shallowRef(false)
 const filterError = shallowRef('')
 const title = computed(() => isLogs.value ? '运行日志' : '异常事件')
-const levels = (['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const).map(value => ({ value, label: value }))
+const levels = (['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const).map(value => ({ value, label: incidentLevels[value] }))
 const levelOptions = computed(() => isLogs.value ? levels : [{ value: 'ERROR_PLUS', label: '错误及以上（ERROR、CRITICAL）' }, ...levels])
 const levelSelection = computed({
   get: () => draft.min_level === 'ERROR' ? 'ERROR_PLUS' : draft.level,
@@ -61,7 +61,7 @@ const timeLabel = computed(() => {
 const filterTags = computed(() => {
   const { level, role, status, line_id: line } = applied.value
   return [
-    { key: 'level', label: '级别', value: applied.value.min_level ? '错误及以上（ERROR、CRITICAL）' : level },
+    { key: 'level', label: '级别', value: applied.value.min_level ? '错误及以上' : level && incidentLevels[level] },
     { key: 'role', label: '运行角色', value: role && roles[role] },
     { key: 'status', label: '状态', value: status && incidentStatus[status] },
     { key: 'line_id', label: '产线', value: line && (lines.value.find(item => item.value === line)?.label || line) },
@@ -69,13 +69,13 @@ const filterTags = computed(() => {
   ].filter(tag => tag.value)
 })
 const incidentColumns = [
-  { key: 'c0', title: '最近发生' }, { key: 'c1', title: '级别' }, { key: 'c2', title: '来源' },
+  { key: 'c0', title: '最近发生' }, { key: 'c1', title: '级别' }, { key: 'c2', title: '设备 / 产线' },
   { key: 'c3', title: '异常事件' }, { key: 'c4', title: '次数', align: 'right' },
-  { key: 'c5', title: '状态' }, { key: 'c6', title: '关联记录' }, { key: 'c7', title: '操作' },
+  { key: 'c5', title: '状态' }, { key: 'c6', title: '业务功能' }, { key: 'c7', title: '操作' },
 ] as const
 const logColumns = [
-  { key: 'c0', title: '时间' }, { key: 'c1', title: '级别' }, { key: 'c2', title: '角色 / 实例' },
-  { key: 'c3', title: '模块' }, { key: 'c4', title: '消息' }, { key: 'c5', title: '关联标识' }, { key: 'c6', title: '操作' },
+  { key: 'c0', title: '发生时间' }, { key: 'c1', title: '级别' }, { key: 'c2', title: '设备 / 产线' },
+  { key: 'c3', title: '业务功能' }, { key: 'c4', title: '发生了什么' }, { key: 'c5', title: '来源' }, { key: 'c6', title: '操作' },
 ] as const
 const coverage = {
   retention: '起始时间超出配置保留期',
@@ -251,7 +251,7 @@ onBeforeUnmount(() => {
     </OperationsPageHeader>
     <ReportFilterDialog v-model:show="filtersOpen" :title="`${title}筛选`">
       <form class="filters" @submit.prevent="apply()">
-        <label class="date"><span>时间范围</span><NDatePicker v-model:value="range" type="datetimerange" clearable start-placeholder="开始时间" end-placeholder="结束时间" />
+        <label class="date"><span>时间范围</span><NDatePicker v-model:value="range" type="datetimerange" format="yyyy年MM月dd日 HH:mm:ss" clearable start-placeholder="开始时间" end-placeholder="结束时间" />
           <small>{{ isLogs ? '留空使用最近 24 小时' : '留空使用最近 30 天，待处理和已确认不限起始时间' }}</small>
         </label>
         <label><span>级别</span><NSelect v-model:value="levelSelection" :options="levelOptions" clearable placeholder="全部级别" /></label>
@@ -278,11 +278,11 @@ onBeforeUnmount(() => {
     <template v-if="isLogs">
       <AppReportTable :items="logPage?.items" :columns="logColumns" :row-key="row => row.id" :loading="loading" :paginate="false">
         <template #c0="{ row }">{{ stamp(row.timestamp) }}</template>
-        <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ row.level }}</NTag></template>
-        <template #c2="{ row }">{{ roles[row.role] }} / {{ row.instance_id }}</template>
-        <template #c3="{ row }">{{ row.component }}</template>
-        <template #c4="{ row }">{{ row.message }}</template>
-        <template #c5="{ row }">{{ [...new Set([row.request_id, row.analysis_id, row.task_id, row.report_id, row.resource_id].filter(Boolean))].join(' / ') || '—' }}</template>
+        <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ incidentLevels[row.level] }}</NTag></template>
+        <template #c2="{ row }">{{ operationLocation(row, deviceSelection.items) }}</template>
+        <template #c3="{ row }">{{ operationFeature(row) }}</template>
+        <template #c4="{ row }">{{ operationMessage(row) }}</template>
+        <template #c5="{ row }">{{ operationSource(row) }}</template>
         <template #c6="{ row }"><NButton size="tiny" @click="selectedLog = row">详情</NButton></template>
       </AppReportTable>
       <div v-if="logPage" class="actions pages">
@@ -295,12 +295,12 @@ onBeforeUnmount(() => {
       :loading="loading" :page="incidentPage?.page ?? 1" :page-size="10"
       :total="Math.min(3000, incidentPage?.total ?? 0)" @page="load">
       <template #c0="{ row }">{{ stamp(row.last_seen_at) }}</template>
-      <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ row.level }}</NTag></template>
-      <template #c2="{ row }">{{ roles[row.role] }} / {{ row.component }}</template>
-      <template #c3="{ row }">{{ row.message }}</template>
+      <template #c1="{ row }"><NTag size="small" :type="tone(row.level)">{{ incidentLevels[row.level] }}</NTag></template>
+      <template #c2="{ row }">{{ operationLocation(row, deviceSelection.items) }}</template>
+      <template #c3="{ row }">{{ operationMessage(row) }}</template>
       <template #c4="{ row }">{{ row.occurrences }}</template>
       <template #c5="{ row }"><NTag size="small" :type="row.status === 'open' ? 'warning' : row.status === 'recovered' ? 'success' : 'info'">{{ incidentStatus[row.status] }}</NTag></template>
-      <template #c6="{ row }">{{ row.context.report_id || row.context.task_id || row.resource_id || '—' }}</template>
+      <template #c6="{ row }">{{ operationFeature(row) }}</template>
       <template #c7="{ row }"><NButton size="tiny" @click="incidentId = row.incident_id">详情</NButton></template>
     </AppReportTable>
     <NAlert v-if="!isLogs && (incidentPage?.total ?? 0) > 3000" type="warning">事件超过 3000 条，请缩短范围或增加筛选条件。</NAlert>

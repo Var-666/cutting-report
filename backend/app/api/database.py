@@ -16,16 +16,16 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
-from app.api.workloads import query_requests
+from app.api.workloads import query_requests, request_workloads
 from app.api.devices import device_state
-from app.api.runtime import application_state, runtime_state
+from app.api.runtime import application_state, request_settings, runtime_state
 from app.api.auth import require_admin
 from app.services.runtime_settings_store import RuntimeSettingsSaveError
 from app.services.database_configuration import (
     DatabaseConfigurationRequest, SavedConnectionRequest, WeldingConnectionRequest,
     database_configuration_data,
 )
-from app.config import Settings, settings
+from app.config import Settings
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope, Items
@@ -53,7 +53,7 @@ router = APIRouter(
 
 @router.get('/report-cache', response_model=ApiEnvelope[ReportCacheConfiguration])
 def get_report_cache_configuration(request: Request):
-    cfg = runtime_state(request).settings
+    cfg = request_settings(request)
     data = {field: getattr(cfg, name) for field, name in REPORT_CACHE_FIELDS.items()}
     data['refresh_seconds'] = max(30, data['refresh_seconds'])
     return {'success': True, 'data': data, 'request_id': request.state.request_id}
@@ -76,12 +76,11 @@ def save_report_cache_configuration(payload: ReportCacheConfiguration, request: 
 
 @router.get('/resources', response_model=ApiEnvelope[ResourceReport])
 def resource_status(request: Request) -> dict:
-    from app.api.workloads import analysis_requests, authentication_requests, pdf_requests, snapshot_requests
     context = runtime_state(request)
     worker = application_state(request).worker_status_reader.status()
     return {'success': True, 'data': {
         'web': context.database_sources.capacity.status(context.database_sources.configs()),
-        'http': [pool.status() for pool in (query_requests, snapshot_requests, analysis_requests, pdf_requests, authentication_requests)],
+        'http': [pool.status() for pool in request_workloads(request).values()],
         'worker': worker.get('sql_resources'), 'worker_state': worker.get('state', 'unknown'),
         'roles': {**{role:status.get('sql_resources') for role,status in worker.get('roles',{}).items()},
                   **{item['lease_name']:item.get('sql_resources') for item in worker.get('consumer_instances',[])} }},
@@ -155,8 +154,7 @@ def _query_mapping_status() -> list[dict]:
     return items
 
 
-def _database_source_status(configuration: Settings | None = None) -> list[dict]:
-    configuration = configuration or settings
+def _database_source_status(configuration: Settings) -> list[dict]:
     from app.database.source_registry import DatabaseSourceRegistry
     registry = DatabaseSourceRegistry.from_json(configuration.database_sources_json)
     return [{"source": view.id, "label": view.name, "enabled": view.enabled, "configured": view.configured,
@@ -165,14 +163,10 @@ def _database_source_status(configuration: Settings | None = None) -> list[dict]
             for view in registry.list()]
 
 
-def _active_settings(request: Request) -> Settings:
-    return getattr(runtime_state(request), "settings", settings) if hasattr(request, 'app') else settings
-
-
 @router.get("/configuration", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseConfiguration]}})
 def get_database_configuration(request: Request) -> dict:
     try:
-        data = database_configuration_data(_active_settings(request), request.headers.get("X-Production-Line"))
+        data = database_configuration_data(request_settings(request), request.headers.get("X-Production-Line"))
     except ValueError:
         raise HTTPException(status_code=422, detail="产线上下文或数据库配置无效") from None
     return {
@@ -238,7 +232,7 @@ def test_welding_connection(payload: WeldingConnectionRequest, request: Request)
 
 @router.get("/status", response_model=None, responses={200: {"model": ApiEnvelope[DatabaseStatus]}})
 def database_status(request: Request) -> dict:
-    settings = _active_settings(request)
+    settings = request_settings(request)
     mappings = _query_mapping_status()
     mode = settings.effective_data_source_mode
     workbench_enabled = mode == "sqlserver" and settings.sql_workbench_enabled
@@ -268,7 +262,7 @@ def database_status(request: Request) -> dict:
 @router.post("/sql/validate", response_model=None, responses={200: {"model": ApiEnvelope[ValidatedWorkbenchSql]}})
 def validate_sql(payload: SqlValidateRequest, request: Request) -> dict:
     try:
-        validated = SqlWorkbenchService(_active_settings(request)).validate(payload.sql)
+        validated = SqlWorkbenchService(request_settings(request)).validate(payload.sql)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -290,7 +284,7 @@ def execute_sql(
     request: Request,
     workbench_token: str | None = Header(default=None, alias="X-SQL-Workbench-Token"),
 ) -> dict:
-    settings = _active_settings(request)
+    settings = request_settings(request)
     mode = settings.effective_data_source_mode
     if mode == "sqlserver":
         if not settings.sql_workbench_enabled:

@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.line_fixtures import as_line_services, runtime_line
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -6,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import pytest
@@ -40,7 +40,7 @@ def setup(state_database, tmp_path):
 def test_source_correction_routes_are_removed_without_removing_confirmation_routes():
     from app.api.workshop import router
 
-    app = FastAPI()
+    app = embedded_app()
     app.include_router(router)
     paths = app.openapi()['paths']
     assert '/api/v1/workshop/tasks/confirm' in paths
@@ -271,7 +271,7 @@ def test_production_field_updates_preserve_task_identity_and_confirmation_histor
 
 
 @pytest.mark.parametrize('corrected', [False, True])
-def test_http_generation_and_task_list_accept_changed_production_data(state_database, tmp_path, monkeypatch, corrected):
+def test_http_generation_and_task_list_accept_changed_production_data(state_database, tmp_path, corrected):
     from app.api.auth import require_user
     from app.api.workshop import router
     from tests.line_fixtures import cutting_settings
@@ -280,19 +280,18 @@ def test_http_generation_and_task_list_accept_changed_production_data(state_data
     repository = setup(state_database, tmp_path)
     admin = {'user_id': repository.test_admin_id, 'username': 'admin', 'display_name': '管理员', 'role': 'admin', 'active': True}
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)
-    monkeypatch.setattr('app.api.workshop.settings', cfg)
     repository.sync_daily_report(report_date='2026-09-30', source_mode='sqlserver',
                                  records=[record('A')], user=admin, now='2026-10-01T01:00:00')
     repository.confirm_task(task_id='A', user=admin, report_id=repository.get_daily_report('2026-09-30')['report_id'],
                             now='2026-10-01T02:00:00')
-    app = FastAPI()
+    app = embedded_app(cfg)
     app.include_router(router)
     app.state.workshop = repository
     app.state.query_service = SimpleNamespace(prepare_workshop_data=lambda _: QueryBundle(
         [], [record('A', work=90 if corrected else 60), record('B')], [],
     ), enrich_ship_names=lambda records: records)
     app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
-        settings=cutting_settings(data_source_mode='sqlserver'), workshop=app.state.workshop,
+        settings=cfg, workshop=app.state.workshop,
         query_service=getattr(app.state, 'query_service', None))})
     app.dependency_overrides[require_user] = lambda: admin
 

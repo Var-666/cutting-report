@@ -1,4 +1,6 @@
 """OIDC login with signed tokens, real isolated state, and no external requests."""
+
+from tests.web_fixtures import embedded_app
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -10,7 +12,6 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
 import jwt
@@ -94,7 +95,7 @@ def sso(postgres_state, signing_key, monkeypatch):
     directory = SimpleNamespace(find_person=lambda _key: dict(hr),
                                 session_identity_available=lambda *_args, **_kwargs: True,
                                 cached_session_identity_available=lambda *_args, **_kwargs: None)
-    app = FastAPI()
+    app = embedded_app(cfg)
     app.include_router(auth.router)
     app.state.runtime = SimpleNamespace(sso=service, users=users, sessions=SessionRepository(database),
         database_runtime=SimpleNamespace(snapshot=lambda: SimpleNamespace(settings=cfg, worker_auth=directory)))
@@ -104,7 +105,6 @@ def sso(postgres_state, signing_key, monkeypatch):
         request.state.request_id = 'sso-test'
         return await call_next(request)
 
-    monkeypatch.setattr(auth, 'settings', cfg)
     client = TestClient(app, base_url='https://report.test', follow_redirects=False)
     return SimpleNamespace(database=database, cfg=cfg, users=users, worker=worker, admin=admin, hr=hr,
                            requests=requests, provider=provider, service=service, directory=directory, client=client)
@@ -323,7 +323,7 @@ def test_concurrent_sso_profile_refreshes_finish_without_lock_upgrade_deadlocks(
     sso.directory.find_person = lambda key: sso.hr | dict(group_no='G-NEW')
     def finish(params):
         return sso.service.finish(state=params['state'][0], browser=browser, code=params['code'][0],
-                                  error='', worker_auth=sso.directory)
+                                  error='', worker_auth=sso.directory, session_hours=sso.cfg.auth_session_hours)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(finish, callbacks))
     assert len({result.token for result in results}) == 2
@@ -356,7 +356,10 @@ def test_discovery_issuer_mismatch_and_https_downgrade_are_rejected(sso):
 
 
 def test_disabled_sso_makes_no_external_requests_and_preserves_status(sso):
-    sso.service.settings = replace(sso.cfg, sso_enabled=False)
+    settings = replace(sso.cfg, sso_enabled=False)
+    sso.service.settings = settings
+    sso.client.app.state.runtime.database_runtime.snapshot = lambda: SimpleNamespace(
+        settings=settings, worker_auth=sso.directory)
     assert sso.client.get('/api/v1/auth/status').json()['data']['sso_enabled'] is False
     assert sso.client.get('/api/v1/auth/sso/login').headers['location'] == '/login?sso_error=disabled'
     assert sso.provider.calls == []

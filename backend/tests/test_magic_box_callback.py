@@ -1,10 +1,11 @@
 """Completion callbacks use the existing dispatch row and preserve dispatch semantics."""
+
+from tests.web_fixtures import embedded_app
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
@@ -35,7 +36,7 @@ def test_callback_validation_logs_field_errors_without_request_secrets(
     from app.main import safe_connection_validation
     from app.api.cutting import require_callback_source
 
-    app = FastAPI()
+    app = embedded_app()
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
     app.dependency_overrides[require_callback_source] = lambda: None
     app.include_router(callback_router)
@@ -65,7 +66,7 @@ def test_failed_callback_logs_no_raw_task_fields_or_nested_values(caplog):
     from app.main import safe_connection_validation
     from app.api.cutting import require_callback_source
 
-    app = FastAPI()
+    app = embedded_app()
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
     app.dependency_overrides[require_callback_source] = lambda: None
     app.include_router(callback_router)
@@ -84,7 +85,7 @@ def test_other_validation_failures_keep_the_existing_response_and_do_not_log_cal
     from fastapi.exceptions import RequestValidationError
     from app.main import safe_connection_validation
 
-    app = FastAPI()
+    app = embedded_app()
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
     @app.get('/api/v1/other')
     def other(count: int):
@@ -107,7 +108,7 @@ def completion(state_database, tmp_path):
             WHERE dispatch_id=%s""", (draft['dispatch_id'],))
     context = SimpleNamespace(settings=replace(service.settings, magic_box_callback_enabled=True,
         magic_box_callback_allowed_ips=('192.0.2.10',)), cutting_dispatch=service)
-    app = FastAPI()
+    app = embedded_app()
     from app.database.workshop import WorkshopRepository
     app.state.workshop = WorkshopRepository(repository.database)
     @app.middleware('http')

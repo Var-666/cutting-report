@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app
 from tests.postgres_fixtures import state_settings
 from contextlib import contextmanager
 from dataclasses import replace
@@ -6,16 +7,17 @@ from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.welding import router
 from app.api.production_lines import router as lines_router
+from app.core.operations_logging import safe_record
 from tests.line_fixtures import welding_settings, runtime_line
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
+from app.core.sql_capacity import SqlCapacity
 from app.database.mysql import MySqlClient, MySqlSession
 from app.database.welding import WeldingRepository, WeldingUnavailable, job_conditions, job_aggregate
 from app.models.welding import WeldingQuery
@@ -28,7 +30,7 @@ from app.services.welding_service import WeldingService, mapped_row, summary_val
 def mysql_client(cfg=None):
     cfg = cfg or welding_settings()
     source = DatabaseSourceRegistry.from_json(cfg.database_sources_json).get('welding-production')
-    return MySqlClient(source.model_copy(update={'enabled': cfg.weld_enabled}), label='焊接')
+    return MySqlClient(source.model_copy(update={'enabled': cfg.weld_enabled}), label='焊接', capacity=SqlCapacity(cfg))
 
 
 def query(**kwargs):
@@ -123,7 +125,7 @@ def test_outer_query_budget_exhaustion_does_not_start_another_sql():
 def test_mysql_query_timeout_defaults_and_explicit_source_override():
     config = DatabaseSourceRegistry.from_json(welding_settings().database_sources_json).get('welding-production')
     assert config.query_timeout == 120 and config.connect_timeout == 5
-    assert MySqlClient(config.model_copy(update={'query_timeout': 30})).query_timeout == 30
+    assert MySqlClient(config.model_copy(update={'query_timeout': 30}), capacity=SqlCapacity(welding_settings())).query_timeout == 30
 
 
 def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(monkeypatch):
@@ -225,7 +227,9 @@ def test_readonly_repeatable_snapshot_rollback_and_secret_redaction(caplog):
         with client.snapshot():
             raise RuntimeError('password=secret@10.0.0.1')
     assert calls == [{'isolation_level': 'REPEATABLE READ', 'consistent_snapshot': True, 'readonly': True}, 'rollback', 'close']
-    assert 'secret' not in caplog.text
+    records = [safe_record(record, 'web', 'test') for record in caplog.records]
+    assert any('exception' in record for record in records)
+    assert 'secret@10.0.0.1' not in repr(records)
 
 
 @pytest.mark.parametrize('code,message', [(1045, '认证失败'), (1142, '权限不足'), (1054, '表结构')])
@@ -286,7 +290,7 @@ def test_analysis_version_ignores_paging_but_tracks_filters_and_association():
     assert WeldingService.version(changed) != version
 
 
-def test_export_reuses_persisted_success_after_restart_without_mixing_current_metrics(state_database, tmp_path, monkeypatch):
+def test_export_reuses_matching_persisted_success_after_restart(state_database, tmp_path, monkeypatch):
     from app.database.metadata import MetadataRepository
     from app.models.domain import AnalysisResult, to_primitive
     cfg = welding_settings(project_root=tmp_path, llm_enabled=True)
@@ -300,20 +304,28 @@ def test_export_reuses_persisted_success_after_restart_without_mixing_current_me
     restarted = build()
     current = {**report_data(), 'equipment': [], 'data_version': 'b' * 64}
     current['summary']['job_count'] = 987654321
-    restarted.report = lambda *_args, **_kwargs: current
     monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context',
                         lambda *_: (_ for _ in ()).throw(TimeoutError('fixture model outage')))
-    content, _ = WeldingExport(cfg, restarted, None).generate('jobs', query(), 'html')
+    exporter = WeldingExport(cfg, restarted, None)
+    restarted.report = lambda *_args, **_kwargs: original
+    content, _ = exporter.generate('jobs', query(), 'html')
     html = content.decode()
     assert '原有焊接分析' in html
-    assert first['generated_at'] in html and '原有作业次数' in html
-    analysis_html = html.split('aria-label="智能分析"', 1)[1]
-    assert '987654321' in html and '987654321' not in analysis_html
+    assert first['generated_at'] in html and '已缓存' in html
+    restarted.report = lambda *_args, **_kwargs: current
+    content, _ = exporter.generate('jobs', query(), 'html')
+    html = content.decode()
+    assert '987654321' in html and '历史分析与本次导出统计不匹配' in html
+    assert '原有焊接分析' not in html
 
 
 def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     data = report_data()
     data['data_version'] = 'matching'
+    data['summary']['job_count'] = 1
+    data['items'].append({'id': 2, 'end_time': '2026-10-01 25:00:00'})
+    data['total'] = 2
+    data['meta']['quality']['invalid_time_rows'] = 1
     class Service:
         def report(self, kind, selected, *, export_limit, include_closing_comparison):
             assert kind == 'jobs' and export_limit in (5001, 100001)
@@ -321,7 +333,7 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
             return data
         def analyze_report(self, kind, selected, report, version):
             if version == 'matching':
-                return {'mode': 'model', 'status': 'success', 'overview': '焊接产出简报',
+                return {'mode': 'model', 'status': 'success', 'data_version': version, 'overview': '焊接产出简报',
                         'features': '工艺分布', 'alerts': '数据核查', 'suggestions': '核对记录'}
     class Pdf:
         def render(self, path):
@@ -336,6 +348,10 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
     html, _ = export.generate('jobs', query(), 'html')
     assert b'&lt;script&gt;' in html and b'<script>alert' not in html
     assert '焊接产出简报' in html.decode()
+    assert '焊接作业明细（2行）' in html.decode()
+    assert '<strong>1</strong><small>次</small>' in html.decode()
+    assert '时间无效 1' in html.decode()
+    assert '这些记录不计入本期作业次数' not in html.decode()
     pdf, media = export.generate('jobs', query(), 'pdf')
     assert pdf == b'%PDF-test' and media == 'application/pdf'
     data['data_version'] = 'changed'
@@ -350,7 +366,7 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
 
 @pytest.fixture
 def api(state_database):
-    app = FastAPI()
+    app = embedded_app()
     app.state.database = state_database
     app.include_router(router)
     app.include_router(lines_router)
@@ -477,7 +493,7 @@ def test_connection_pool_default_matches_execution_capacity_and_remains_readonly
     import mysql.connector.pooling
     from contextvars import ContextVar
     from app import config
-    from app.api.welding import query_requests
+    from app.api.workloads import build_workloads
     monkeypatch.setattr(config, '_environment', ContextVar('test-welding-config', default={}))
     captured = {}
     class Connection:
@@ -492,8 +508,9 @@ def test_connection_pool_default_matches_execution_capacity_and_remains_readonly
         return SimpleNamespace(get_connection=Connection)
     monkeypatch.setattr(mysql.connector.pooling, 'MySQLConnectionPool', pool)
     cfg = welding_settings()
-    assert query_requests._threads.total_tokens == config.settings.http_query_max_concurrent
-    assert query_requests.max_waiters == config.settings.http_max_waiters and query_requests.queue_timeout_seconds == config.settings.sql_queue_timeout_seconds
+    query_pool = build_workloads(cfg, SqlCapacity(cfg))['query']
+    assert query_pool._threads.total_tokens == cfg.http_query_max_concurrent
+    assert query_pool.max_waiters == cfg.http_max_waiters and query_pool.queue_timeout_seconds == cfg.sql_queue_timeout_seconds
     with mysql_client(cfg).snapshot() as session:
         assert session.timeout == 120
     assert captured['pool_size'] == 4 and captured['use_pure']
@@ -521,7 +538,9 @@ def test_source_capacity_timeout_sql_and_connection_errors_remain_distinct(name,
         with client.snapshot():
             pytest.fail('broken source must not yield')
     assert caught.value.category == category
-    assert 'private' not in str(caught.value) + caplog.text
+    records = [safe_record(record, 'web', 'test') for record in caplog.records]
+    assert any(record.get('exception', {}).get('type') == name for record in records)
+    assert 'private' not in str(caught.value) + repr(records)
     assert (client._pool is pool) == (category == 'connection_pool_exhausted')
 
 
@@ -646,14 +665,13 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     from app.models.domain import AnalysisResult
     from app.core.sql_capacity import SqlCapacity
     entered, release = Event(), Event()
-    # Registered synchronous routes retain the original workload object.
-    pool = welding.query_requests
+    pool = api.app.state.workloads['query']
     monkeypatch.setattr(pool, '_slots', BoundedSemaphore(1))
     monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(1))
     monkeypatch.setattr(pool, 'max_waiters', 2)
     monkeypatch.setattr(pool, 'queue_timeout_seconds', 0.1)
-    monkeypatch.setattr(welding, 'pdf_requests', RequestWorkload(1, 'PDF'))
-    monkeypatch.setattr(welding, 'analysis_requests', RequestWorkload(1, '分析'))
+    api.app.state.workloads['pdf'] = RequestWorkload(1, 'PDF')
+    analysis_pool = api.app.state.workloads['analysis'] = RequestWorkload(1, '分析')
     data = {**report_data(), 'equipment': [], 'data_version': 'a' * 64}
     instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None)
     resource = SqlCapacity(replace(instance.settings, project_root=tmp_path))
@@ -706,7 +724,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
                         await anyio.sleep(0.001)
                 assert pool._slots.acquire(blocking=False)
                 pool._slots.release()
-                assert not welding.analysis_requests._slots.acquire(blocking=False)
+                assert not analysis_pool._slots.acquire(blocking=False)
                 with anyio.fail_after(1):
                     response = await client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-31')
                 assert response.status_code == 200 and response.json()['data']['data_version'] == 'a' * 64
@@ -720,8 +738,8 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
                 assert result.headers['content-type'].startswith('text/html')
             else:
                 assert result.json()['data']['overview'] == 'ok'
-            assert welding.analysis_requests._slots.acquire(blocking=False)
-            welding.analysis_requests._slots.release()
+            assert analysis_pool._slots.acquire(blocking=False)
+            analysis_pool._slots.release()
     anyio.run(exercise)
 
 
@@ -732,7 +750,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
     import httpx
     from threading import BoundedSemaphore, Event, Lock
     from app.api import welding
-    pool = welding.query_requests
+    pool = api.app.state.workloads['query']
     monkeypatch.setattr(pool, '_slots', BoundedSemaphore(4))
     monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(4))
     monkeypatch.setattr(pool, 'max_waiters', 12)

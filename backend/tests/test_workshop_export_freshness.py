@@ -3,14 +3,17 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import json
+import re
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.models.domain import AnalysisResult, QueryBundle, SummaryBaseRecord, WorkshopRecord
+from app.models.domain import AnalysisResult, QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord
 from app.services.chart_service import ChartService
 from app.services.query_service import QueryService
 from app.services.range_report_service import RangeReportService
+from app.services.report_analysis.workshop import build_context
 from app.services.report_generation.workshop import prepare_report
 from app.services.report_service import ReportService
 from app.services.statistics_service import StatisticsService
@@ -30,8 +33,8 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     source = QueryBundle([], rows[:2], [], datetime(2026, 11, 16, 9))
     consumer_query, web_query = QueryService(cfg), QueryService(cfg)
     calls = []
-    def fetch(filters):
-        calls.append(filters)
+    def fetch(filters, *, business_days=False):
+        calls.append(business_days)
         assert filters.project_code in {None, 'P1'} and filters.ship_no is None
         if filters.end_date < selected:
             return replace(source, workshop_records=[
@@ -97,7 +100,7 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     assert prepared.report['summary']['total_cut_length'] == (10 if filtered else 80)
     assert prepared.report['worker_summaries'][0]['confirmed_task_count'] == 1
     assert prepared.report['meta']['data_updated_at'].startswith('2026-11-16T10:00:00')
-    assert len(calls) == 5
+    assert calls == [False, False, True, True, True]
     assert cache_requests == [{'project_code': 'P1', 'ship_no': None, **(
         {'task_id': 'task-8', 'confirmation_status': 'confirmed'} if filtered else {})}]
     assert len(comparison_calls) == (0 if filtered else 1)
@@ -110,3 +113,77 @@ def test_new_export_reads_fresh_tasks_in_the_applied_scope(tmp_path, monkeypatch
     assert 'task-8' in html
     assert 'other-project' not in html
     assert all((f'task-{index}' in html) == (not filtered) for index in range(1, 8))
+
+
+@pytest.mark.parametrize('explicit_period', [False, True])
+def test_workshop_export_shares_17h_tasks_across_summary_kpis_comparison_and_details(tmp_path, monkeypatch, explicit_period):
+    cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver')
+    zone = ZoneInfo(cfg.timezone)
+    start = datetime(2026, 11, 19, 17)
+    end = datetime(2026, 11, 20, 17)
+    rows = [
+        dict(task_id=f'cut-{index:02}', project_code='P1', program_no=f'P-{index:02}',
+             cut_length=Decimal('10'), groove_length=Decimal('2'), work_time=Decimal('60'),
+             production_time=completed - timedelta(minutes=30), source_updated_at=completed,
+             production_date=completed.date())
+        for index, completed in enumerate([
+            start - timedelta(microseconds=1),
+            *(start + timedelta(minutes=i) for i in range(11)),
+            *(end - timedelta(minutes=i) for i in range(1, 19)),
+            end,
+        ])
+    ]
+
+    def fetch(sql, params):
+        assert 'source.completed_at >= CAST(? AS datetime2(7))' in sql
+        assert 'source.completed_at < CAST(? AS datetime2(7))' in sql
+        assert params[0] == cfg.report_machine_no
+        return [row for row in rows if params[1] <= row['source_updated_at'] < params[2]]
+
+    query = QueryService(cfg, client=SimpleNamespace(fetch_all=fetch))
+    assert len(query.fetch_workshop_data(ReportFilter(end.date())).workshop_records) == 19
+    monkeypatch.setattr(query, 'fetch_cutting_closing_totals', lambda *args, **kwargs: {
+        start.replace(tzinfo=zone): dict(task_count=28, cut_length_m=280, groove_length_m=56, work_time_seconds=1680),
+    })
+    confirmations = SimpleNamespace(get_confirmations=lambda ids: {})
+    ranges = RangeReportService(cfg, query, confirmations, None)
+
+    def analyze_workshop(period, records, **kwargs):
+        assert kwargs['business_window'] == (start.replace(tzinfo=zone), end.replace(tzinfo=zone))
+        assert {row.production_date for row in records} == {end.date()}
+        assert [row.task_id for row in kwargs['comparison_records']] == ['cut-00']
+        context = build_context(period, records)
+        facts = {fact['id']: fact['value'] for fact in context['facts']}
+        return AnalysisResult(status='success', overview='', features='', alerts='', suggestions='',
+            brief=dict(headline='本期生产记录', summary=f"本期完成 {facts['F001']}，总切割长度 {facts['F002']}。",
+                       findings=[], actions=[], data_quality=[], scope=context['scope']))
+
+    job = dict(report_id='closing-workshop', report_type='workshop', report_date=end.date().isoformat(),
+               project_code=None, ship_no=None, created_at=end.replace(hour=18, tzinfo=zone).isoformat())
+    if explicit_period:
+        job.update(period_start=job['report_date'], period_end=job['report_date'])
+    prepared = prepare_report(job, 'workshop', settings=cfg, range_service=ranges, query_service=query,
+        workshop_repository=SimpleNamespace(get_daily_report=lambda _: {'scope_machine_no': cfg.report_machine_no}),
+        statistics_service=StatisticsService(), chart_service=ChartService(top_n=20 if explicit_period else 50),
+        analysis_service=SimpleNamespace(analyze_workshop=analyze_workshop),
+        ensure_active=lambda: None, update_status=lambda *_: None, analyze=lambda run, **_: run())
+
+    assert prepared.task_count == 29
+    report = prepared.report
+    assert report['closing_comparison'][0]['totals'] == dict(
+        task_count=29, cut_length_m=290, groove_length_m=58, work_time_seconds=1740)
+    chart_programs = report['charts']['length_combo']['xAxis']['data']
+    assert len(chart_programs) == (20 if explicit_period else 29)
+    assert set(chart_programs) <= {row['program_no'] for row in rows[1:-1]}
+    assert {row['task_id'] for row in report['workshop_records']} == {row['task_id'] for row in rows[1:-1]}
+    html = ReportService(cfg).environment.get_template('report.html.j2').render(
+        report=report, echarts_source='', device_name='切割一线', demo_mode=False, energy_connected=False)
+    assert '本期完成 29 项，总切割长度 290.0 米。' in html
+    assert ('图表 20/29 项' in html) == explicit_period
+    assert re.findall(r'<strong>([^<]+)</strong>', html.split('<div class="lp-kpis">', 1)[1])[:4] == [
+        '29', '290.0', '58.0', '00:29:00',
+    ]
+    details = html.split('车间生产明细与趋势', 1)[1].split('</table>', 1)[0]
+    assert details.partition('<tbody>')[2].count('<tr>') == 29
+    assert 'cut-01' in details and 'cut-29' in details
+    assert 'cut-00' not in details and 'cut-30' not in details

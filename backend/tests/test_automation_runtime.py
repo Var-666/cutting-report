@@ -3,11 +3,14 @@ from datetime import datetime
 from threading import Event, Lock
 from zoneinfo import ZoneInfo
 
-from app.config import settings
+from app.config import Settings
 from app.services.automation_runtime import AutomationRuntime
 from app.services.automation_service import AutomationService
 from app.services.email_service import EmailService, EmailDeliveryFailure
 from app.workers.report_worker import ReportWorker
+
+
+settings = Settings()
 
 
 def test_email_service_uses_latest_smtp_configuration_per_delivery(monkeypatch) -> None:

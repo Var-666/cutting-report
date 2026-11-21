@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
-from app.config import settings
 from app.models.conditions import ConditionError
 from app.services.condition_service import schema_for
 

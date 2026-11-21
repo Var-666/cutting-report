@@ -191,7 +191,9 @@ def test_live_consumers_recover_only_a_crashed_peer_without_restarting_scheduler
 
 
 def _report_consumer(cfg, stopped, ready, started, release):
-    process = WorkerProcess(cfg)
+    from tests.analysis_fakes import worker_settings_with_fake_model
+
+    process = WorkerProcess(worker_settings_with_fake_model(cfg))
     process.stop_event = stopped
     for line in process.runtime.database_runtime.snapshot().lines.values():
         if line.pipeline is None:

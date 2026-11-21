@@ -37,7 +37,7 @@ const historyColumns = [
   { key: 'c6', title: '失败原因', align: 'left' },
 ] as const
 const endLabels = { recovered: '已恢复', paused: '已暂停监控', changed: '目标已变更', deleted: '已删除监控' }
-function stamp(value: number | null) { return value === null ? '—' : formatChineseDateTime(new Date(value * 1000).toLocaleString('sv-SE', { timeZone: timezone.value })) }
+function stamp(value: number | null) { return value === null ? '—' : formatChineseDateTime(new Date(value * 1000), '—', timezone.value) }
 function duration(item: DatabaseMonitorIncident) {
   const minutes = Math.max(0, Math.floor(((item.ended_at ?? now.value) - item.started_at) / 60))
   return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`

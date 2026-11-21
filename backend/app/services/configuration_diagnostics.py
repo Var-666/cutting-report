@@ -274,9 +274,12 @@ class ConfigurationDiagnostics:
             statuses = {item["status"] for item in processes.values()}
             state = "error" if mismatch or "error" in statuses else "pending" if "pending" in statuses else processes["web"]["status"]
             processes['consumers'] = {role[9:]: processes.pop(role) for role in list(processes) if role.startswith('consumer:')}
+            saved_source = source_label(target_source)
+            if target_source == "data/settings.env" and key in self.process:
+                saved_source += " · 覆盖进程环境变量"
             rows.append({"key": key, "category": CATEGORIES[2] if key.startswith(("devices.", "lines.")) else category(key),
                          "processes": processes, "saved_value": safe_value(target_value, key),
-                         "saved_source": source_label(target_source), "status": state,
+                         "saved_source": saved_source, "status": state,
                          "valid": key not in invalid and not errors, "process_mismatch": mismatch,
                          "restart_required": (not hot or key == 'DATABASE_SOURCES_JSON') and 'pending' in statuses,
                          "rule": "连接参数按新操作热加载；sql_max_concurrent 重启 Web/Scheduler/Consumer/Automation 生效，实际容量见数据库资源诊断" if key == 'DATABASE_SOURCES_JSON' else

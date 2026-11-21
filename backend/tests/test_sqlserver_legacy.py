@@ -39,6 +39,8 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from time import sleep
+class Error(Exception):
+    pass
 class Cursor:
     description = [('number',), ('stamp',), ('data',), ('policy',), ('parameter',)]
     def execute(self, sql, parameters):
@@ -103,7 +105,7 @@ def test_isolated_query_failure_is_redacted_and_disabled_source_does_not_spawn(l
     with pytest.raises(RuntimeError, match='RuntimeError') as caught:
         client.fetch_all('fail', ())
     assert 'private-password' not in str(caught.value) and 'reader' not in str(caught.value)
-    disabled = SqlServerClient(client.settings.model_copy(update={'enabled': False}))
+    disabled = SqlServerClient(client.settings.model_copy(update={'enabled': False}), capacity=client.capacity)
     with pytest.raises(SqlServerConfigurationError, match='未启用'):
         disabled.fetch_all('SELECT 1', ())
     assert len(processes) == 1

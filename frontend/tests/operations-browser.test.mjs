@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { observeBrowserErrors, reportApiFailure } from '../src/api/browserObservations.ts'
 import { operations } from '../src/api/operations.ts'
-import { incidentExplanation, incidentLogQuery, operationStages } from '../src/components/operations/presentation.ts'
+import { incidentExplanation, incidentLogQuery, operationFeature, operationLocation, operationMessage, operationSource, operationStages, stamp } from '../src/components/operations/presentation.ts'
 
 test('incident explanations describe impact and action without treating missing energy as zero', () => {
   const energy = incidentExplanation('ENERGY_TASK_DATA_QUALITY', '已结束任务缺少有效能耗读数')
@@ -14,6 +14,30 @@ test('incident explanations describe impact and action without treating missing 
   assert.equal(unknown.meaning, '某业务查询失败')
   assert.match(unknown.impact, /需结合/)
   assert.match(unknown.action, /技术详情/)
+})
+
+test('logs show the device, feature and known cause while handling older records with missing context', () => {
+  const task = { role: 'worker', component: '__main__', line_id: 'cut-a', stage: 'energy:tasks',
+    message: '后台任务完成', related_kind: 'background' }
+  assert.equal(operationLocation(task, [{ id: 'cut-a', name: '一号切割机' }]), '一号切割机')
+  assert.equal(operationFeature(task), '任务能耗')
+  assert.equal(operationMessage(task), '后台任务完成')
+  assert.equal(operationFeature({ ...task, stage: 'report_snapshot_refresh' }), '统计数据更新')
+  assert.equal(operationLocation({ ...task, line_id: null }, []), '未记录设备')
+  assert.equal(operationLocation({ ...task, line_id: null, stage: 'database_monitor' }, []), '公共系统')
+  assert.equal(operationFeature({ ...task, component: 'main', stage: 'pdm-statistics', error_code: 'HTTP_UNAVAILABLE' }), 'CSS资料统计')
+  assert.equal(operationMessage({ ...task, error_code: 'HTTP_UNAVAILABLE' }), '请求暂不可用（503）')
+  const browser = { ...task, component: 'services.operations_service', error_code: 'BROWSER_API' }
+  assert.equal(operationFeature(browser), '页面请求')
+  assert.equal(operationSource(browser), '浏览器')
+  assert.equal(operationMessage(browser), '页面请求失败')
+  const analysis = { ...task, stage: 'workshop', error_code: 'ANALYSIS_FAILED', exception: { type: 'LlmRequestTimeout' } }
+  assert.equal(operationFeature(analysis), '车间智能分析')
+  assert.equal(operationMessage(analysis), '模型响应超时')
+  assert.equal(operationMessage({ ...analysis, context: { error_type: 'AnalysisDisabled' } }), '智能分析模型未启用')
+  assert.equal(stamp('2026-11-20T08:34:42Z'), '2026年11月20日 16:34:42')
+  assert.equal(stamp(Date.parse('2026-11-20T08:34:42Z') / 1000), '2026年11月20日 16:34:42')
+  assert.equal(stamp('invalid'), '—')
 })
 
 test('browser observations upload allowlisted summaries once and do not retry', async t => {

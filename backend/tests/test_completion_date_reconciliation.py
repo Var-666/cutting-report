@@ -122,16 +122,16 @@ def test_command_previews_then_applies_and_reports_unresolved_tasks(reports, pos
     spec = importlib.util.spec_from_file_location('completion_date_command', script)
     command = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(command)
-    monkeypatch.setattr(command, 'settings', state_settings(configuration(tmp_path), postgres_state))
+    settings = state_settings(configuration(tmp_path), postgres_state)
     client = SimpleNamespace(fetch_all=lambda *_: [{'task_id': 'A', 'production_date': '2026-10-01'}])
     registry = SimpleNamespace(get=lambda _: SimpleNamespace(engine='sqlserver'), client=lambda _: client, close=lambda: None)
-    monkeypatch.setattr(command.DatabaseSourceRegistry, 'from_json', lambda _: registry)
+    monkeypatch.setattr(command.DatabaseSourceRegistry, 'from_json', lambda _, **_kwargs: registry)
     repo = reports[0]
-    assert command.main(['--line', 'Cutter01']) == 2
+    assert command.main(['--line', 'Cutter01'], settings=settings) == 2
     preview = json.loads(capsys.readouterr().out)
     assert preview['applied'] is False and preview['changed_tasks'] == 1 and preview['unresolved_tasks'] == 1
     assert repo.get_daily_report('2026-09-30')['item_count'] == 2
-    assert command.main(['--line', 'Cutter01', '--apply']) == 2
+    assert command.main(['--line', 'Cutter01', '--apply'], settings=settings) == 2
     applied = json.loads(capsys.readouterr().out)
     assert applied['applied'] is True and applied['unresolved_sample'] == ['B']
     assert repo.get_daily_report('2026-10-01')['confirmed_count'] == 1
@@ -140,6 +140,6 @@ def test_command_previews_then_applies_and_reports_unresolved_tasks(reports, pos
     reports[3]('2026-10-02', [replace(snapshot('B', '2026-10-02'), work_time=Decimal(150))])
     client.fetch_all = lambda *_: [{'task_id': 'A', 'production_date': '2026-10-01'},
                                    {'task_id': 'B', 'production_date': '2026-10-02'}]
-    assert command.main(['--line', 'Cutter01', '--apply']) == 1
+    assert command.main(['--line', 'Cutter01', '--apply'], settings=settings) == 1
     assert '任务 B 的历史生产字段不一致' in capsys.readouterr().err
     assert repo.get_daily_report_records('2026-10-02')[1][0].work_time == Decimal(150)

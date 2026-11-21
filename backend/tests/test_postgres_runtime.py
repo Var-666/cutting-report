@@ -276,11 +276,14 @@ def test_automation_email_alarm_dispatch_and_retention(state):
 def _run_worker_process(cfg, ready, stop, results):
     import sqlite3
     import sys
+
+    from tests.analysis_fakes import worker_settings_with_fake_model
+
     def forbidden(*args, **kwargs):
         raise AssertionError('formal Worker must never open SQLite')
     sqlite3.connect = forbidden
     from app.worker import WorkerProcess
-    worker = WorkerProcess(cfg)
+    worker = WorkerProcess(worker_settings_with_fake_model(cfg))
     try:
         worker.start()
         assert 'app.database.sqlite_history' not in sys.modules
@@ -304,9 +307,7 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
     database, cfg, _ = state
     (cfg.project_root/'vendor').mkdir()
     shutil.copyfile('vendor/echarts.min.js', cfg.echarts_vendor_path)
-    monkeypatch.setattr(web, 'settings', cfg)
-    monkeypatch.setattr(auth, 'settings', cfg)
-    monkeypatch.setattr(reports, 'settings', cfg)
+    app = web.create_app(cfg)
     def forbidden(*args, **kwargs):
         raise AssertionError('formal Web must never open SQLite')
     monkeypatch.setattr(sqlite3, 'connect', forbidden)
@@ -314,12 +315,14 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
     ready, stop, results = context.Event(), context.Event(), context.Queue()
     worker = context.Process(target=_run_worker_process, args=(cfg, ready, stop, results))
     try:
-        with TestClient(web.app) as client:
+        with TestClient(app) as client:
             worker.start()
             assert ready.wait(15)
             response = client.post('/api/v1/auth/bootstrap', json={'username':'admin','password':'p5-admin-password','display_name':'管理员'})
             assert response.status_code == 200, response.text
             assert client.get('/api/v1/auth/status').json()['data']['authenticated']
+            prepared = client.post('/api/v1/workshop/reports?device_id=Cutter01', json={'report_date':'2026-11-03'})
+            assert prepared.status_code == 200, prepared.text
             accepted = client.post('/api/v1/reports?device_id=Cutter01', json={'report_type':'workshop','report_date':'2026-11-03'})
             assert accepted.status_code == 202, accepted.text
             report_id = accepted.json()['data']['report_id']
@@ -329,7 +332,7 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
                 if job['status'] in ('completed', 'failed'):
                     break
                 sleep(0.1)
-            assert job['status'] == 'completed', job
+            assert job['status'] == 'completed', (job['error_code'], job['stage_message'])
             response = client.get(f'/api/v1/reports/{report_id}/status?device_id=Cutter01')
             assert response.status_code == 200 and response.json()['data']['status'] == 'completed'
             with database.connect() as connection:
@@ -360,17 +363,17 @@ def test_database_unavailable_is_explicit_and_recovery_keeps_state(state, monkey
     import app.main as web
     from app.worker import WorkerProcess
     database, cfg, _ = state
-    monkeypatch.setattr(web, 'settings', cfg)
+    app = web.create_app(cfg)
     user = new_user(UserRepository(database))
     worker = WorkerProcess(cfg)
     admin_options = dict(host='127.0.0.1',port=PORT,user='postgres',password=PASSWORD,dbname='p5_test')
     worker.start()
     try:
-        with TestClient(web.app) as client, psycopg.connect(**admin_options,autocommit=True) as admin:
+        with TestClient(app) as client, psycopg.connect(**admin_options,autocommit=True) as admin:
             admin.execute(sql.SQL('ALTER DATABASE {} CONNECTION LIMIT 0').format(sql.Identifier(cfg.postgres_database)))
             admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s",(cfg.postgres_database,))
             try:
-                web.app.state.runtime.worker_status_reader._next_read = 0
+                app.state.runtime.worker_status_reader._next_read = 0
                 response = client.get('/api/v1/health')
                 assert response.status_code == 503
                 assert response.json()['data']['status'] == 'degraded'
@@ -391,7 +394,7 @@ def test_database_unavailable_is_explicit_and_recovery_keeps_state(state, monkey
             assert CoordinationRepository(database).worker_status('worker:test-consumer')['owner'] == worker.owner
             with database.connect() as connection:
                 assert connection.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n'] == 1
-            web.app.state.runtime.worker_status_reader._next_read = 0
+            app.state.runtime.worker_status_reader._next_read = 0
             assert client.get('/api/v1/health').status_code == 200
     finally:
         worker.stop()

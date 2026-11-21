@@ -10,7 +10,7 @@ from app.core.operations_logging import event
 from app.models.database_sources import DatabaseSourceConfig
 from app.core.request_cancellation import SqlRequestCancelled, cancellable_cursor
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
-from app.core.sql_capacity import SqlCapacity, default_sql_capacity
+from app.core.sql_capacity import SqlCapacity
 
 
 logger = logging.getLogger(__name__)
@@ -21,12 +21,12 @@ class SqlServerConfigurationError(RuntimeError):
 
 
 class SqlServerClient:
-    def __init__(self, config: DatabaseSourceConfig, *, capacity: SqlCapacity | None = None, probe: bool = False) -> None:
+    def __init__(self, config: DatabaseSourceConfig, *, capacity: SqlCapacity, probe: bool = False) -> None:
         if config.engine != 'sqlserver':
             raise ValueError('数据源不是 SQL Server')
         self.settings = config
         self.source = config.id
-        self.capacity = capacity or default_sql_capacity()
+        self.capacity = capacity
         self._probe = probe
 
     def connection_config(self) -> dict:

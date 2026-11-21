@@ -1,12 +1,12 @@
+from tests.web_fixtures import embedded_app
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
-from app.api.workloads import authentication_requests
 from app.database.workshop import WorkshopRepository
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.worker_auth_service import WorkerAuthService
@@ -25,7 +25,7 @@ def hr_sessions(state_database, tmp_path, monkeypatch):
     second, _ = repository.create_session(user["user_id"], now=now, hours=1)
     source = FakeSqlServerClient([_valid_row()])
     auth = WorkerAuthService(_enabled_settings(), source)
-    app = FastAPI()
+    app = embedded_app()
     app.state.workshop = repository
     app.state.worker_auth = auth
     writes = []
@@ -133,8 +133,9 @@ def test_successful_login_replaces_previous_disabled_cache():
 def test_cached_hr_decisions_bypass_full_authentication_capacity(hr_sessions, cached, expected):
     client, repository, source, service, _, first, second, _ = hr_sessions
     service._cache_session_check("9123", cached, 60 if cached is not None else 15)
+    pool = client.app.state.workloads['authentication']
     for _ in range(8):
-        assert authentication_requests._slots.acquire(blocking=False)
+        assert pool._slots.acquire(blocking=False)
     try:
         response = client.get("/protected")
         assert response.status_code == expected
@@ -148,4 +149,4 @@ def test_cached_hr_decisions_bypass_full_authentication_capacity(hr_sessions, ca
             assert repository.user_for_session(second, now=stamp) is None
     finally:
         for _ in range(8):
-            authentication_requests._slots.release()
+            pool._slots.release()

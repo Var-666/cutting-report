@@ -3,7 +3,7 @@
   <time datetime="{{ start.isoformat() }}">{{ start.strftime('%Y-%m-%d %H:%M') }}</time> 至 <time datetime="{{ end.isoformat() }}">{{ end.strftime('%Y-%m-%d %H:%M') }}</time>
 {%- endmacro %}
 
-{% macro render_closing_comparison(columns, metrics, attribution, note='', title='日、周、月同期对比', calendar_note='本周从周一 00:00、本月从 1 日 00:00 开始，累计完整自然日，同期按相同天数比较。当日为前一天 17:00 至当天 17:00。') %}
+{% macro render_closing_comparison(columns, metrics, title='日、周、月同期对比') %}
 {% set highlight_percent = 20 %}
 {% set higher_is_better = ['task_count', 'cut_length_m', 'groove_length_m', 'job_count', 'weld_length_m', 'part_row_count'] %}
 {% set lower_is_better = ['incident_count', 'critical_count', 'high_count'] %}
@@ -48,8 +48,7 @@
     </tbody>
   </table>
 </div>
-<p class="lp-method">{{ attribution }}，统计区间含起点、不含终点。{{ calendar_note }}{% if shortened %} 累计显示完整统计区间，变化按本期可比区间计算。{% endif %}{% if note %} {{ note }}{% endif %} 涨跌达到 {{ highlight_percent }}% 时，有利方向标红、不利方向标绿；产出增加、告警减少为有利方向，累计工时和总能耗保持中性色。</p>
 {% else %}
-<p class="lp-method">所选期间内暂无可用于对比的已截止业务日。</p>
+<p class="empty">所选期间内暂无可用于对比的已截止业务日。</p>
 {% endif %}
 {% endmacro %}

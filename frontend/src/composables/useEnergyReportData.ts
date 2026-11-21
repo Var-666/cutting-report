@@ -2,7 +2,7 @@ import type { Ref } from 'vue'
 import type { EnergyChannel, EnergyPeriodReport, TaskEnergyReport } from '../types/energy'
 import { computed } from 'vue'
 import { taskProductionDate } from '../api/reportDates'
-import { formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay'
+import { formatChineseDate, formatChineseMonth, sortReportPeriods } from '../utils/dateDisplay'
 import { formatDeviceDisplay } from '../utils/deviceDisplay'
 import { deviceSelection } from '../state/devices'
 
@@ -58,7 +58,7 @@ export function useEnergyReportData({ taskDay, monthlyReport, summaryPeriodStart
   })
   const summaryCountLabel = computed(() => `${summaryRows.value.length} 个月`)
   const summarySubtitle = computed(() => {
-    const base = `${summaryPeriodStart.value} 至 ${summaryPeriodEnd.value} · ${summaryCountLabel.value}`
+    const base = `${formatChineseDate(summaryPeriodStart.value)} 至 ${formatChineseDate(summaryPeriodEnd.value)} · ${summaryCountLabel.value}`
     if (!energyConnected.value) return `${base} · 能耗暂未接入`
     const missing = Number(monthlyReport.value?.missing_day_count || 0)
     if (!missing) return base
