@@ -1,6 +1,5 @@
 import { afterEach, test, vi } from 'vitest'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery, registerDeviceSwitchGuard, allowDeviceSwitch } from '../src/api/deviceContext.ts'
 import { createReportCache, reportCache } from '../src/api/reportCache.ts'
 import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
@@ -13,7 +12,6 @@ const catalog = { default_device_id: 'Cutter01', items: [
   { id: 'Cutter02', machine_no: 'Cutter02', name: '30KW切割机' },
 ] }
 const response = (data) => new Response(JSON.stringify({ success: true, data }), { headers: { 'Content-Type': 'application/json' } })
-const source = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
 
 afterEach(() => { reportCache.clear(); resetDeviceContext() })
 
@@ -201,27 +199,6 @@ test('catalog remains authenticated and new device names come from configuration
   setDeviceCatalog(await getDeviceCatalog())
   assert.equal(formatDeviceDisplay('Cutter02 / Cutter03'), '30KW切割机 / 备用切割机')
   assert.equal(formatDeviceDisplay('OtherCutter02 Cutter020'), 'OtherCutter02 Cutter020')
-})
-
-test('shells use the selected device to discard cached views, while keeping route queries', () => {
-  assert.match(source('layouts/AdminLayout.vue'), /:device-id="deviceSelection.id"/)
-  assert.match(source('layouts/WorkerLayout.vue'), /:key="deviceSelection.id"/)
-  assert.match(source('components/DeviceSwitcher.vue'), /max-width:600px/)
-  assert.match(source('components/DeviceSwitcher.vue'), /role="alert"/)
-  assert.match(source('components/DeviceSwitcher.vue'), /正在读取设备/)
-  assert.doesNotMatch(source('state/devices.ts'), /router\.(push|replace)/)
-})
-
-
-test('scheduled reports store a fixed device and disconnected energy is explicitly labelled', () => {
-  const automation = source('views/AutomationView.vue')
-  assert.match(source('composables/useAutomationSchedules.ts'), /device_id: form.device_id/)
-  assert.match(source('composables/useAutomationSchedules.ts'), /device_id: item.device_id/)
-  assert.match(automation, /计划固定使用此设备/)
-  const energy = source('composables/useEnergyReportData.ts')
-  assert.match(energy, /energy_connected !== false/)
-  assert.match(energy, /return '暂未接入'/)
-  assert.doesNotMatch(energy, /equipment_scope\?\.join\(' \/ '\) \|\| 'Cutter01'/)
 })
 
 test('device switch captures the displayed latest day so another machine cannot silently change the date', () => {

@@ -3,15 +3,18 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, h, onUnmounted, ref } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { getAutomationStatus, saveAutomationSchedule } from '../src/api/automation'
 import { getDatabaseConfiguration, saveDatabaseConfiguration, testWeldingConnection } from '../src/api/configuration'
-import { getDeviceId, registerDeviceSwitchQuery, resetDeviceContext } from '../src/api/deviceContext'
-import { getProductionLines } from '../src/api/devices'
+import { getDeviceId, registerDeviceSwitchQuery, resetDeviceContext, selectDevice, setDeviceCatalog } from '../src/api/deviceContext'
+import { getDeviceCatalog, getProductionLines } from '../src/api/devices'
 import AppDatePicker from '../src/components/AppDatePicker.vue'
 import AppSelect from '../src/components/AppSelect.vue'
+import { useAutomationSchedules } from '../src/composables/useAutomationSchedules'
 import { useDeviceSelection } from '../src/composables/useDeviceSelection'
 import AdminLayout from '../src/layouts/AdminLayout.vue'
+import WorkerLayout from '../src/layouts/WorkerLayout.vue'
 import { setupI18n } from '../src/locales'
 import router from '../src/router'
 import { useAppStore } from '../src/state/app'
@@ -177,6 +180,67 @@ test('the admin menu toggles, switches modes and exposes a skip link to the main
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
   await flushPromises()
   expect(wrapper.find('[role="dialog"][aria-label="管理员导航"]').exists()).toBe(false)
+})
+
+test('worker navigation announces catalog failure, retries, and switches the task view without losing its URL', async () => {
+  resetDeviceContext()
+  let fail: (reason: Error) => void = () => {}
+  vi.mocked(getDeviceCatalog).mockResolvedValue({ ...catalog, items: catalog.items.filter(line => line.type === 'cutting') })
+    .mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }))
+  const unmounted: string[] = []
+  const tasks = defineComponent({
+    setup() {
+      const line = getDeviceId()
+      onUnmounted(() => unmounted.push(line))
+      return () => h('h1', `设备任务 ${line}`)
+    },
+  })
+  const workerRouter = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/worker', component: WorkerLayout, children: [{ path: 'tasks', name: 'worker-tasks', component: tasks }] },
+  ] })
+  await workerRouter.push('/worker/tasks?project=P1')
+  const wrapper = mount(RouterView, { global: { plugins: [workerRouter, createPinia(), { install: setupSoybeanComponents }] } })
+  await flushPromises()
+  const device = wrapper.get('[aria-label="当前设备"]')
+  expect(device.get('[role="status"]').text()).toContain('正在读取设备')
+  fail(new Error('设备服务离线'))
+  await flushPromises()
+  expect(device.get('[role="alert"]').text()).toContain('设备读取失败')
+  await device.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('h1').text()).toBe('设备任务 cut-a')
+  device.getComponent(AppSelect).vm.$emit('update:modelValue', 'cut-b')
+  await flushPromises()
+  expect(unmounted).toEqual(['cut-a'])
+  expect(wrapper.get('h1').text()).toBe('设备任务 cut-b')
+  expect(workerRouter.currentRoute.value.fullPath).toBe('/worker/tasks?project=P1')
+})
+
+test('editing a scheduled report keeps its fixed device when the active cutting line changes', async () => {
+  setDeviceCatalog(catalog)
+  selectDevice('cut-b')
+  let workflow: ReturnType<typeof useAutomationSchedules> | undefined
+  mount(defineComponent({
+    setup() {
+      workflow = useAutomationSchedules({ hasUnsavedChanges: ref(false), message: ref(''), error: ref(''),
+        refresh: async () => {}, confirm: async () => true })
+      return () => null
+    },
+  }))
+  if (!workflow) throw new Error('Automation workflow did not mount')
+  const current = { ...workflow.form, schedule_id: 'fixed', device_id: 'cut-b', recipients: ['report@example.test'] }
+  workflow.editSchedule(current)
+  selectDevice('cut-a')
+  const requests: unknown[] = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    expect(String(input)).toBe('/api/v1/automation/schedules/fixed')
+    expect(init?.method).toBe('PUT')
+    requests.push(JSON.parse(String(init?.body)))
+    return Response.json({ success: true, data: current })
+  })
+  expect(await workflow.submit()).toBe(true)
+  expect(requests).toEqual([expect.objectContaining({ device_id: 'cut-b', recipients: ['report@example.test'] })])
+  expect(getDeviceId()).toBe('cut-a')
 })
 
 test('report query changes preserve scroll and reuse the tab, then closing it returns to the previous page', async () => {

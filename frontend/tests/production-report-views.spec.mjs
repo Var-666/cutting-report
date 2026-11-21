@@ -34,7 +34,8 @@ beforeEach(() => {
   vi.mocked(init).mockClear()
   const production = { period_start: '2026-11-07', task_count: 3, cut_length_m: 25.1, groove_length_m: 0, work_time_seconds: 900 }
   vi.mocked(getLeadershipReport).mockResolvedValue({
-    snapshot: { data_as_of: '2026-11-07' },
+    snapshot: { data_as_of: '2026-11-07' }, analysis_source_version: 'leadership-default',
+    analysis_summary_source_version: 'leadership-twelve-months',
     daily_records: [production], monthly_records: [{ ...production, period_start: '2026-11-01' }],
     current_month_total: production, twelve_month_total: production,
   })
@@ -50,6 +51,7 @@ beforeEach(() => {
     summary: { task_count: 5, total_electricity_consumption: 137, total_gas_consumption: 2 },
   })
   vi.mocked(getEnergyMonthlyRange).mockResolvedValue({
+    analysis_source_version: 'energy-twelve-months',
     rows: [{ report_date: '2026-11-01', task_count: 5, electricity: { value: 137 }, gas: { value: 2 } }],
   })
 })
@@ -160,9 +162,10 @@ test.each([
     if (kind === 'equipment') {
       const day = await getTaskEnergyDay(start)
       return { task_report: { ...day, period_start: start, period_end: end,
+        analysis_source_version: 'applied-detail',
         records: [{ ...day.records[0], production_time: `${start}T09:00:00`, electricity_consumption: 42 }] } }
     }
-    return { snapshot: { data_as_of: end },
+    return { snapshot: { data_as_of: end }, analysis_source_version: 'applied-detail',
       daily_records: [{ period_start: start, task_count: 3, cut_length_m: 42, groove_length_m: 0, work_time_seconds: 900 }] }
   })
   const area = label => wrapper.get(`[role="img"][aria-label="${label}"]`).element.closest('section')
@@ -180,6 +183,11 @@ test.each([
   query.vm.$emit('update:chartType', 'line')
   await flushPromises()
   expect(query.props('dateDirty')).toBe(true)
+  expect(view.getComponent(AnalysisPanel).props()).toMatchObject({
+    reportType: kind, periodStart: '2026-09-01', periodEnd: '2026-09-02', dataVersion: 'applied-detail',
+    summaryPeriodStart: '2025-12-01', summaryPeriodEnd: '2026-11-07',
+    summaryDataVersion: kind === 'equipment' ? 'energy-twelve-months' : 'leadership-twelve-months',
+  })
   query.vm.$emit('export', 'html')
   expect(view.emitted('export')).toEqual([[expect.objectContaining({
     report_type: kind, period_start: '2026-09-01', period_end: '2026-09-02',

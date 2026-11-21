@@ -248,3 +248,17 @@ test('the default manager report follows the current day and clears old tasks im
   await flushPromises()
   expect(wrapper.text()).toContain('当前条件下暂无任务')
 })
+
+test('the manager sees confirmed worker totals and task counts from the same period', async () => {
+  const { wrapper } = await open('manager', () => response({
+    ...taskResult('取样任务', 2),
+    report: { ...report, item_count: 10, confirmed_count: 3, project_count: 2 },
+    worker_summaries: [{ worker_id: 'w1', worker_name: '张三', company_no: '10032', confirmed_task_count: 3,
+      total_cut_length: 87.53, total_work_time_seconds: 3900, work_time_share: 42.64, last_confirmed_at: '2026-09-30T18:20:00+08:00' }],
+  }))
+  const overview = wrapper.get('[aria-label="车间任务概况"]')
+  expect(overview.text()).toMatch(/全部任务10\s*项.*待确认7\s*项.*已确认3\s*项.*确认率30.0\s*%/)
+  const summary = wrapper.findAll('section').find(section => section.find('h2').exists() && section.get('h2').text() === '工人工时汇总')
+  expect(summary.text()).toContain('按当前确认人统计，只包含已确认任务')
+  expect(summary.findAll('tbody td').slice(1, 7).map(cell => cell.text())).toEqual(['10032', '张三', '3 项', '87.5 米', '01:05:00', '42.6%'])
+})

@@ -13,6 +13,7 @@ test('model text uses readable device names and keeps valid evidence while round
     props: {
       ready: true, loading: false,
       analysis: { mode: 'model', status: 'success', overview: 'Cutter01电耗 1,234.567 kWh [F001]。Cutter02电耗 12.345 kWh [F899]',
+        limitations: ['内部分析边界'],
         facts: [{ id: 'F001', label: '实测电耗', value: '1,234.567', unit: 'kWh', source: '电表' }] },
     },
   })
@@ -21,6 +22,7 @@ test('model text uses readable device names and keeps valid evidence while round
   expect(wrapper.text()).toContain('20KW切割机电耗 1,234.6 kWh [F001]')
   expect(wrapper.text()).toContain('30KW切割机电耗 12.3 kWh')
   expect(wrapper.text()).not.toContain('[F899]')
+  expect(wrapper.text()).not.toContain('内部分析边界')
   expect(wrapper.find('sup').exists()).toBe(false)
   const evidence = wrapper.findAll('span').find(item => item.text().startsWith('· 查看模型输入数据'))
   expect(evidence).toBeDefined()

@@ -39,12 +39,11 @@ function report(query: URLSearchParams, label: string) {
   } })
 }
 
-async function setup() {
+async function setup(initial?: (query: URLSearchParams) => Response | Promise<Response>) {
   setDeviceCatalog({ default_device_id: 'weld-a', items: [weldLine] })
   stubTableLayout()
   const calls: Array<{ query: URLSearchParams; scope: string | null; signal: AbortSignal | null | undefined }> = []
-  let respond: (query: URLSearchParams) => Response | Promise<Response> = query =>
-    report(query, `初始作业-${query.get('page') ?? 1}`)
+  let respond = initial ?? (query => report(query, `初始作业-${query.get('page') ?? 1}`))
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname.includes('/cancel')) return Response.json({})
@@ -129,6 +128,34 @@ test('a cancelled older result cannot replace the range selected by the latest r
   expect(wrapper.text()).not.toContain('过期作业')
   expect(wrapper.text()).toContain('最新作业')
   expect(router.currentRoute.value.query.start).toBe('2026-09-05')
+})
+
+test('an unprepared snapshot shows loading and the scheduled read displays the result once', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let reads = 0
+  const { wrapper, calls } = await setup(query => ++reads === 1
+    ? Response.json({ detail: '统计正在生成' }, { status: 503, headers: { 'X-Welding-Error': 'snapshot_refresh_busy' } })
+    : report(query, '已准备好'))
+  expect(calls).toHaveLength(1)
+  expect(wrapper.text()).toContain('正在读取焊接数据')
+  await vi.advanceTimersByTimeAsync(5000)
+  await flushPromises()
+  expect(calls).toHaveLength(2)
+  expect(calls[1].query.has('refresh')).toBe(false)
+  expect(wrapper.text()).toContain('已准备好')
+  expect(wrapper.text()).not.toContain('正在读取焊接数据')
+})
+
+test('leaving a queued source read aborts the network without replay', async () => {
+  let finish: ((reply: Response) => void) | undefined
+  const { wrapper, calls } = await setup(() => new Promise(resolve => { finish = resolve }))
+  expect(wrapper.text()).toContain('正在读取焊接数据')
+  expect(calls).toHaveLength(1)
+  wrapper.unmount()
+  expect(calls[0].signal?.aborted).toBe(true)
+  finish?.(report(calls[0].query, '迟到结果'))
+  await flushPromises()
+  expect(calls).toHaveLength(1)
 })
 
 async function openWeldingOverview(path = '/home') {

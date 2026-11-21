@@ -45,11 +45,12 @@ async function chooseDate(wrapper, value) {
   await wrapper.vm.$nextTick()
 }
 
-async function center({ query = {}, readHistory } = {}) {
+async function center({ query = {}, readHistory, readStatus } = {}) {
   const pending = []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname.endsWith('/cancel')) return Response.json({})
+    if (url.pathname === '/api/v1/reports/batch-42/status' && readStatus) return readStatus(init.signal)
     if (url.pathname === '/api/v1/reports' && readHistory) return readHistory(url.searchParams)
     if (url.pathname === '/api/v1/reports' || url.pathname === '/api/v1/designer/published-definitions') {
       return Response.json({ success: true, data: { items: [], total: 0, page: 1, page_size: 10 } })
@@ -191,4 +192,29 @@ test('report history restores the linked page, keeps its fixed page size and pre
   router.back()
   await flushPromises()
   expect(wrapper.text()).toContain('列表第 2 页')
+})
+
+test('leaving an active report job aborts its status poll and ignores the late result', async () => {
+  vi.useRealTimers()
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'], now: new Date('2026-09-01T04:00:00Z') })
+  const reads = []
+  let finish
+  const { wrapper } = await center({
+    query: { job: 'batch-42' },
+    readStatus(signal) {
+      reads.push(signal)
+      if (reads.length === 1) return Response.json({ success: true, data: {
+        report_id: 'batch-42', report_type: 'workshop', status: 'querying', stage_message: '正在查询数据',
+      } })
+      return new Promise(resolve => { finish = resolve })
+    },
+  })
+  expect(wrapper.text()).toContain('正在查询数据')
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(reads).toHaveLength(2)
+  wrapper.unmount()
+  expect(reads[1].aborted).toBe(true)
+  finish(Response.json({ success: true, data: { report_id: 'batch-42', status: 'completed' } }))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(reads).toHaveLength(2)
 })

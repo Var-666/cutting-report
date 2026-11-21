@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { resetDeviceContext, setDeviceCatalog } from '../src/api/deviceContext'
 import { useReportExport } from '../src/composables/useReportExport'
+import { session } from '../src/state/session'
+import AdminEquipmentView from '../src/views/AdminEquipmentView.vue'
+import AdminLeadershipView from '../src/views/AdminLeadershipView.vue'
+import AdminWorkshopView from '../src/views/AdminWorkshopView.vue'
+import EnergyPeriodReportView from '../src/views/EnergyPeriodReportView.vue'
+import LeadershipReportView from '../src/views/LeadershipReportView.vue'
+import WorkshopView from '../src/views/WorkshopView.vue'
 
 const form = { report_type: 'workshop' as const, report_date: '2026-11-20' }
 
@@ -102,5 +109,45 @@ test('creation retry reuses the same idempotency key and retries only the existi
     vi.useRealTimers()
     if (createObjectURL) Object.defineProperty(URL, 'createObjectURL', createObjectURL)
     else Reflect.deleteProperty(URL, 'createObjectURL')
+  }
+})
+
+test.each([
+  ['leadership', AdminLeadershipView, LeadershipReportView, 'LeadershipReportView'],
+  ['workshop', AdminWorkshopView, WorkshopView, 'WorkshopView'],
+  ['equipment', AdminEquipmentView, EnergyPeriodReportView, 'EnergyPeriodReportView'],
+] as const)('%s export shows a retry action and opens the successfully created report', async (reportType, shell, reportView, stub) => {
+  const original = session.user
+  session.user = { user_id: 'admin', username: 'admin', display_name: '管理员', role: 'admin', active: true }
+  const requests: Array<{ key: string | null; body: unknown }> = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    expect(path).toBe('/api/v1/reports')
+    requests.push({ key: new Headers(init?.headers).get('Idempotency-Key'), body: JSON.parse(String(init?.body)) })
+    if (requests.length === 1) throw new Error('提交响应丢失')
+    return Response.json({ success: true, data: { report_id: 'recovered' } })
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/', component: shell },
+    { path: '/center', name: 'report-center', component: { render: () => null } },
+  ] })
+  try {
+    await router.push('/')
+    const wrapper = mount(shell, { global: { plugins: [router], stubs: { [stub]: true } } })
+    wrapper.getComponent(reportView).vm.$emit('export', { ...form, report_type: reportType }, 'html')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('导出未完成')
+    const retry = wrapper.findAll('button').find(button => button.text() === '确认创建结果')
+    expect(retry).toBeDefined()
+    if (!retry) throw new Error('Export retry is missing')
+    await retry.trigger('click')
+    await flushPromises()
+    expect(requests).toHaveLength(2)
+    expect(requests[0].body).toMatchObject({ report_type: reportType })
+    expect(requests[0].key).toMatch(/^[a-f0-9]{32}$/)
+    expect(requests[1]).toEqual(requests[0])
+    expect(router.currentRoute.value.query.job).toBe('recovered')
+  } finally {
+    session.user = original
   }
 })
