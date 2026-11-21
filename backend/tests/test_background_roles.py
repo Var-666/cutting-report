@@ -154,7 +154,7 @@ def test_scheduler_only_enqueues_consumer_only_executes_and_old_source_never_ref
 
 
 def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgres_state,tmp_path,monkeypatch):
-    from tests.automation_fixtures import NOW, STAMP, complete_report
+    from tests.automation_fixtures import ARCHIVED_HTML, NOW, STAMP, complete_report
     from app.workers.report_worker import ReportWorker
     cfg=postgres_state[1]
     consumer=WorkerProcess(cfg);automation=AutomationProcess(cfg)
@@ -175,6 +175,7 @@ def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgr
         job=consumer.runtime.metadata.get_job(run['report_id'])
         assert not hasattr(ReportWorker(cfg,consumer.runtime.metadata),'automation_thread')
         complete_report(consumer.runtime.metadata,job['report_id'])
+        (cfg.reports_dir / 'r.html').write_bytes(ARCHIVED_HTML)
         # Completion callbacks and independent recovery race via PostgreSQL, never memory.
         def callback():
             with consumer.scope():consumer.runtime.automation_service.report_completed(job['report_id'],NOW)

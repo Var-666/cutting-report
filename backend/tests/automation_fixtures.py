@@ -1,7 +1,7 @@
 """Shared recovery workflow, registered through the test conftest plugin list."""
+from tests.runtime_factories import make_device_runtime
 from datetime import datetime
 from hashlib import sha256
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,7 +9,7 @@ import pytest
 from tests.line_fixtures import cutting_settings, as_line_services
 from app.database.automation import AutomationRepository
 from app.database.metadata import MetadataRepository
-from app.database.workshop import WorkshopRepository
+from app.database.users import UserRepository
 from app.services.automation_service import AutomationService
 
 NOW = datetime(2026, 9, 30, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -21,7 +21,7 @@ ARCHIVED_HTML = "<h1>测试报表</h1>".encode()
 def workflow(tmp_path, state_database):
     path = state_database
     metadata = MetadataRepository(path, device_id='Cutter01')
-    workshop = WorkshopRepository(path, scope_machine_no='Cutter01')
+    workshop = UserRepository(path)
     repository = AutomationRepository(path)
     user = workshop.create_user(username="admin", display_name="管理员", password="test-password",
                                 role="admin", now=STAMP)
@@ -40,7 +40,7 @@ def workflow(tmp_path, state_database):
     cfg.reports_dir.mkdir(parents=True, exist_ok=True)
     (cfg.reports_dir / "r.html").write_bytes(ARCHIVED_HTML)
     service = AutomationService(cfg, repository, metadata, object(),
-        line_services=as_line_services({"Cutter01": SimpleNamespace(settings=cfg, pipeline=object())}))
+        line_services=as_line_services({"Cutter01": make_device_runtime(settings=cfg, pipeline=object())}))
     return repository, metadata, service, run
 
 

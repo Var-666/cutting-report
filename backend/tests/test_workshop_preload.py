@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date
@@ -10,7 +11,9 @@ import pytest
 from app.api.auth import require_user
 from app.api.workshop import router
 from tests.line_fixtures import cutting_settings
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import QueryBundle
 from app.services.query_service import QueryService
 
@@ -21,16 +24,16 @@ def service(tmp_path):
 
 
 def test_workshop_warmup_and_report_generation_share_query_without_confirming(state_database, service, tmp_path, monkeypatch):
-    repo = WorkshopRepository(state_database, scope_machine_no='Cutter01')
-    admin = repo.bootstrap_admin(username="testadmin", display_name="测试管理员",
+    users = UserRepository(state_database)
+    repo = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    admin = users.bootstrap_admin(username="testadmin", display_name="测试管理员",
                                  password="test-only-password", now="2026-09-03T08:00:00+08:00")
     app = embedded_app()
     app.include_router(router)
-    app.state.workshop = repo
-    app.state.query_service = service
-    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(
-        settings=service.settings, workshop=app.state.workshop,
-        query_service=getattr(app.state, 'query_service', None))})
+    device = make_device_runtime(settings=service.settings, workshop=repo, confirmations=confirmations,
+        pipeline=make_pipeline_stub(query_service=service), report_provider=SimpleNamespace(snapshot_service=None))
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware("http")
@@ -65,14 +68,14 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(st
         assert data["worker_summaries"] == []
         assert all(not row["confirmed_by"] for row in data["items"])
 
-        worker = repo.upsert_external_worker(
+        worker = users.upsert_external_worker(
             external_id="hr-worker-1",
             company_no="C0018",
             group_no="G0018",
             display_name="张三",
             now="2026-09-03T09:00:00+08:00",
         )
-        repo.confirm_task(
+        confirmations.confirm_task(
             task_id=data["items"][0]["task_id"],
             report_id=data["report"]["report_id"],
             user=worker,

@@ -3,7 +3,9 @@
 External production sources are replaced; routes, services and JSON conversion run.
 """
 
-from tests.web_fixtures import embedded_app
+from app.services.production_reports import CuttingReportProvider
+from tests.runtime_factories import make_device_runtime
+from tests.web_fixtures import embedded_app, database_services, replace_database_services
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from contextlib import contextmanager
@@ -17,7 +19,8 @@ from app.api import auth, leadership, welding
 from tests.line_fixtures import cutting_settings, welding_settings
 from app.device_config import load_line_catalog
 from app.database.welding import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
-from app.database.workshop import WorkshopRepository
+from app.database.sessions import SessionRepository
+from app.database.users import UserRepository
 from app.services.leadership_report_service import LeadershipReportService
 from app.services.welding_service import WeldingService
 
@@ -27,13 +30,17 @@ def client(state_database, tmp_path, monkeypatch):
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='demo', demo_mode=True,
                    weld_enabled=True, worker_database_auth_enabled=False, auth_cookie_secure=False)
     cfg.ensure_runtime_dirs()
-    users = WorkshopRepository(state_database)
+    users = UserRepository(state_database)
     app = embedded_app(cfg)
     for router in (auth.router, leadership.router, welding.router):
         app.include_router(router)
-    app.state.settings = cfg
-    app.state.workshop = users
-    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=cfg, leadership_report_service=LeadershipReportService(cfg, client=source_client(cfg)))})
+    app.state.runtime.users = users
+    app.state.runtime.sessions = SessionRepository(state_database)
+    leadership_service = LeadershipReportService(cfg, client=source_client(cfg))
+    device = make_device_runtime(settings=cfg, leadership_report_service=leadership_service,
+        report_provider=CuttingReportProvider(leadership_service),
+        leadership_refresh_worker=SimpleNamespace(is_refreshing=lambda _: False))
+    replace_database_services(app, lines=as_line_services({'Cutter01': device}))
     app.dependency_overrides[auth.require_admin] = lambda: {'role': 'admin'}
 
     @app.middleware('http')
@@ -166,8 +173,8 @@ class WeldingSource(WeldingRepository):
                                       ('jobs', 'jobs'), ('parts', 'parts'), ('jobs', 'dashboard')])
 def test_welding_report_response_contract(client, kind, path, empty):
     instance = WeldingService(welding_settings(), WeldingSource(empty))
-    client.app.state.lines['welding'] = runtime_line(instance, 'welding')
-    client.app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    database_services(client.app).lines['welding'] = runtime_line(instance, 'welding')
+    replace_database_services(client.app, catalog=load_line_catalog(instance.settings.production_lines_json))
     client.headers['X-Production-Line'] = 'welding'
     report = data(client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01'))
     from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport
@@ -214,8 +221,8 @@ def test_welding_report_response_contract(client, kind, path, empty):
 
 def test_welding_part_response_contract(client):
     instance = WeldingService(welding_settings(), WeldingSource())
-    client.app.state.lines['welding'] = runtime_line(instance, 'welding')
-    client.app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    database_services(client.app).lines['welding'] = runtime_line(instance, 'welding')
+    replace_database_services(client.app, catalog=load_line_catalog(instance.settings.production_lines_json))
     client.headers['X-Production-Line'] = 'welding'
     result = data(client.get('/api/v1/welding/parts/1'))
     from app.models.welding_contracts import WeldingPart

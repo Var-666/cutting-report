@@ -1,7 +1,6 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, request_for
 from datetime import date
 import sqlite3
-from types import SimpleNamespace
 
 import pytest
 import sqlglot
@@ -453,8 +452,7 @@ def test_report_http_contract_role_validation_and_failure_redaction(source, monk
 def test_disabled_source_does_not_fall_back_to_mock(tmp_path):
     from tests.line_fixtures import configuration
 
-    context = SimpleNamespace(settings=configuration(tmp_path, file_database_enabled=False))
-    request = SimpleNamespace(state=SimpleNamespace(database_context=context))
+    request = request_for(embedded_app(configuration(tmp_path, file_database_enabled=False)))
     with pytest.raises(Exception) as error:
         api.service(request)
     assert error.value.status_code == 503

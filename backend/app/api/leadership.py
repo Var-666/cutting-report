@@ -23,7 +23,7 @@ from app.services.report_analysis_service import (
     leadership_analysis_source_version,
 )
 from app.core.request_cancellation import SqlRequestCancelled
-from app.services.production_reports import CuttingReportProvider
+from app.services.device_runtime import DeviceRuntime
 from app.api.report_reads import statistics_page
 
 
@@ -49,9 +49,8 @@ def _parse_month(value: str | None, timezone: str) -> date:
         raise HTTPException(status_code=422, detail="月份格式必须为 YYYY-MM") from exc
 
 
-def _result_with_refresh_state(request: Request, report_month: date, result):
-    worker = getattr(device_state(request), "leadership_refresh_worker", None)
-    refreshing = bool(worker and worker.is_refreshing(report_month))
+def _result_with_refresh_state(device: DeviceRuntime, report_month: date, result):
+    refreshing = device.leadership_refresh_worker.is_refreshing(report_month)
     return replace(
         result,
         snapshot=replace(result.snapshot, refreshing=refreshing),
@@ -118,16 +117,15 @@ def get_leadership_report(
                 "request_id": request.state.request_id,
             }
         month_start = _parse_month(report_month, request_settings(request).timezone)
-        service = device_state(request).leadership_report_service
-        provider = getattr(device_state(request), 'report_provider', None) or CuttingReportProvider(service)
-        result = provider.fetch_summary('leadership', {'report_month': month_start}).payload
-        worker = getattr(device_state(request), "leadership_refresh_worker", None)
-        if worker is not None and (refresh or result.snapshot.stale):
-            worker.schedule(
+        device = device_state(request)
+        service = device.leadership_report_service
+        result = device.report_provider.fetch_summary('leadership', {'report_month': month_start}).payload
+        if refresh or result.snapshot.stale:
+            device.leadership_refresh_worker.schedule(
                 month_start,
                 bootstrap=service.needs_bootstrap(month_start),
             )
-        result = _result_with_refresh_state(request, month_start, result)
+        result = _result_with_refresh_state(device, month_start, result)
     except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except (SqlServerConfigurationError, ValueError) as exc:
@@ -155,17 +153,14 @@ def refresh_leadership_report(
         return {'success': True, 'data': _with_analysis_source_version(data), 'request_id': request.state.request_id}
     try:
         month_start = _parse_month(payload.report_month, request_settings(request).timezone)
-        service = device_state(request).leadership_report_service
-        worker = getattr(device_state(request), "leadership_refresh_worker", None)
-        if worker is None:
-            result = service.fetch(month_start, force=True)
-        else:
-            worker.schedule(
-                month_start,
-                bootstrap=service.needs_bootstrap(month_start),
-            )
-            result = service.fetch(month_start)
-        result = _result_with_refresh_state(request, month_start, result)
+        device = device_state(request)
+        service = device.leadership_report_service
+        device.leadership_refresh_worker.schedule(
+            month_start,
+            bootstrap=service.needs_bootstrap(month_start),
+        )
+        result = service.fetch(month_start)
+        result = _result_with_refresh_state(device, month_start, result)
     except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
         raise
     except SqlServerConfigurationError as exc:

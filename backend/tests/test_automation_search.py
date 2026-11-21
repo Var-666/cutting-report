@@ -42,7 +42,7 @@ def test_delivery_search_covers_all_pages_and_matches_snapshot_names_subjects_an
 
     app = embedded_app()
     app.include_router(router)
-    app.state.automation = repository
+    app.state.runtime.automation = repository
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
 
     @app.middleware('http')

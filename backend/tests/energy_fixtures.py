@@ -56,6 +56,9 @@ class MeterStub:
         self.error = error
         self.calls = []
 
+    def fetch_observed(self, ids, start, end, *, force=False, monthly=False):
+        return self.fetch(ids, start, end, force=force), True
+
     def fetch(self, ids, start, end, *, force=False):
         self.calls.append((ids, start, end, force))
         if self.error:

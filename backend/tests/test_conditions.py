@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime
+from tests.web_fixtures import embedded_app, database_services, replace_database_services
 from tests.line_fixtures import as_line_services, runtime_line, source_client, cutting_settings
 from dataclasses import replace
 from types import SimpleNamespace
@@ -445,9 +446,9 @@ def api(state_database, tmp_path):
     app.include_router(conditions_router)
     app.include_router(cutting_router)
     app.include_router(downloads_router)
-    app.state.lines = as_line_services({cfg.device_id: SimpleNamespace(settings=cfg)})
-    app.state.cutting_dispatch = CuttingDispatchService(cfg, pdm, SimpleNamespace(), DisabledFileSource())
-    app.state.file_downloads = FileDownloadService(cfg, repo, pdm, DisabledFileSource())
+    replace_database_services(app, lines=as_line_services({cfg.device_id: make_device_runtime(settings=cfg)}))
+    replace_database_services(app, cutting_dispatch=CuttingDispatchService(cfg, pdm, SimpleNamespace(), DisabledFileSource()))
+    replace_database_services(app, file_downloads=FileDownloadService(cfg, repo, pdm, DisabledFileSource()))
     app.dependency_overrides[optional_user] = lambda: {"role": "admin", "user_id": "tests"}
 
     @app.middleware("http")
@@ -460,12 +461,12 @@ def api(state_database, tmp_path):
 
 def test_api_search_and_schema_are_readonly_and_paged(api):
     app, client, repo = api
-    params = {"device_id": next(iter(app.state.lines))}
+    params = {"device_id": next(iter(database_services(app).lines))}
     response = client.get("/api/v1/conditions/cutting_files/schema", params=params)
     assert response.status_code == 200 and response.json()["data"]["requires_filter"]
     assert client.get("/api/v1/conditions/cutting_files/schema").status_code == 422
     assert client.get("/api/v1/conditions/cutting_files/schema", params={"device_id": "missing"}).status_code == 422
-    payload = {"filters": group(rule("project_id", "eq", app.state.cutting_dispatch.pdm.projects[0]["project_id"])).model_dump(), "page_size": 1}
+    payload = {"filters": group(rule("project_id", "eq", database_services(app).cutting_dispatch.pdm.projects[0]["project_id"])).model_dump(), "page_size": 1}
     response = client.post("/api/v1/cutting/files/search", json=payload)
     assert response.status_code == 200
     data = response.json()["data"]
@@ -502,6 +503,6 @@ def test_condition_endpoints_require_admin(api, user, expected):
     app, client, _ = api
     app.dependency_overrides[optional_user] = lambda: user
     assert client.get("/api/v1/conditions/cutting_files/schema",
-                      params={"device_id": next(iter(app.state.lines))}).status_code == expected
+                      params={"device_id": next(iter(database_services(app).lines))}).status_code == expected
     for path in ["/api/v1/cutting/files/search", "/api/v1/cutting/downloads/search"]:
         assert client.post(path, json={}).status_code == expected

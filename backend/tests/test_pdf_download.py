@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime
+from tests.web_fixtures import embedded_app, replace_database_services
 from tests.line_fixtures import as_line_services, runtime_line
 from tests.line_fixtures import configuration
 from concurrent.futures import ThreadPoolExecutor
@@ -30,9 +31,9 @@ def report_client(tmp_path, monkeypatch):
     app = embedded_app(configuration(tmp_path))
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
-    app.state.metadata = SimpleNamespace(get_job=lambda report_id: job if report_id == "saved" else None)
-    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(metadata=app.state.metadata)})
-    app.state.pdf_service = SimpleNamespace(render=render)
+    app.state.runtime.metadata = SimpleNamespace(get_job=lambda report_id: job if report_id == "saved" else None)
+    replace_database_services(app, lines=as_line_services({'Cutter01': make_device_runtime(metadata=app.state.runtime.metadata)}))
+    app.state.runtime.pdf_service = SimpleNamespace(render=render)
     # Settings resolves report files under project_root/reports.
     (tmp_path / "reports").mkdir()
     html = html.rename(tmp_path / "reports" / html.name)
@@ -66,7 +67,7 @@ def test_pdf_render_failure_is_actionable_and_html_is_still_available(report_cli
     def fail(_path):
         raise PdfRenderError("服务器未安装 PDF 渲染依赖")
 
-    client.app.state.pdf_service.render = fail
+    client.app.state.runtime.pdf_service.render = fail
     response = client.get('/api/v1/reports/saved/download?format=pdf&device_id=Cutter01')
     assert response.status_code == 503
     assert "渲染依赖" in response.json()["detail"]

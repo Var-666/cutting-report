@@ -9,12 +9,13 @@ from itertools import islice
 import json
 import logging
 import threading
+from typing import Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.core.operations_logging import data_quality
 from app.models.domain import to_primitive
-from app.services.energy_api import EnergyApiClient, EnergyApiError, read_energy_with_freshness
+from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyReadingSource
 from app.services.report_cache_policy import report_ttl
 from app.services.energy_service import (
     STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
@@ -86,6 +87,16 @@ def restore_task_energy_records(records, task_report):
     return output
 
 
+class EquipmentMetricsSource(Protocol):
+    def fetch_equipment_month_metrics(
+        self, report_month: date, *, force: bool = False,
+    ) -> dict[str, dict[str, Decimal | int]]: ...
+
+    def fetch_equipment_range_metrics(
+        self, start_date: date, end_exclusive: date, *, force: bool = False,
+    ) -> dict[str, dict[str, Decimal | int]]: ...
+
+
 class EnergyPeriodService:
     """Read-only meter queries + local daily snapshots for one configured machine.
 
@@ -94,7 +105,8 @@ class EnergyPeriodService:
     Monthly records are built from saved daily reports; synchronization is explicit.
     """
 
-    def __init__(self, settings, repository, *, client=None, clock=None, query_service=None):
+    def __init__(self, settings, repository, *, client: EnergyReadingSource | None = None,
+                 clock=None, query_service: EquipmentMetricsSource | None = None):
         self.settings = settings
         self.repository = repository
         self.client = client or EnergyApiClient(settings)
@@ -291,8 +303,9 @@ class EnergyPeriodService:
             padding = timedelta(seconds=max(self.settings.energy_report_max_gap_seconds,
                                             sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
             try:
-                readings, fresh = read_energy_with_freshness(self.client, (self.gas_id, *self.electricity_ids),
-                                                             start - padding, min(end + padding, now), force=force)
+                readings, fresh = self.client.fetch_observed(
+                    (self.gas_id, *self.electricity_ids), start - padding, min(end + padding, now), force=force,
+                )
                 report = self.calculate_day(report_date, readings)
             except EnergyApiError as exc:
                 message = '能耗平台取数失败，已保留原快照' if cached else '能耗平台取数失败，当前日数据不可用'
@@ -462,7 +475,7 @@ class EnergyPeriodService:
                                             sampling_policy(self.settings).get("new_max_gap_seconds", 0)))
             cutoff = self.now() - padding
             try:
-                readings, fresh = read_energy_with_freshness(self.client, ids, first - padding, last + padding, force=force)
+                readings, fresh = self.client.fetch_observed(ids, first - padding, last + padding, force=force)
                 series = make_series(readings, ids, self.settings.timezone)
             except EnergyApiError as exc:
                 observe_task_energy(self.settings, source_key, usable, cutoff, report_date, end_date)
@@ -536,21 +549,9 @@ class EnergyPeriodService:
     def get_month(self, report_month, *, month_metrics=None, force=False):
         year, month = map(int, report_month.split("-"))
         count = calendar.monthrange(year, month)[1]
-        metrics_supplied = month_metrics is not None
         if month_metrics is None:
-            month_metrics = {}
-        if self.query_service and not metrics_supplied:
-            if hasattr(self.query_service, "fetch_equipment_month_metrics"):
-                month_metrics = self.query_service.fetch_equipment_month_metrics(
-                    date(year, month, 1), force=force
-                )
-            else:
-                month_metrics = {
-                    key: {"work_time_seconds": value, "task_count": 0}
-                    for key, value in self.query_service.fetch_equipment_month_work_times(
-                        date(year, month, 1)
-                    ).items()
-                }
+            month_metrics = (self.query_service.fetch_equipment_month_metrics(date(year, month, 1), force=force)
+                             if self.query_service is not None else {})
         legacy = {item["report_date"]: item for item in self.repository.list_month(self.source_key, report_month)}
         saved = {}
         keys = {self.day_source_key(date(year, month, number)) for number in range(1, count + 1)}
@@ -599,17 +600,9 @@ class EnergyPeriodService:
         if not 1900 <= start_date.year <= 2100 or not 1900 <= end_date.year <= 2100:
             raise ValueError("日期需在 1900—2100 年之间")
 
-        metrics = {}
-        if self.query_service:
-            if hasattr(self.query_service, "fetch_equipment_range_metrics"):
-                metrics = self.query_service.fetch_equipment_range_metrics(
-                    start_date, end_date + timedelta(days=1), force=force
-                )
-            else:
-                current = start_date.replace(day=1)
-                while current <= end_date:
-                    metrics.update(self.query_service.fetch_equipment_month_metrics(current, force=force))
-                    current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+        metrics = (self.query_service.fetch_equipment_range_metrics(
+            start_date, end_date + timedelta(days=1), force=force,
+        ) if self.query_service is not None else {})
 
         selected_daily_rows = []
         monthly_rows = []
@@ -691,8 +684,7 @@ class EnergyPeriodService:
                     sampling_policy(self.settings).get("new_max_gap_seconds", 0),
                 )
             )
-            readings, fresh = read_energy_with_freshness(
-                self.client,
+            readings, fresh = self.client.fetch_observed(
                 (self.gas_id, *self.electricity_ids),
                 start - padding,
                 min(end + padding, now),

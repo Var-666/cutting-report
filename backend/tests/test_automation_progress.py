@@ -19,7 +19,7 @@ def test_pause_and_resume_schedule_preserves_runs_and_skips_missed_occurrences(w
     monkeypatch.setattr('app.api.automation._now', lambda _request: now)
     app = embedded_app()
     app.include_router(router)
-    app.state.automation_service = service
+    app.state.runtime.automation_service = service
 
     @app.middleware('http')
     async def request_context(request, call_next):
@@ -83,7 +83,7 @@ def test_run_progress_http_requires_admin_and_returns_only_requested_run(workflo
     repository, _, service, run = workflow
     app = embedded_app()
     app.include_router(router)
-    app.state.automation_service = service
+    app.state.runtime.automation_service = service
 
     @app.middleware('http')
     async def request_context(request, call_next):

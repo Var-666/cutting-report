@@ -2,7 +2,8 @@ from psycopg.errors import ForeignKeyViolation
 
 import pytest
 
-from app.database.workshop import ConfirmationConflictError, DailyReportRecordMismatchError, DailyReportScopeMismatchError
+from app.database.confirmations import ConfirmationRepository
+from app.database.workshop_errors import ConfirmationConflictError, DailyReportRecordMismatchError, DailyReportScopeMismatchError
 from test_workshop_snapshot_sync import record, setup
 
 
@@ -59,11 +60,12 @@ def test_scope_change_is_rejected_without_touching_snapshot_revision(tmp_path, s
                                      records=[] if empty_rebuild else [record("A", work=120)])
     assert repository.get_daily_report_records(arguments["report_date"]) == before
     worker = {"user_id": repository.test_worker_id, "display_name": "工人", "role": "worker"}
+    confirmations = ConfirmationRepository(state_database, scope_machine_no="Cutter01")
     for old_revision in (None, 1):
         with pytest.raises(ConfirmationConflictError):
-            repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
+            confirmations.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
                                     now=arguments["now"], snapshot_revision=old_revision)
-    repository.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
+    confirmations.confirm_task(task_id="A", report_id=report["report_id"], user=worker,
                             now=arguments["now"], snapshot_revision=2)
 
 

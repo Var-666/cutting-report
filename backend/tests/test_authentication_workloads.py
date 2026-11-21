@@ -1,4 +1,5 @@
-from tests.web_fixtures import embedded_app
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import embedded_app, replace_database_services
 from dataclasses import replace
 from datetime import datetime
 from threading import Event, Lock
@@ -12,7 +13,8 @@ import pytest
 from app.api import auth, workloads
 from app.config import Settings
 from app.database import users as workshop
-from app.database.workshop import WorkshopRepository
+from app.database.sessions import SessionRepository
+from app.database.users import UserRepository
 from app.main import app
 from app.services.worker_auth_service import WorkerAuthService
 from tests.auth_fixtures import FakeSqlServerClient, enabled_settings as _enabled_settings, valid_row as _valid_row
@@ -30,19 +32,19 @@ def isolated_app_state(monkeypatch, shared_web):
     monkeypatch.setattr(app.state.workloads['authentication'], "max_waiters", 0)
     from tests.line_fixtures import cutting_settings
     from app.device_config import load_line_catalog
-    monkeypatch.delattr(app.state,'runtime',raising=False)
-    monkeypatch.setattr(app.state,'catalog',load_line_catalog(cutting_settings().production_lines_json),raising=False)
-    monkeypatch.setattr(app.state,'lines',{},raising=False)
+    replace_database_services(app, catalog=load_line_catalog(cutting_settings().production_lines_json))
+    replace_database_services(app, lines={})
 
 
 @pytest.mark.parametrize('blocking_kind', ['password', 'hr'])
 def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requests_free(state_database, tmp_path, monkeypatch, blocking_kind):
-    repository = WorkshopRepository(state_database)
+    repository = UserRepository(state_database)
+    sessions = SessionRepository(state_database)
     now = datetime.now(ZoneInfo(settings.timezone))
     admin = repository.bootstrap_admin(username='local-admin', display_name='管理员', password='test-password', now=now.isoformat())
-    local_token, _ = repository.create_session(admin['user_id'], now=now, hours=1)
+    local_token, _ = sessions.create_session(admin['user_id'], now=now, hours=1)
     hr_user = repository.upsert_external_worker(external_id='9123', company_no='C0007', group_no='G0021', display_name='工人', now=now.isoformat())
-    hr_token, _ = repository.create_session(hr_user['user_id'], now=now, hours=1)
+    hr_token, _ = sessions.create_session(hr_user['user_id'], now=now, hours=1)
     source = FakeSqlServerClient([_valid_row()])
     service = WorkerAuthService(_enabled_settings(), source)
     service.authenticate('G0021', 'password')  # Prime the real HR status cache.
@@ -68,13 +70,15 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
         monkeypatch.setattr(source, 'fetch_all', lambda *args: block(original_fetch, *args))
         slow_path, slow_payload = '/api/v1/auth/hr-login', {'group_no': 'G0021', 'password': 'password'}
 
-    monkeypatch.setattr(app.state, 'settings', replace(settings, worker_database_auth_enabled=True))
-    monkeypatch.setattr(app.state, 'workshop', repository, raising=False)
-    monkeypatch.setattr(app.state, 'worker_auth', service, raising=False)
-    runtime = SimpleNamespace(settings=settings, metadata=SimpleNamespace(list_reports=lambda **_: ([], 0)),
-                              energy_period_service=SimpleNamespace(get_day=lambda *_, **__: {}))
+    replace_database_services(app, settings=replace(settings, worker_database_auth_enabled=True))
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = sessions
+    replace_database_services(app, worker_auth=service)
+    runtime = make_device_runtime(settings=settings, report_provider=SimpleNamespace(snapshot_service=None),
+                  metadata=SimpleNamespace(list_reports=lambda **_: ([], 0)),
+                  pipeline=make_pipeline_stub(energy_period_service=SimpleNamespace(get_day=lambda *_, **__: {})))
     from tests.line_fixtures import as_line_services
-    monkeypatch.setattr(app.state, 'lines', as_line_services({'Cutter01':runtime}), raising=False)
+    replace_database_services(app, lines=as_line_services({'Cutter01':runtime}))
     local_headers = {'Cookie': f'cutting_session={local_token}'}
     hr_headers = {'Cookie': f'cutting_session={hr_token}'}
 
@@ -132,8 +136,8 @@ def test_eight_expensive_authentications_leave_local_and_cached_hr_business_requ
             assert len(completed) == 8 and all(response.status_code == 200 for response in completed)
             assert anyio.to_thread.current_default_thread_limiter().borrowed_tokens == 0
             assert app.state.workloads['authentication']._threads.borrowed_tokens == 0
-        assert repository.user_for_session(local_token, now=now.isoformat())
-        assert repository.user_for_session(hr_token, now=now.isoformat())
+        assert sessions.user_for_session(local_token, now=now.isoformat())
+        assert sessions.user_for_session(hr_token, now=now.isoformat())
         assert len(source.calls) == (1 if blocking_kind == 'password' else 9)
 
     anyio.run(exercise)
@@ -154,8 +158,7 @@ def test_more_than_eight_session_reads_run_in_threads_without_authentication_adm
         assert release.wait(5)
         return user
 
-    monkeypatch.setattr(app.state, 'workshop', SimpleNamespace(user_for_session=lookup), raising=False)
-    monkeypatch.setattr(app.state, 'devices', {}, raising=False)
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=lookup)
 
     async def exercise():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
@@ -189,10 +192,12 @@ def test_more_than_eight_session_reads_run_in_threads_without_authentication_adm
 def test_bootstrap_and_local_account_hashing_use_authentication_capacity_and_keep_sessions(state_database, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    repository = WorkshopRepository(state_database)
+    repository = UserRepository(state_database)
+    sessions = SessionRepository(state_database)
     isolated = embedded_app(replace(settings, worker_database_auth_enabled=False, auth_cookie_secure=False))
     isolated.include_router(auth.router)
-    isolated.state.workshop = repository
+    isolated.state.runtime.users = repository
+    isolated.state.runtime.sessions = sessions
 
     @isolated.middleware('http')
     async def request_id(request, call_next):

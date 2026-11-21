@@ -1,5 +1,7 @@
 """Contracts must cover actual service output, not just a second handwritten TS model."""
 
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from tests.web_fixtures import database_services, replace_database_services
 from tests.line_fixtures import as_line_services, runtime_line
 from pathlib import Path
 import importlib.util
@@ -184,7 +186,7 @@ def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, f
     raw['physical_file_type'] = file_type
     app = embedded_app(service.settings)
     app.include_router(cutting.router)
-    app.state.cutting_dispatch = service
+    replace_database_services(app, cutting_dispatch=service)
     app.dependency_overrides[require_user] = lambda: admin
 
     @app.middleware('http')
@@ -217,26 +219,28 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     from app.models.domain import WorkshopRecord
 
     service, dispatches, admin = _service(state_database, tmp_path)
-    from app.database.workshop import WorkshopRepository
-    repository = WorkshopRepository(dispatches.database, scope_machine_no='Cutter01')
-    worker = repository.create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')
+    from app.database.confirmations import ConfirmationRepository
+    from app.database.users import UserRepository
+    from app.database.workshop_reports import WorkshopReportRepository
+    repository = WorkshopReportRepository(dispatches.database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(dispatches.database, scope_machine_no='Cutter01')
+    worker = UserRepository(dispatches.database).create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')
     records = [WorkshopRecord(task_id='task1', project_code='SHIP', ship_no='SHIP', segment_name='P1', program_no='p.gen', cut_length=Decimal('1.2'), groove_length=Decimal('0.1'), work_time=Decimal('120'), production_time=datetime(2026, 10, 1, 8))]
     repository.sync_daily_report(report_date='2026-10-01', source_mode='demo', records=records, user=admin, now='2026-10-01T09:00:00', scope_machine_no='Cutter01')
     app = embedded_app(service.settings)
     app.include_router(workshop.router)
     app.include_router(cutting.router)
-    app.state.lines = as_line_services({'Cutter01': SimpleNamespace(settings=service.settings, workshop=repository, query_service=None)})
+    replace_database_services(app, lines=as_line_services({'Cutter01': make_device_runtime(settings=service.settings,
+        workshop=repository, confirmations=confirmations, report_provider=SimpleNamespace(snapshot_service=None),
+        pipeline=make_pipeline_stub(query_service=SimpleNamespace(enrich_ship_names=lambda rows: rows)))}))
     app.dependency_overrides[require_user] = lambda: admin
     app.dependency_overrides[require_admin] = lambda: admin
+    replace_database_services(app, settings=service.settings, cutting_dispatch=service)
     app.dependency_overrides[require_worker] = lambda: worker
 
     @app.middleware('http')
     async def attach_context(request, call_next):
         request.state.request_id = 'contract-test'
-        request.state.database_context = SimpleNamespace(
-            settings=service.settings, cutting_dispatch=service, lines=app.state.lines,
-            database_sources=app.state.database_sources,
-        )
         return await call_next(request)
 
     with TestClient(app) as client:
@@ -271,10 +275,10 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
     repository = AlarmRepository(state_database, source_name='production')
     repository.initialize()
     cfg = Settings(project_root=tmp_path, device_id='Cutter01')
-    runtime = SimpleNamespace(settings=cfg, alarm_repository=repository, alarm_worker=SimpleNamespace(enabled=False, thread=None))
+    runtime = make_device_runtime(settings=cfg, alarm_repository=repository, alarm_worker=SimpleNamespace(enabled=False, thread=None))
     app = embedded_app()
     app.include_router(alarms.router)
-    app.state.lines = as_line_services({'Cutter01': runtime})
+    replace_database_services(app, lines=as_line_services({'Cutter01': runtime}))
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
 
     @app.middleware('http')

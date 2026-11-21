@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Callable
 
 from app.config import LOADED_SOURCES, Settings
 from app.device_config import ProductionLineCatalog, load_line_catalog
@@ -366,6 +366,4 @@ class DatabaseRuntime:
 
 
 def database_context(state: ApplicationRuntime) -> DatabaseServices:
-    runtime = getattr(state, 'database_runtime', None)
-    # Embedded apps can still supply their service graph without a hot runtime.
-    return runtime.snapshot() if runtime is not None else cast(DatabaseServices, state)
+    return state.database_runtime.snapshot()

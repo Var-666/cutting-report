@@ -9,7 +9,7 @@ from app.database.definitions import DefinitionRepository
 from app.database.dispatch import DispatchRepository
 from app.database.metadata import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
-from app.database.workshop import WorkshopRepository
+from app.database.users import UserRepository
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -17,19 +17,19 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 def _repositories(database):
     metadata = MetadataRepository(database, device_id='Cutter01')
-    workshop = WorkshopRepository(database, scope_machine_no='Cutter01')
+    users = UserRepository(database)
     automation = AutomationRepository(database)
     definitions = DefinitionRepository(database)
     dispatches = DispatchRepository(database)
     definitions.initialize()
     dispatches.initialize()
-    return database, metadata, workshop, automation, definitions, dispatches
+    return database, metadata, users, automation, definitions, dispatches
 
 
 def test_every_repository_uses_the_same_connection_policy(state_database) -> None:
-    database, metadata, workshop, automation, definitions, dispatches = _repositories(state_database)
+    database, metadata, users, automation, definitions, dispatches = _repositories(state_database)
 
-    for repository in (metadata, workshop, automation, definitions, dispatches):
+    for repository in (metadata, users, automation, definitions, dispatches):
         assert repository.database is database
         with repository.connect() as connection:
             assert connection.execute('SELECT current_user AS name').fetchone()['name'] == 'cutting_app'
@@ -38,9 +38,9 @@ def test_every_repository_uses_the_same_connection_policy(state_database) -> Non
 
 
 def test_cross_repository_unit_of_work_rolls_back_all_changes(state_database) -> None:
-    database, metadata, workshop, automation, _definitions, _dispatches = _repositories(state_database)
+    database, metadata, users, automation, _definitions, _dispatches = _repositories(state_database)
     now = datetime(2026, 8, 25, 10, 0, tzinfo=TZ).isoformat(timespec="seconds")
-    admin = workshop.create_user(
+    admin = users.create_user(
         username="admin",
         display_name="管理员",
         password="correct-horse-battery-staple",
@@ -101,7 +101,7 @@ def test_cross_repository_unit_of_work_rolls_back_all_changes(state_database) ->
 def test_failed_cross_repository_link_does_not_leave_orphan_job(
     state_database,
 ) -> None:
-    database, metadata, _workshop, _automation, _definitions, _dispatches = _repositories(state_database)
+    database, metadata, _users, _automation, _definitions, _dispatches = _repositories(state_database)
 
     with pytest.raises(LookupError):
         with UnitOfWork(database, device_id="Cutter01", scope_machine_no="Cutter01") as unit:

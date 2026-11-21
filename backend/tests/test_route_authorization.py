@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 from app.api import designer
 from app.api.auth import LoginRequest, login, require_admin, require_user, require_worker
 from app.config import Settings
-from app.database.workshop import AuthenticationError
+from app.database.identity_security import AuthenticationError
 from app.main import app
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import request_for, embedded_app, database_services, replace_database_services
 
 
 pytestmark = pytest.mark.usefixtures("shared_web")
@@ -149,8 +149,8 @@ class _SessionStub:
 def test_anonymous_requests_cannot_reach_management_endpoints(
     path: str, monkeypatch
 ) -> None:
-    monkeypatch.setattr(app.state, "workshop", _SessionStub(), raising=False)
-    monkeypatch.setattr(app.state, "settings", settings, raising=False)
+    app.state.runtime.sessions = _SessionStub()
+    replace_database_services(app, settings=settings)
 
     response = TestClient(app).get(path)
 
@@ -171,7 +171,7 @@ def test_worker_session_cannot_reach_management_endpoints(monkeypatch, path) -> 
         "active": True,
         "created_at": "2026-08-21T08:00:00+08:00",
     }
-    monkeypatch.setattr(app.state, "workshop", _SessionStub(worker), raising=False)
+    app.state.runtime.sessions = _SessionStub(worker)
     client = TestClient(app)
     client.cookies.set("cutting_session", "worker-session")
 
@@ -181,7 +181,7 @@ def test_worker_session_cannot_reach_management_endpoints(monkeypatch, path) -> 
 
 
 def test_anonymous_user_cannot_request_report_analysis(monkeypatch) -> None:
-    monkeypatch.setattr(app.state, "workshop", _SessionStub(), raising=False)
+    app.state.runtime.sessions = _SessionStub()
 
     response = TestClient(app).post(
         "/api/v1/analysis",
@@ -216,27 +216,14 @@ def test_unified_login_rejects_a_legacy_local_worker_when_hr_credentials_fail(mo
         def authenticate(self, group_no, password):
             raise AuthenticationError("集团工号或密码错误")
 
-    class _Request:
-        state = SimpleNamespace()
-        app = type(
-            "App",
-            (),
-            {
-                "state": type(
-                    "State",
-                    (),
-                    {"workshop": _LocalWorkerRepository(), "worker_auth": _WorkerAuth(),
-                     "settings": replace(settings, worker_database_auth_enabled=True)},
-                )()
-            },
-        )()
-
-    monkeypatch.setattr(app.state, 'settings', replace(settings, worker_database_auth_enabled=True))
+    web = embedded_app(replace(settings, worker_database_auth_enabled=True))
+    web.state.runtime.users = _LocalWorkerRepository()
+    replace_database_services(web, worker_auth=_WorkerAuth())
 
     with pytest.raises(HTTPException) as exc_info:
         login(
             LoginRequest(username="old-worker", password="worker-password"),
-            _Request(),
+            request_for(web),
             object(),
         )
 
@@ -264,9 +251,11 @@ def test_unified_login_accepts_local_admin_without_contacting_hr(monkeypatch) ->
         def authenticate(self, group_no, password):
             raise AssertionError("本地管理员登录不应访问HR数据库")
 
-    monkeypatch.setattr(app.state, 'settings', replace(settings, worker_database_auth_enabled=True))
-    monkeypatch.setattr(app.state, "workshop", _LocalAdminRepository(), raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", _UnusedWorkerAuth(), raising=False)
+    replace_database_services(app, settings=replace(settings, worker_database_auth_enabled=True))
+    repository = _LocalAdminRepository()
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(create_session=repository.create_session)
+    replace_database_services(app, worker_auth=_UnusedWorkerAuth())
 
     response = TestClient(app).post(
         "/api/v1/auth/login",
@@ -307,9 +296,11 @@ def test_unified_login_accepts_hr_account_and_keeps_granted_role(monkeypatch) ->
                 "display_name": "张三",
             }
 
-    monkeypatch.setattr(app.state, 'settings', replace(settings, worker_database_auth_enabled=True))
-    monkeypatch.setattr(app.state, "workshop", _HrAccountRepository(), raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", _WorkerAuth(), raising=False)
+    replace_database_services(app, settings=replace(settings, worker_database_auth_enabled=True))
+    repository = _HrAccountRepository()
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(create_session=repository.create_session)
+    replace_database_services(app, worker_auth=_WorkerAuth())
 
     response = TestClient(app).post(
         "/api/v1/auth/login",
@@ -351,10 +342,10 @@ def test_worker_login_creates_a_session_from_hr_identity(monkeypatch, path) -> N
             assert user_id == "usr_hr_worker"
             return "safe-session-token", "2026-08-24T21:00:00+08:00"
 
-    monkeypatch.setattr(app.state, "worker_auth", _WorkerAuthStub(), raising=False)
-    monkeypatch.setattr(
-        app.state, "workshop", _WorkerSessionRepository(), raising=False
-    )
+    replace_database_services(app, worker_auth=_WorkerAuthStub())
+    repository = _WorkerSessionRepository()
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(create_session=repository.create_session)
 
     response = TestClient(app).post(
         path,
@@ -376,7 +367,7 @@ def test_hr_login_requires_a_valid_group_number(path, account) -> None:
 
 @pytest.mark.parametrize("path", ["/admin/home", "/admin/reports/leadership"])
 def test_frontend_admin_routes_return_the_spa_shell(path: str) -> None:
-    index = app.state.settings.frontend_dist_dir / 'index.html'
+    index = database_services(app).settings.frontend_dist_dir / 'index.html'
     index.parent.mkdir(parents=True)
     index.write_text('<html lang="zh-CN"></html>')
     response = TestClient(app).get(path)
@@ -399,7 +390,7 @@ def test_demo_flag_never_bypasses_sqlserver_designer_token(monkeypatch) -> None:
         demo_mode=True,
         sql_workbench_admin_token="",
     )
-    request = SimpleNamespace(app=embedded_app(sqlserver_settings), state=SimpleNamespace())
+    request = request_for(embedded_app(sqlserver_settings))
 
     with pytest.raises(HTTPException) as exc_info:
         designer._require_admin_token(None, request)
@@ -414,6 +405,6 @@ def test_demo_designer_uses_admin_session_without_a_second_token(monkeypatch) ->
         demo_mode=True,
         sql_workbench_admin_token="",
     )
-    request = SimpleNamespace(app=embedded_app(demo_settings), state=SimpleNamespace())
+    request = request_for(embedded_app(demo_settings))
 
     assert designer._require_admin_token(None, request) is None

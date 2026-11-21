@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, request_for
 from tests.automation_process_helpers import automation_process
 from dataclasses import replace
 from threading import Event
@@ -40,7 +41,7 @@ def test_claim_and_failure_record_errors_do_not_kill_report_worker():
                 raise RuntimeError("temporary failure status write outage")
 
     class Pipeline:
-        def run(self, job):
+        def run(self, job, *, cancellation_check=None):
             generated.append(job['report_id'])
             if job["report_id"] == "2":
                 raise RuntimeError("bad report")
@@ -80,7 +81,7 @@ def test_slow_report_cannot_starve_email_and_callback_cannot_fail_completed_repo
             failed.append(args)
 
     class Pipeline:
-        def run(self, job):
+        def run(self, job, *, cancellation_check=None):
             generating.set()
             assert release.wait(3)
 
@@ -123,14 +124,10 @@ def test_slow_report_cannot_starve_email_and_callback_cannot_fail_completed_repo
 def test_health_is_degraded_when_background_thread_stopped(stopped):
     from app.main import health
 
-    request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(settings=settings, worker_status_reader=SimpleNamespace(
-            status=lambda: {key: key != stopped for key in (
-                "report_alive", "automation_alive", "email_alive"
-            )}
-        ))),
-        state=SimpleNamespace(request_id="test-health"),
-    )
+    app = embedded_app(settings)
+    app.state.runtime.worker_status_reader = SimpleNamespace(
+        status=lambda: {key: key != stopped for key in ("report_alive", "automation_alive", "email_alive")})
+    request = request_for(app, request_id="test-health")
     response = anyio.run(health, request)
     assert response["success"] is True
     assert response["data"]["status"] == "ok"

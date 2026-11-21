@@ -1,4 +1,4 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, database_services, replace_database_services
 from tests.postgres_fixtures import state_settings
 from contextlib import contextmanager
 from dataclasses import replace
@@ -367,15 +367,15 @@ def test_exports_cover_all_filters_escape_text_and_enforce_limits(tmp_path):
 @pytest.fixture
 def api(state_database):
     app = embedded_app()
-    app.state.database = state_database
+    app.state.runtime.database = state_database
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     from app.database.metadata import MetadataRepository
     instance = WeldingService(welding_settings(llm_enabled=False), None,
         analyses=MetadataRepository(state_database, device_id='welding', analysis_scope='welding:test'))
-    app.state.lines = {'welding': runtime_line(instance, 'welding')}
-    app.state.catalog = load_line_catalog(instance.settings.production_lines_json)
+    replace_database_services(app, lines={'welding': runtime_line(instance, 'welding')})
+    replace_database_services(app, catalog=load_line_catalog(instance.settings.production_lines_json))
     return TestClient(app, headers={'X-Production-Line': 'welding'})
 
 
@@ -387,7 +387,7 @@ def test_api_validation_disabled_missing_and_capabilities(api):
     weld = next(item for item in items if item['id'] == 'welding')
     assert weld['type'] == 'welding' and weld['enabled'] is True
     assert 'alarms' not in weld['capabilities'] and 'dispatch' not in weld['capabilities']
-    api.app.state.catalog = api.app.state.catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'welding' else line for line in api.app.state.catalog.lines)})
+    replace_database_services(api.app, catalog=database_services(api.app).catalog.model_copy(update={'lines': tuple(line.model_copy(update={'enabled': False}) if line.id == 'welding' else line for line in database_services(api.app).catalog.lines)}))
     assert api.get('/api/v1/welding/health').status_code == 503
     disabled = next(item for item in api.get('/api/v1/production-lines').json()['data']['items'] if item['id'] == 'welding')
     assert disabled['enabled'] is False
@@ -403,7 +403,7 @@ def test_worker_cannot_read_welding_or_line_catalog(api):
 
 
 def test_ai_input_version_and_unavailable_model(api):
-    instance = api.app.state.lines['welding'].service
+    instance = database_services(api.app).lines['welding'].service
     instance.page = lambda *args, **kwargs: {'data_version': 'b' * 64}
     body = {'query': query().model_dump(mode='json'), 'data_version': 'a' * 64}
     assert api.post('/api/v1/welding/analysis', json=body).status_code == 409
@@ -418,11 +418,11 @@ def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeyp
     from app.models.domain import AnalysisResult
     from app.database.metadata import MetadataRepository
     instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None,
-        analyses=MetadataRepository(api.app.state.database, device_id='welding', analysis_scope='welding:test'))
+        analyses=MetadataRepository(api.app.state.runtime.database, device_id='welding', analysis_scope='welding:test'))
     data = report_data()
     data.update(data_version='a' * 64, equipment=[])
     instance.report = lambda *args, **kwargs: data
-    api.app.state.lines['welding'] = runtime_line(instance, 'welding')
+    database_services(api.app).lines['welding'] = runtime_line(instance, 'welding')
     calls = []
     def analyze(self, kind, context):
         calls.append(context)
@@ -625,7 +625,7 @@ def test_oversized_welding_groups_preserve_daily_totals_and_limit_equipment_expo
 def test_http_source_error_keeps_safe_category_without_retry_header(api):
     def failed(*args, **kwargs):
         raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
-    api.app.state.lines['welding'].service.page = failed
+    database_services(api.app).lines['welding'].service.page = failed
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'sql_error'
@@ -636,7 +636,7 @@ def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failu
     from app.services.report_snapshots import SnapshotRefreshBusy
     def preparing(*args, **kwargs):
         raise SnapshotRefreshBusy('统计正在生成，请稍后重试')
-    api.app.state.lines['welding'].service.page = preparing
+    database_services(api.app).lines['welding'].service.page = preparing
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'snapshot_refresh_busy'
@@ -647,7 +647,7 @@ def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
     from app.services.report_snapshots import SnapshotRefreshRejected
     def rejected(*args, **kwargs):
         raise SnapshotRefreshRejected('后台刷新队列已满')
-    api.app.state.lines['welding'].service.page = rejected
+    database_services(api.app).lines['welding'].service.page = rejected
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
     assert result.headers['X-Welding-Error'] == 'snapshot_queue_full'
@@ -693,7 +693,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
         finally:
             source['open'] = False
     instance.report = report
-    api.app.state.lines['welding'] = runtime_line(instance, 'welding')
+    database_services(api.app).lines['welding'] = runtime_line(instance, 'welding')
     def slow():
         assert not source['open']
         assert all(row['executing'] == row['waiting'] == 0 for row in resource.status()['items'])
@@ -705,7 +705,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
             result = path.with_suffix('.pdf')
             result.write_bytes(b'%PDF-test')
             return result
-    api.app.state.pdf_service = Pdf()
+    api.app.state.runtime.pdf_service = Pdf()
     def model(*args):
         slow()
         return AnalysisResult(status='success', overview='ok', features='ok', alerts='ok', suggestions='ok')
@@ -758,7 +758,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
     release, lock = Event(), Lock()
     counts = {'running': 0, 'peak': 0}
     if has_snapshot_storage:
-        api.app.state.lines['welding'].service.snapshot_service = SimpleNamespace(coordination=None)
+        database_services(api.app).lines['welding'].service.snapshot_service = SimpleNamespace(coordination=None)
     def report(*args):
         with lock:
             counts['running'] += 1
@@ -769,7 +769,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
         finally:
             with lock:
                 counts['running'] -= 1
-    api.app.state.lines['welding'].service.page = report
+    database_services(api.app).lines['welding'].service.page = report
     async def exercise():
         async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
             tasks = [asyncio.create_task(client.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')) for _ in range(5)]
@@ -804,9 +804,9 @@ def test_ready_snapshots_do_not_wait_for_busy_source_connections(api, monkeypatc
             with lock:
                 counts['running'] -= 1
 
-    api.app.state.lines['welding'].service.snapshot_service = SimpleNamespace(coordination=object())
-    api.app.state.lines['welding'].service.part = part
-    api.app.state.lines['welding'].service.page = lambda *_: {'data_version': 'ready', 'meta': {'report_data': {'source': 'snapshot'}}}
+    database_services(api.app).lines['welding'].service.snapshot_service = SimpleNamespace(coordination=object())
+    database_services(api.app).lines['welding'].service.part = part
+    database_services(api.app).lines['welding'].service.page = lambda *_: {'data_version': 'ready', 'meta': {'report_data': {'source': 'snapshot'}}}
 
     async def exercise():
         async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
@@ -827,8 +827,8 @@ def test_ready_snapshots_do_not_wait_for_busy_source_connections(api, monkeypatc
 
 @pytest.mark.parametrize('format,media', [('csv', 'text/csv'), ('html', 'text/html')])
 def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
-    api.app.state.lines['welding'].service.report = lambda *args, **kwargs: report_data()
-    api.app.state.pdf_service = SimpleNamespace(render=lambda _: pytest.fail('CSV/HTML must not render PDF'))
+    database_services(api.app).lines['welding'].service.report = lambda *args, **kwargs: report_data()
+    api.app.state.runtime.pdf_service = SimpleNamespace(render=lambda _: pytest.fail('CSV/HTML must not render PDF'))
     result = api.get(f'/api/v1/welding/export?report_type=jobs&format={format}&start=2026-10-01&end=2026-10-31')
     assert result.status_code == 200 and media in result.headers['content-type']
     assert f'.{format}' in result.headers['content-disposition']
@@ -837,7 +837,7 @@ def test_http_csv_and_html_export_preserve_data_without_pdf(api, format, media):
 
 def test_refresh_control_is_validated_and_excluded_from_business_filters(api):
     calls = []
-    api.app.state.lines['welding'].service.page = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
+    database_services(api.app).lines['welding'].service.page = lambda kind, selected, **kwargs: calls.append((selected, kwargs)) or {'items': []}
     url = '/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02'
     assert api.get(url + '&refresh=true').status_code == 200
     assert calls[-1][1] == {'force': True}

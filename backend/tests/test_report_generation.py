@@ -11,17 +11,18 @@ from app.models.domain import EquipmentRecord, QueryBundle
 from app.services.query_service import QueryService
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_generation.equipment import analyze_legacy_daily
+from tests.analysis_fakes import model_analysis
 from test_pipeline_ai_isolation import pipeline_job
 
 
 SCENARIOS = [(kind, interval) for kind in ('leadership', 'workshop', 'equipment')
              for interval in (False, True)]
-EXPECTED_REPORTS = {('leadership', False): 'e4dfb35aa142a4fbace7880f107548d18a2af3ced808e6f9e9d78f11631b61ce',
- ('leadership', True): 'd75421c0908bb3ee1be0c5d8887930a274809f1537cafd707513d5dca0c0b89d',
- ('workshop', False): '3fa6ea3560fa50fc57ea4291727afc7be9be063e9c9d4952402f43aa7099f5e9',
- ('workshop', True): '2268416677ab19743eeef51f4aaa9ca889d81a085fc1422c53731a0b0a95ef4d',
- ('equipment', False): '0f1dfd31cbcfc6fd69b23021efec8d738e13842cc279450457b24112f9a6a766',
- ('equipment', True): '5d854311912aaf8e4a8ef776df1dec816cb714652683ce2e27064d294eab43af'}
+EXPECTED_REPORTS = {('leadership', False): 'aebde5a1165b21a18401b4d67fe21c96ea4470b53ccdf55ccb83aa0c1e1d031d',
+ ('leadership', True): '4c12649bb3291777d11e2246671a847620ded5b84550494f094a0acd3c5c3ed7',
+ ('workshop', False): '9662574de5a01189400f8731d25c502d1e4fae59eebebc1b3885498f170ed6bb',
+ ('workshop', True): '6d7624f744d91466378c26c1eca955bd2ae44540a72c9fb3cc1f6b1cd1a48179',
+ ('equipment', False): '56d1523a0a492d856eef552a59e94bf02cbdd58f4c4cf10e03fb091b31dc6f8d',
+ ('equipment', True): 'ead5f38215683bc062b492f67ab387c24f5a4d35b77db1b7bfe5be989196957a'}
 
 
 def business_payload(value):
@@ -34,7 +35,8 @@ def business_payload(value):
 
 
 def generate_report_case(state_database, directory, report_type, interval):
-    pipeline, job = pipeline_job(state_database, directory, report_type, interval, llm_enabled=False)
+    pipeline, job = pipeline_job(state_database, directory, report_type, interval)
+    pipeline.analysis_service.llm.analyze_context = model_analysis
     captured, transitions = [], []
     original_render, original_status = pipeline.report_service.render, pipeline.metadata.update_status
 
@@ -48,7 +50,8 @@ def generate_report_case(state_database, directory, report_type, interval):
 
     pipeline.report_service.render = render
     pipeline.metadata.update_status = update_status
-    pipeline.run(job)
+    # The report's closure windows are anchored to the job submission time.
+    pipeline.run({**job, 'created_at': '2026-09-10T10:00:00+08:00'})
     completed = pipeline.metadata.get_job(job['report_id'])
     assert completed['status'] == 'completed'
     assert (pipeline.settings.reports_dir / completed['relative_path']).is_file()

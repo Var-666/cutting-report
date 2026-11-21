@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
 from time import time
-from types import SimpleNamespace
 import errno
 import logging
 import socket
@@ -141,7 +140,7 @@ def test_concurrent_duplicate_endpoints_and_duplicate_results_are_atomic(monitor
 def test_http_crud_validation_permissions_and_global_scope(monitor):
     service, repository, clock = monitor
     app = embedded_app()
-    app.state.runtime = SimpleNamespace(database_monitor=service)
+    app.state.runtime.database_monitor = service
     app.include_router(router)
     user = [{'role': 'admin'}]
     app.dependency_overrides[require_user] = lambda: user[0]

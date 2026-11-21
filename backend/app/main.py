@@ -159,8 +159,8 @@ async def request_id_middleware(request: Request, call_next):
                     and 'X-SQL-Resource-Error' not in response.headers):
                 status = response.status_code
                 transient = status in (503, 504)
-                operations = getattr(application_state(request), 'operations', None)
-                repeated = operations is not None and operations.repeated_http_failure(route, sql_line, source_key, status)
+                operations = application_state(request).operations
+                repeated = operations.repeated_http_failure(route, sql_line, source_key, status)
                 if status >= 500:
                     code = {503: 'HTTP_UNAVAILABLE', 504: 'HTTP_TIMEOUT'}.get(status, 'HTTP_SERVER_ERROR')
                     feature = getattr(matched_route, 'path', '').removeprefix('/api/v1/').partition('/')[0]
@@ -224,8 +224,8 @@ async def unexpected_error_handler(request: Request, exc: Exception):
 async def health(request: Request) -> dict:
     settings = await to_thread.run_sync(request_settings, request, limiter=_health_threads)
     mode = settings.effective_data_source_mode
-    reader = getattr(application_state(request), "worker_status_reader", None)
-    worker_status = await to_thread.run_sync(reader.status, limiter=_health_threads) if reader else {"state": "missing", "report_alive": False}
+    reader = application_state(request).worker_status_reader
+    worker_status = await to_thread.run_sync(reader.status, limiter=_health_threads)
     ready = background_ready(worker_status)
     web_ready = worker_status.get("database_available") is not False
     result = {

@@ -1,6 +1,8 @@
+from fastapi import FastAPI
+from tests.runtime_factories import install_runtime
+from tests.web_fixtures import request_for
 from dataclasses import replace
 from datetime import date, datetime
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -53,8 +55,10 @@ def test_cutting_and_energy_pages_share_background_reads_and_persistent_results(
 def test_cutting_http_reader_reports_cold_preparation_instead_of_zero(configured):
     from fastapi import HTTPException
     runtime, _ = configured
-    request = SimpleNamespace(app=SimpleNamespace(state=runtime), state=SimpleNamespace(request_id='cache'),
-                              headers={'X-Production-Line': 'Cutter01'}, query_params={'device_id': 'Cutter01'})
+    app = FastAPI()
+    install_runtime(app, runtime)
+    request = request_for(app, request_id='cache', headers={'X-Production-Line': 'Cutter01'},
+                          params={'device_id': 'Cutter01'})
     with pytest.raises(HTTPException) as error:
         statistics_page(request, 'leadership', {'report_month': date(2026, 11, 1)})
     assert error.value.status_code == 503
@@ -174,7 +178,7 @@ def test_energy_source_outages_do_not_replace_successful_statistics(configured, 
     snapshots = provider.snapshot_service.repository
     snapshots.save(ReportSnapshot(key, payload, fingerprint(payload), now, now, now + timedelta(seconds=600)))
     energy = provider.pipeline.energy_period_service
-    failure = {'warning': 'source unavailable', 'configuration_error': None}
+    failure = {'warning': 'source unavailable', 'configuration_error': None, 'source_failed': True}
     monkeypatch.setattr(energy, 'configuration_error', lambda: None)
     monkeypatch.setattr(energy, 'get_day', lambda *args, **kwargs: {'sync_ok': False})
     monkeypatch.setattr(energy, 'get_task_day', lambda *args, **kwargs: failure)

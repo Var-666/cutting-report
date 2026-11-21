@@ -1,3 +1,4 @@
+from tests.runtime_factories import make_database_services
 from tests.automation_fixtures import NOW, STAMP, complete_report
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -69,7 +70,7 @@ def test_report_preparation_uses_one_operation_snapshot(workflow, monkeypatch):
     snapshots, prepared = [], []
     def snapshot():
         snapshots.append(True)
-        return SimpleNamespace(lines={'Cutter01': selected})
+        return make_database_services(lines={'Cutter01': selected})
     service.database_runtime = SimpleNamespace(snapshot=snapshot)
     monkeypatch.setattr(service, '_ensure_workshop_report', lambda run, now, device: prepared.append(device))
     assert service._create_report_job({**run, 'report_type': 'workshop'}, NOW)

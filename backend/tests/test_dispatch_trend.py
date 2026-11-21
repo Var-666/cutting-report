@@ -1,4 +1,4 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, replace_database_services
 from dataclasses import replace
 from datetime import date
 
@@ -77,7 +77,7 @@ def test_dispatch_trend_http_contract_filters_validation_and_admin_scope(history
     item = add(sent_at='2026-11-02T09:00:00+08:00')
     app = embedded_app()
     app.include_router(router)
-    app.state.cutting_dispatch = service
+    replace_database_services(app, cutting_dispatch=service)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
     @app.middleware('http')
     async def request_id(request, call_next):

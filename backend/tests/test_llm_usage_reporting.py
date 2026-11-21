@@ -113,7 +113,7 @@ def test_pagination_is_stable_and_summary_does_not_change_with_page(repository):
 
 def test_usage_api_is_admin_only_bounded_and_exposes_no_provider_credentials(repository):
     app = embedded_app()
-    app.state.llm_usage = repository
+    app.state.runtime.llm_usage = repository
     app.include_router(router)
 
     @app.middleware("http")

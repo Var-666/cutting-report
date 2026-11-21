@@ -6,7 +6,9 @@ from unittest.mock import Mock
 import pytest
 
 from app.database.cutting_queries import CuttingQueryRepository
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.database.workshop_errors import DailyReportSourceMismatchError, DailyReportRecordMismatchError
 from app.models.domain import WorkshopRecord
 
@@ -40,22 +42,25 @@ def snapshot(task_id, day):
 
 @pytest.fixture
 def reports(state_database):
-    repo = WorkshopRepository(state_database, scope_machine_no='Cutter01')
-    user = repo.bootstrap_admin(username='completion-test', display_name='工人', password='test-password', now='2026-10-01')
+    repo = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
+    user = users.bootstrap_admin(username='completion-test', display_name='工人', password='test-password', now='2026-10-01')
     def create(day, records, source='sqlserver'):
         return repo.create_daily_report(report_date=day, source_mode=source, records=records, user=user, now='2026-10-01')
     first = create('2026-09-30', [snapshot('A', '2026-09-30'), snapshot('B', '2026-09-30')])
-    repo.confirm_task(task_id='A', report_id=first['report_id'], user=user, now='2026-10-01T00:03:00')
+    confirmations.confirm_task(task_id='A', report_id=first['report_id'], user=user, now='2026-10-01T00:03:00')
     return repo, user, first, create
 
 
 def test_history_reconciliation_previews_then_moves_and_merges_without_losing_confirmation(reports):
     repo, user, first, create = reports
     target = create('2026-10-01', [snapshot('A', '2026-10-01'), snapshot('C', '2026-10-01')])
-    other = WorkshopRepository(repo.database, scope_machine_no='Cutter02')
+    other = WorkshopReportRepository(repo.database, scope_machine_no='Cutter02')
     other.create_daily_report(report_date='2026-09-30', source_mode='sqlserver', records=[snapshot('A', '2026-09-30')], user=user, now='2026-10-01')
-    before_confirmation = repo.get_confirmations(['A'])['A']
-    before_audits = repo.list_confirmation_audits(task_id='A')
+    confirmations = ConfirmationRepository(repo.database, scope_machine_no='Cutter01')
+    before_confirmation = confirmations.get_confirmations(['A'])['A']
+    before_audits = confirmations.list_confirmation_audits(task_id='A')
     old_item = repo.get_daily_report_records('2026-09-30')[1][0]
     dates = {'A': date(2026, 10, 1)}
     assert repo.reconcile_completion_dates(dates) == {'changed_tasks': 1, 'merged_snapshots': 1}
@@ -67,8 +72,8 @@ def test_history_reconciliation_previews_then_moves_and_merges_without_losing_co
     moved = next(row for row in records if row.task_id == 'A')
     assert moved.production_date == date(2026, 10, 1) and moved.production_time == old_item.production_time
     assert moved.work_time == old_item.work_time and moved.snapshot_revision > old_item.snapshot_revision
-    assert repo.get_confirmations(['A'])['A'] == {**before_confirmation, 'report_id': target['report_id']}
-    assert repo.list_confirmation_audits(task_id='A') == before_audits
+    assert confirmations.get_confirmations(['A'])['A'] == {**before_confirmation, 'report_id': target['report_id']}
+    assert confirmations.list_confirmation_audits(task_id='A') == before_audits
     assert other.get_daily_report('2026-09-30')['item_count'] == 1
     assert repo.reconcile_completion_dates(dates, apply=True) == {'changed_tasks': 0, 'merged_snapshots': 0}
 
@@ -101,15 +106,16 @@ def test_conflicting_snapshot_values_are_preserved_and_rollback_other_moves(repo
     from dataclasses import replace
     repo, _, _, create = reports
     create('2026-10-01', [replace(snapshot('B', '2026-10-01'), **{field: value})])
-    confirmations = repo.get_confirmations(['A'])
-    audits = repo.list_confirmation_audits(task_id='A')
+    confirmations = ConfirmationRepository(repo.database, scope_machine_no='Cutter01')
+    before_confirmations = confirmations.get_confirmations(['A'])
+    audits = confirmations.list_confirmation_audits(task_id='A')
     with pytest.raises(DailyReportRecordMismatchError, match='生产字段不一致'):
         repo.reconcile_completion_dates({'A': date(2027, 1, 1), 'B': date(2026, 10, 1)}, apply=apply)
     assert repo.get_daily_report('2027-01-01') is None
     assert repo.get_daily_report('2026-09-30')['item_count'] == 2
     assert getattr(repo.get_daily_report_records('2026-10-01')[1][0], field) == value
-    assert repo.get_confirmations(['A']) == confirmations
-    assert repo.list_confirmation_audits(task_id='A') == audits
+    assert confirmations.get_confirmations(['A']) == before_confirmations
+    assert confirmations.list_confirmation_audits(task_id='A') == audits
 
 
 def test_command_previews_then_applies_and_reports_unresolved_tasks(reports, postgres_state, tmp_path, monkeypatch, capsys):

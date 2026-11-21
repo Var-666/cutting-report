@@ -54,8 +54,10 @@ def welding_settings(**overrides) -> Settings:
 def runtime_line(service, line_id='Cutter01'):
     from app.services.production_lines import ProductionLineRuntime
     cfg = configuration(Path('/tmp/line-unit-test'), welding=True)
-    return ProductionLineRuntime(load_line_catalog(cfg.production_lines_json).get(line_id), service,
-                                 background=service if line_id.startswith('Cutter') else None, pipeline=getattr(service, 'pipeline', None))
+    line = load_line_catalog(cfg.production_lines_json).get(line_id)
+    if line.type == 'cutting':
+        return ProductionLineRuntime(line, service, background=service, pipeline=service.pipeline)
+    return ProductionLineRuntime(line, service)
 
 
 CUTTING_SCOPES = {line.id: line.machine_no for line in load_line_catalog(EXAMPLE.read_text()).lines if line.type == 'cutting'}

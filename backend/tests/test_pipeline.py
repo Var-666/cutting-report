@@ -10,7 +10,9 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
-from app.database.workshop import WorkshopRepository
+from app.database.confirmations import ConfirmationRepository
+from app.database.users import UserRepository
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import ReportFilter
 from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
@@ -39,7 +41,7 @@ def test_export_dates_use_two_digits(tmp_path: Path, filter_name: str, value, ex
 @pytest.mark.parametrize(
     ("report_type", "expected_title", "expected_chart"),
     [
-        ("leadership", "切割生产领导月报", "leadership-daily-chart"),
+        ("leadership", "切割生产领导月报", "lp-daily-chart"),
         ("workshop", "切割生产车间日报", "length-chart"),
         ("equipment", "切割生产设备报表", "equipment-detail-chart"),
     ],
@@ -69,8 +71,10 @@ def test_demo_pipeline_generates_offline_report(state_database,
     pipeline.analysis_service.llm.analyze_context = model_analysis
     now = datetime.now(ZoneInfo(test_settings.timezone)).isoformat(timespec="seconds")
     if report_type == "workshop":
-        workshop = WorkshopRepository(state_database, scope_machine_no='Cutter01')
-        user = workshop.bootstrap_admin(
+        workshop = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+        confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+        users = UserRepository(state_database)
+        user = users.bootstrap_admin(
             username="tester",
             display_name="测试工人",
             password="safe-password",
@@ -86,7 +90,7 @@ def test_demo_pipeline_generates_offline_report(state_database,
             user=user,
             now=now,
         )
-        workshop.confirm_task(
+        confirmations.confirm_task(
             task_id="20260818-001",
             report_id=daily_report["report_id"],
             user=user,
@@ -120,9 +124,9 @@ def test_demo_pipeline_generates_offline_report(state_database,
     assert "window.echarts" in html
     assert "window.__REPORT_READY__ = true" in html
     assert "report-printing" in html
-    assert 'class="report-cover"' in html
-    assert 'class="cover-folio"' in html
-    assert 'class="report-footer"' in html
+    assert "切割生产智能产报系统" in html
+    assert "报告编号：" in html
+    assert "版本：test" in html
     assert '"areaStyle"' in html
     assert "大模型分析" in html
     assert "模拟大模型分析" not in html
@@ -130,13 +134,12 @@ def test_demo_pipeline_generates_offline_report(state_database,
         assert "分析边界与待核实事项" in html
     assert "本期生产记录已整理" in html
     assert "分析依据" in html
-    analysis_metric = {"leadership": "当月坡口长度", "workshop": "工人确认率", "equipment": "已匹配任务电耗"}
+    analysis_metric = {"leadership": "坡口长度", "workshop": "工人确认率", "equipment": "仪表电耗"}
     assert analysis_metric[report_type] in html
     assert "2026年08月18日" in html
     if report_type in {"workshop", "equipment"}:
         assert 'class="screen-only"' in html
-        assert 'class="print-table-page"' in html
-        assert 'class="print-table-chunk"' in html
+        assert "window.prepareIndustrialReport()" in html
     if report_type == "workshop":
         assert "工程号" in html
         assert "船名" in html
@@ -254,7 +257,7 @@ def test_range_export_keeps_the_recent_twelve_month_summary(state_database,
     assert "2026-08-17 至 2026-08-18" in html
     assert "2025年09月" in html
     if report_type == "leadership":
-        assert "近 12 个月按月对比与趋势" in html
+        assert "近 12 个月生产趋势" in html
     else:
         assert "近 12 个月月度能耗汇总" in html
         assert "<th>序号</th><th>月份</th>" in html
@@ -304,6 +307,21 @@ def report_flow(state_database, tmp_path, monkeypatch):
 
     def fetch_all(sql, parameters):
         assert "[dbo].[task]" in sql
+        if 'GROUP BY bucket_start' in sql:
+            machine, start, end = parameters
+            buckets = {}
+            for row in source_rows:
+                completed = row['production_end_time']
+                if row['equipment_id'] != machine or row['status'] != 2 or not start <= completed < end:
+                    continue
+                bucket = completed.replace(hour=17 if completed.hour >= 17 else 0, minute=0, second=0)
+                totals = buckets.setdefault(bucket, dict(bucket_start=bucket, task_count=0,
+                    cut_length_m=0, groove_length_m=0, work_time_seconds=0))
+                totals['task_count'] += 1
+                totals['cut_length_m'] += row['cut_length']
+                totals['groove_length_m'] += row['groove_length']
+                totals['work_time_seconds'] += row['work_time']
+            return list(buckets.values())
         rows = selected_rows(parameters)
         if "GROUP BY source.production_date, source.equipment_id" in sql:
             return [dict(report_date=row["production_date"], equipment_id=row["equipment_id"],
@@ -450,7 +468,7 @@ def test_invalid_legacy_equipment_month_is_rejected_before_source_queries(report
 def test_required_equipment_summary_failure_prevents_both_formats_from_publishing(report_flow, monkeypatch, interval):
     pipeline, run, _ = report_flow
 
-    def failed_summary(*args):
+    def failed_summary(*args, **kwargs):
         raise OSError("summary unavailable")
 
     method = "get_monthly_range" if interval else "get_month"

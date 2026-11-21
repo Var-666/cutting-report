@@ -1,3 +1,5 @@
+from tests.runtime_factories import make_database_services
+from types import SimpleNamespace
 from tests.web_fixtures import embedded_app
 from tests.postgres_fixtures import state_settings
 from dataclasses import replace
@@ -6,7 +8,6 @@ import gc
 import json
 from pathlib import Path
 from time import time
-from types import SimpleNamespace
 import weakref
 
 import pytest
@@ -275,9 +276,8 @@ def test_completion_date_upgrade_isolates_old_analysis_in_the_bound_source(state
 
 
 def test_welding_capabilities_and_api_paths_keep_cutting_actions_unavailable(tmp_path):
-    from types import SimpleNamespace
     cfg = configuration(tmp_path, welding=True)
-    context = SimpleNamespace(catalog=load_line_catalog(cfg.production_lines_json))
+    context = make_database_services(catalog=load_line_catalog(cfg.production_lines_json))
     line = next(item for item in registered_lines(context) if item['type'] == 'welding')
     assert line['capabilities'] == ['reports', 'analysis', 'settings']
     assert supports_path(context, line['id'], '/api/v1/welding/dashboard')

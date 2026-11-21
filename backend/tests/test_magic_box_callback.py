@@ -109,8 +109,8 @@ def completion(state_database, tmp_path):
     context = SimpleNamespace(settings=replace(service.settings, magic_box_callback_enabled=True,
         magic_box_callback_allowed_ips=('192.0.2.10',)), cutting_dispatch=service)
     app = embedded_app()
-    from app.database.workshop import WorkshopRepository
-    app.state.workshop = WorkshopRepository(repository.database)
+    from app.database.sessions import SessionRepository
+    app.state.runtime.sessions = SessionRepository(repository.database)
     @app.middleware('http')
     async def runtime(request, call_next):
         request.state.database_context = context

@@ -157,6 +157,7 @@ def _analysis_child(root, output, background):
     from dataclasses import replace
     from app.database.metadata import MetadataRepository
     from app.services.llm_service import background_llm_work, llm_capacity
+    from app.services.report_analysis.workshop import build_context
     from app.services.report_analysis_service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     with PostgresDatabase(configuration(root)) as database:
@@ -171,7 +172,7 @@ def _analysis_child(root, output, background):
 
         service.llm.analyze_context = model
         with background_llm_work() if background else nullcontext():
-            result = service._analyze(report_type="workshop", report_date="2026-10-24", context={"facts": [], "tables": []}, force=False)
+            result = service._analyze(report_type="workshop", report_date="2026-10-24", context=build_context("2026-10-24", []), force=False)
             output.put(("result", result.cached))
 
 
@@ -185,7 +186,7 @@ def test_web_restarts_do_not_reset_worker_and_crashed_worker_report_recovers(tmp
     (tmp_path / "vendor").mkdir()
     (tmp_path / "vendor/echarts.min.js").write_text("window.echarts={};")
     runtime = build_runtime(configuration(tmp_path, postgres_state), role="worker")
-    runtime.workshop.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
+    runtime.users.bootstrap_admin(username="process-admin", display_name="进程测试", password="test-password",
                                     now="2026-10-24T10:00:00+08:00")
     runtime.database_runtime.snapshot().lines["Cutter01"].service.metadata.create_job(report_id="restart-test", report_type="equipment", report_date="2026-08-18",
         project_code=None, ship_no=None, request_id="test", created_at="2026-10-24T10:00:00+08:00")

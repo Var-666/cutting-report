@@ -1,4 +1,4 @@
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import Depends, Request
 
@@ -8,34 +8,29 @@ from app.services.database_runtime import DatabaseServices, database_context
 
 
 def application_state(request: Request) -> ApplicationRuntime:
-    # Embedded apps and test fixtures may still attach services directly to state.
-    return cast(ApplicationRuntime, getattr(request.app.state, 'runtime', request.app.state))
+    try:
+        return request.app.state.runtime
+    except AttributeError:
+        raise RuntimeError("应用运行时未装配，请在启动时设置 app.state.runtime") from None
 
 
 def runtime_state(request: Request) -> DatabaseServices:
-    context = getattr(request.state, 'database_context', None)
+    context: DatabaseServices | None = getattr(request.state, 'database_context', None)
     if context is None:
         state = application_state(request)
-        database = getattr(state, 'database_runtime', None)
-        scope = getattr(request, 'scope', {})
         diagnostics_path = '/api/v1/configuration/diagnostics'
-        mounted_path = scope.get('root_path', '').rstrip('/') + diagnostics_path
-        if database is not None and scope.get('path') in (diagnostics_path, mounted_path):
-            context = database.current_context
+        mounted_path = request.scope.get('root_path', '').rstrip('/') + diagnostics_path
+        if request.scope.get('path') in (diagnostics_path, mounted_path):
+            context = state.database_runtime.current_context
         else:
             context = database_context(state)
         request.state.database_context = context
-    return cast(DatabaseServices, context)
+    return context
 
 
 def request_settings(request: Request) -> Settings:
     """Return the Settings object pinned to this request's database snapshot."""
-    context = runtime_state(request)
-    try:
-        settings = context.settings
-    except AttributeError:
-        raise RuntimeError("请求运行时未装配配置快照") from None
-    return settings
+    return runtime_state(request).settings
 
 
 CurrentSettings = Annotated[Settings, Depends(request_settings)]

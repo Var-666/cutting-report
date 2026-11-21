@@ -1,3 +1,4 @@
+from tests.web_fixtures import embedded_app, request_for
 from tests.line_fixtures import as_line_services, runtime_line
 from collections import Counter
 from dataclasses import replace
@@ -139,8 +140,9 @@ def test_web_health_distinguishes_worker_failure_from_database_failure(database_
     from types import SimpleNamespace
     from app.main import health
     status = {"state": worker_state, "report_alive": False, "database_available": database_available}
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(settings=Settings(),
-        worker_status_reader=SimpleNamespace(status=lambda: status))), state=SimpleNamespace(request_id="health-test"))
+    app = embedded_app(Settings())
+    app.state.runtime.worker_status_reader = SimpleNamespace(status=lambda: status)
+    request = request_for(app, request_id="health-test")
     response = anyio.run(health, request)
     if expected_status == 503:
         assert response.status_code == expected_status

@@ -80,7 +80,7 @@ pnpm --dir frontend run typecheck
 ### Runtime、配置与事务
 
 - `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配切割业务实现，所有实例统一登记在 `DatabaseServices.lines`。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
-- Web 只在 `app.state.runtime` 挂载类型化 `ApplicationRuntime`；API 通过 `application_state(request)` 获取进程共享资源，通过 `runtime_state(request)`/`Depends(runtime_state)` 获取 `DatabaseServices` 请求快照。旧式平铺 state 仅在公共入口兼容，不在新路由继续散落属性探测。ApplicationRuntime 不保留初始产线服务字段，业务一律从当前 DatabaseServices.lines 访问。
+- Web 在 `app.state.runtime` 挂载 `ApplicationRuntime`。API 通过 `application_state(request)` 获取进程资源，通过 `runtime_state(request)` 或 `Depends(runtime_state)` 固定 `DatabaseServices` 请求快照，从 `DatabaseServices.lines` 访问当前产线服务。测试装配和可选字段约定见[运行时兼容边界](docs/project/architecture.md#兼容边界)。
 - Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
 - `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。请求及进程配置入口见[运行时约定](docs/project/architecture.md#runtime与配置)。
 - 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
@@ -104,7 +104,7 @@ pnpm --dir frontend run typecheck
 - 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原持久化队列，键包含产线、类型、日期、参与快照计算的筛选及必要分页/排序、来源、schema 及权限范围；完整聚合视图的分页投影例外见 P09。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
 - 区分来源、失效修订、存储校验和与业务版本：`source_identity` 标识来源隔离；`CacheRevision` 仅失效进程缓存；快照存储的 `data_version` 校验完整载荷。公开页面/AI 业务版本继续由现有算法生成：焊接页面及导出共用 `WeldingService.version`，切割沿用现有分析版本；不能用存储校验和替换。焊接 API 的 `meta.report_data.data_version` 与公开业务版本一致；AI 校验页面版本，现场导出随源数据变化可产生新版本，不能覆盖页面快照。
 - 设备相关请求、任务、缓存与持久化操作显式保留设备/产线及来源身份，切割请求使用唯一有效的 `device_id`，不回退默认设备。`X-Production-Line` 仅限制能力范围，不能代替角色权限或授予产线权限。
-- `WorkshopRepository` 是兼容门面；新代码使用用户、会话、日报、确认专属仓储。现有线程模式、旧调用签名和配置兼容分支先查实际调用方及测试，后续专项处理，不在新功能中扩散或顺手删除。
+- 车间账号、会话、日报和确认分别使用 `UserRepository`、`SessionRepository`、`WorkshopReportRepository` 和 `ConfirmationRepository`。
 
 ## 编码和验证规范
 

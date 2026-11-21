@@ -4,21 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from app.database.workshop import (
-    AuthenticationError,
-    ConfirmationConflictError,
-    ConfirmationNotFoundError,
-    ConfirmationPermissionError,
-    DailyReportExistsError,
-    WorkshopRepository,
-    hash_password,
-    verify_password,
-)
+from app.database.confirmations import ConfirmationRepository
+from app.database.identity_security import AuthenticationError, hash_password, verify_password
+from app.database.sessions import SessionRepository
+from app.database.users import UserRepository
+from app.database.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError, DailyReportExistsError
+from app.database.workshop_reports import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
 
 
 def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path, state_database) -> None:
-    repository = WorkshopRepository(state_database)
+    repository = UserRepository(state_database)
     now = "2026-09-09T10:30:00+08:00"
     operator = repository.bootstrap_admin(
         username="emergency-admin",
@@ -71,9 +67,10 @@ def test_hr_admin_permission_mapping_keeps_hr_password_external(tmp_path: Path, 
 
 
 def test_scoped_snapshot_keeps_existing_rows_when_new_tasks_arrive(tmp_path: Path, state_database) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
     now = "2026-09-09T10:30:00+08:00"
-    admin = repository.bootstrap_admin(
+    admin = users.bootstrap_admin(
         username="admin",
         display_name="管理员",
         password="admin-password",
@@ -132,22 +129,25 @@ def test_password_hash_is_salted_and_verifiable() -> None:
 
 
 def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_database) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    sessions = SessionRepository(state_database)
+    users = UserRepository(state_database)
     now = "2026-08-19T08:00:00+08:00"
-    admin = repository.bootstrap_admin(
+    admin = users.bootstrap_admin(
         username="admin",
         display_name="管理员",
         password="admin-password",
         now=now,
     )
-    worker = repository.create_user(
+    worker = users.create_user(
         username="worker01",
         display_name="张三",
         password="worker-password",
         role="worker",
         now=now,
     )
-    other = repository.create_user(
+    other = users.create_user(
         username="worker02",
         display_name="李四",
         password="worker-password",
@@ -155,23 +155,23 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
         now=now,
     )
 
-    assert repository.authenticate("WORKER01", "worker-password")["user_id"] == worker["user_id"]
+    assert users.authenticate("WORKER01", "worker-password")["user_id"] == worker["user_id"]
     with pytest.raises(AuthenticationError):
-        repository.authenticate("worker01", "wrong-password")
+        users.authenticate("worker01", "wrong-password")
     with pytest.raises(AuthenticationError):
-        repository.bootstrap_admin(
+        users.bootstrap_admin(
             username="second-admin",
             display_name="其他管理员",
             password="admin-password",
             now=now,
         )
 
-    token, _ = repository.create_session(
+    token, _ = sessions.create_session(
         worker["user_id"], now=datetime.fromisoformat(now), hours=12
     )
-    assert repository.user_for_session(token, now=now)["display_name"] == "张三"
-    repository.delete_session(token)
-    assert repository.user_for_session(token, now=now) is None
+    assert sessions.user_for_session(token, now=now)["display_name"] == "张三"
+    sessions.delete_session(token)
+    assert sessions.user_for_session(token, now=now) is None
 
     report = repository.create_daily_report(
         report_date="2026-08-19",
@@ -203,18 +203,18 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
             now=now,
         )
 
-    confirmation = repository.confirm_task(
+    confirmation = confirmations.confirm_task(
         task_id="24820", report_id=report["report_id"], user=worker, now=now
     )
     assert confirmation["worker_name"] == "张三"
-    assert repository.confirm_task(
+    assert confirmations.confirm_task(
         task_id="24820", report_id=report["report_id"], user=worker, now=now
     )["worker_id"] == worker["user_id"]
     with pytest.raises(ConfirmationConflictError, match="张三"):
-        repository.confirm_task(
+        confirmations.confirm_task(
             task_id="24820", report_id=report["report_id"], user=other, now=now
         )
-    assert repository.get_confirmations(["24820"])["24820"]["worker_name"] == "张三"
+    assert confirmations.get_confirmations(["24820"])["24820"]["worker_name"] == "张三"
     saved_report, saved_records = repository.get_daily_report_records("2026-08-19")
     assert saved_report["confirmed_count"] == 1
     assert saved_records[0].project_code == saved_records[0].ship_no == "PJT-01"
@@ -224,7 +224,7 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
     assert admin["role"] == "admin"
 
     with pytest.raises(ConfirmationPermissionError, match="本人"):
-        repository.revoke_confirmation(
+        confirmations.revoke_confirmation(
             task_id="24820",
             report_id=report["report_id"],
             user=other,
@@ -232,7 +232,7 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
             now="2026-08-19T08:05:00+08:00",
         )
 
-    revoked = repository.revoke_confirmation(
+    revoked = confirmations.revoke_confirmation(
         task_id="24820",
         report_id=report["report_id"],
         user=worker,
@@ -240,9 +240,9 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
         now="2026-08-19T08:06:00+08:00",
     )
     assert revoked["action"] == "worker_revoke"
-    assert repository.get_confirmations(["24820"]) == {}
+    assert confirmations.get_confirmations(["24820"]) == {}
     with pytest.raises(ConfirmationNotFoundError):
-        repository.revoke_confirmation(
+        confirmations.revoke_confirmation(
             task_id="24820",
             report_id=report["report_id"],
             user=worker,
@@ -250,13 +250,13 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
             now="2026-08-19T08:07:00+08:00",
         )
 
-    repository.confirm_task(
+    confirmations.confirm_task(
         task_id="24820",
         report_id=report["report_id"],
         user=worker,
         now="2026-08-19T08:08:00+08:00",
     )
-    reassigned = repository.correct_confirmation(
+    reassigned = confirmations.correct_confirmation(
         task_id="24820",
         report_id=report["report_id"],
         admin=admin,
@@ -265,9 +265,9 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
         now="2026-08-19T08:09:00+08:00",
     )
     assert reassigned["action"] == "admin_reassign"
-    assert repository.get_confirmations(["24820"])["24820"]["worker_name"] == "李四"
+    assert confirmations.get_confirmations(["24820"])["24820"]["worker_name"] == "李四"
 
-    admin_revoked = repository.correct_confirmation(
+    admin_revoked = confirmations.correct_confirmation(
         task_id="24820",
         report_id=report["report_id"],
         admin=admin,
@@ -276,7 +276,7 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
     )
     assert admin_revoked["action"] == "admin_revoke"
     assert repository.get_daily_report("2026-08-19")["confirmed_count"] == 0
-    audits = repository.list_confirmation_audits(
+    audits = confirmations.list_confirmation_audits(
         task_id="24820", report_id=report["report_id"]
     )
     assert [item["action"] for item in audits] == [
@@ -286,7 +286,9 @@ def test_account_session_and_single_worker_confirmation(tmp_path: Path, state_da
 
 
 def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path, state_database) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no="Cutter01")
+    repository = UserRepository(state_database)
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    sessions = SessionRepository(state_database)
     now = "2026-08-24T09:00:00+08:00"
 
     worker = repository.upsert_external_worker(
@@ -311,9 +313,9 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path,
     with pytest.raises(AuthenticationError):
         repository.authenticate("G0021", "any-password")
 
-    token, _ = repository.create_session(worker["user_id"], now=datetime.fromisoformat(now), hours=2)
-    repository.confirm_task(task_id="existing-hr-task", user=worker, now=now)
-    original_confirmation = repository.get_confirmations(["existing-hr-task"])["existing-hr-task"]
+    token, _ = sessions.create_session(worker["user_id"], now=datetime.fromisoformat(now), hours=2)
+    confirmations.confirm_task(task_id="existing-hr-task", user=worker, now=now)
+    original_confirmation = confirmations.get_confirmations(["existing-hr-task"])["existing-hr-task"]
 
     updated = repository.upsert_external_worker(
         external_id="9123",
@@ -325,16 +327,16 @@ def test_external_worker_is_upserted_without_storing_hr_password(tmp_path: Path,
     assert updated["user_id"] == worker["user_id"]
     assert updated["username"] == "G0022"
     assert updated["display_name"] == "张三（新姓名）"
-    assert repository.user_for_session(token, now=now)["username"] == "G0022"
-    assert repository.get_confirmations(["existing-hr-task"])["existing-hr-task"] == {
+    assert sessions.user_for_session(token, now=now)["username"] == "G0022"
+    assert confirmations.get_confirmations(["existing-hr-task"])["existing-hr-task"] == {
         **original_confirmation, "worker_company_no": "C0008",
     }
-    repository.confirm_task(task_id="hr-task", user=updated, now=now)
-    assert repository.get_confirmations(["hr-task"])["hr-task"]["worker_company_no"] == "C0008"
+    confirmations.confirm_task(task_id="hr-task", user=updated, now=now)
+    assert confirmations.get_confirmations(["hr-task"])["hr-task"]["worker_company_no"] == "C0008"
 
 
 def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path, state_database) -> None:
-    repository = WorkshopRepository(state_database)
+    repository = UserRepository(state_database)
     now = "2026-08-24T09:00:00+08:00"
     repository.upsert_external_worker(
         external_id="9123",
@@ -358,9 +360,10 @@ def test_external_worker_does_not_prevent_admin_bootstrap(tmp_path: Path, state_
 def test_empty_daily_report_can_be_populated_when_source_data_arrives(
     tmp_path: Path, state_database,
 ) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
     now = "2026-08-19T08:00:00+08:00"
-    admin = repository.bootstrap_admin(
+    admin = users.bootstrap_admin(
         username="admin",
         display_name="管理员",
         password="admin-password",
@@ -402,22 +405,24 @@ def test_empty_daily_report_can_be_populated_when_source_data_arrives(
 def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
     tmp_path: Path, state_database,
 ) -> None:
-    repository = WorkshopRepository(state_database, scope_machine_no='Cutter01')
+    repository = WorkshopReportRepository(state_database, scope_machine_no='Cutter01')
+    confirmations = ConfirmationRepository(state_database, scope_machine_no='Cutter01')
+    users = UserRepository(state_database)
     now = "2026-09-11T09:00:00+08:00"
-    admin = repository.bootstrap_admin(
+    admin = users.bootstrap_admin(
         username="admin",
         display_name="管理员",
         password="admin-password",
         now=now,
     )
-    worker = repository.upsert_external_worker(
+    worker = users.upsert_external_worker(
         external_id="worker-1",
         company_no="C0001",
         group_no="G0001",
         display_name="张三",
         now=now,
     )
-    other = repository.upsert_external_worker(
+    other = users.upsert_external_worker(
         external_id="worker-2",
         company_no="C0002",
         group_no="G0002",
@@ -444,7 +449,7 @@ def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
         user=admin,
         now=now,
     )
-    repository.confirm_task(
+    confirmations.confirm_task(
         task_id="task-2",
         report_id=report["report_id"],
         user=other,
@@ -452,15 +457,15 @@ def test_batch_confirmation_is_atomic_when_one_task_has_another_worker(
     )
 
     with pytest.raises(ConfirmationConflictError, match="李四"):
-        repository.confirm_tasks(
+        confirmations.confirm_tasks(
             task_ids=["task-1", "task-2"],
             report_id=report["report_id"],
             user=worker,
             now="2026-09-11T09:05:00+08:00",
         )
 
-    assert "task-1" not in repository.get_confirmations(["task-1"])
-    confirmations = repository.confirm_tasks(
+    assert "task-1" not in confirmations.get_confirmations(["task-1"])
+    confirmations = confirmations.confirm_tasks(
         task_ids=["task-1", "task-3", "task-1"],
         report_id=report["report_id"],
         user=worker,

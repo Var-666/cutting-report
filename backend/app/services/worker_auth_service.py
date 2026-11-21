@@ -10,7 +10,7 @@ from app.core.sql_capacity import SqlCapacityError
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.database.hr import HrRepository
-from app.database.workshop import AuthenticationError
+from app.database.identity_security import AuthenticationError
 from app.core.request_cancellation import SqlRequestCancelled
 
 

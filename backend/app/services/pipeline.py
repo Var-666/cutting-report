@@ -15,7 +15,6 @@ from app.database.automation import AutomationRepository
 from app.database.energy import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
-from app.database.workshop import WorkshopRepository
 from app.database.workshop_reports import WorkshopReportRepository
 from app.database.confirmations import ConfirmationRepository
 from app.database.unit_of_work import UnitOfWork
@@ -83,7 +82,7 @@ class ReportPipeline:
         self.report_service = ReportService(settings)
         self.custom_report_service = CustomReportService(settings, client=self.query_service.client)
         if workshop_repository is None:
-            workshop_repository = WorkshopRepository(self.database, scope_machine_no=settings.report_machine_no)
+            workshop_repository = WorkshopReportRepository(self.database, scope_machine_no=settings.report_machine_no)
         self.workshop_repository = workshop_repository
         self.range_service = RangeReportService(
             settings,

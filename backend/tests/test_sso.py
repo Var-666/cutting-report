@@ -1,6 +1,6 @@
 """OIDC login with signed tokens, real isolated state, and no external requests."""
 
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, replace_database_services, request_for
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -97,8 +97,10 @@ def sso(postgres_state, signing_key, monkeypatch):
                                 cached_session_identity_available=lambda *_args, **_kwargs: None)
     app = embedded_app(cfg)
     app.include_router(auth.router)
-    app.state.runtime = SimpleNamespace(sso=service, users=users, sessions=SessionRepository(database),
-        database_runtime=SimpleNamespace(snapshot=lambda: SimpleNamespace(settings=cfg, worker_auth=directory)))
+    app.state.runtime.sso = service
+    app.state.runtime.users = users
+    app.state.runtime.sessions = SessionRepository(database)
+    replace_database_services(app, worker_auth=directory)
 
     @app.middleware('http')
     async def request_id(request, call_next):
@@ -304,7 +306,7 @@ def test_sso_refreshes_existing_hr_profile_and_preserves_identity_and_role(sso, 
                 raise AuthenticationError('账号或密码错误')
             return current_hr
         sso.directory.authenticate = authenticate
-        auth._verify_current_admin_password(SimpleNamespace(app=sso.client.app, state=SimpleNamespace()), current, SecretStr('correct-password'))
+        auth._verify_current_admin_password(request_for(sso.client.app), current, SecretStr('correct-password'))
 
 
 def test_sso_profile_refresh_rolls_back_if_session_creation_fails(sso, monkeypatch):
@@ -358,8 +360,7 @@ def test_discovery_issuer_mismatch_and_https_downgrade_are_rejected(sso):
 def test_disabled_sso_makes_no_external_requests_and_preserves_status(sso):
     settings = replace(sso.cfg, sso_enabled=False)
     sso.service.settings = settings
-    sso.client.app.state.runtime.database_runtime.snapshot = lambda: SimpleNamespace(
-        settings=settings, worker_auth=sso.directory)
+    replace_database_services(sso.client.app, settings=settings)
     assert sso.client.get('/api/v1/auth/status').json()['data']['sso_enabled'] is False
     assert sso.client.get('/api/v1/auth/sso/login').headers['location'] == '/login?sso_error=disabled'
     assert sso.provider.calls == []

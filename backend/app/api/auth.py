@@ -18,7 +18,7 @@ from app.config import Settings
 from app.core.request_cancellation import (
     cancellation_owner, current_request_id, sql_request_cancellations,
 )
-from app.database.workshop import AuthenticationError
+from app.database.identity_security import AuthenticationError
 from app.services.worker_auth_service import WorkerAuthenticationUnavailableError
 from app.services.sso_service import SsoError
 from app.models.contracts import ApiEnvelope
@@ -116,14 +116,11 @@ def _set_session_cookie(response: Response, token: str, settings: Settings) -> N
 
 
 def _users(request: Request):
-    state = application_state(request)
-    # Existing embedded apps expose only the historical workshop facade.
-    return state.users if hasattr(state, 'users') else state.workshop
+    return application_state(request).users
 
 
 def _sessions(request: Request):
-    state = application_state(request)
-    return state.sessions if hasattr(state, 'sessions') else state.workshop
+    return application_state(request).sessions
 
 
 async def optional_user(
@@ -219,7 +216,7 @@ def auth_status(request: Request, user: dict | None = Depends(optional_user)) ->
         {
             "setup_required": _users(request).admin_count() == 0,
             "worker_database_auth_enabled": request_settings(request).worker_database_auth_enabled,
-            "sso_enabled": getattr(application_state(request), 'sso', None) is not None and request_settings(request).sso_enabled,
+            "sso_enabled": request_settings(request).sso_enabled,
             "authenticated": user is not None,
             "user": user,
         },

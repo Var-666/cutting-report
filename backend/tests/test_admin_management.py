@@ -1,4 +1,6 @@
+from tests.web_fixtures import replace_database_services
 from threading import BoundedSemaphore
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -88,8 +90,9 @@ def _local_admin() -> dict:
 def test_grant_hr_admin_requires_current_local_admin_password(monkeypatch) -> None:
     repository = _AdminRepository(_local_admin())
     directory = _HrDirectory()
-    monkeypatch.setattr(app.state, "workshop", repository, raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", directory, raising=False)
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=repository.user_for_session)
+    replace_database_services(app, worker_auth=directory)
     client = TestClient(app)
     client.cookies.set("cutting_session", "session")
 
@@ -107,8 +110,9 @@ def test_grant_hr_admin_requires_current_local_admin_password(monkeypatch) -> No
 def test_wrong_current_password_cannot_grant_admin(monkeypatch) -> None:
     repository = _AdminRepository(_local_admin(), password_valid=False)
     directory = _HrDirectory()
-    monkeypatch.setattr(app.state, "workshop", repository, raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", directory, raising=False)
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=repository.user_for_session)
+    replace_database_services(app, worker_auth=directory)
     client = TestClient(app)
     client.cookies.set("cutting_session", "session")
 
@@ -140,8 +144,9 @@ def test_hr_admin_password_is_verified_against_hr_before_grant(monkeypatch, stor
     }
     repository = _AdminRepository(current)
     directory = _HrDirectory()
-    monkeypatch.setattr(app.state, "workshop", repository, raising=False)
-    monkeypatch.setattr(app.state, "worker_auth", directory, raising=False)
+    app.state.runtime.users = repository
+    app.state.runtime.sessions = SimpleNamespace(user_for_session=repository.user_for_session)
+    replace_database_services(app, worker_auth=directory)
     client = TestClient(app)
     client.cookies.set("cutting_session", "session")
 
@@ -162,9 +167,7 @@ def test_anonymous_user_cannot_manage_admin_permissions(monkeypatch) -> None:
         def user_for_session(self, _token, *, now):
             return None
 
-    monkeypatch.setattr(
-        app.state, "workshop", _AnonymousRepository(), raising=False
-    )
+    app.state.runtime.sessions = _AnonymousRepository()
     response = TestClient(app).post(
         "/api/v1/auth/admins",
         json={"external_id": "9123", "current_password": "password"},

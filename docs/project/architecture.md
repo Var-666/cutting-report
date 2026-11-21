@@ -29,7 +29,7 @@ FastAPI API → Service → Repository / 外部客户端
 
 ### 兼容边界
 
-`WorkshopRepository`门面、嵌入式平铺state、旧线程/调用签名仍有实际调用方；正式入口使用类型化Runtime和独立仓储。新增功能不扩散兼容分支；删除前检查源码、脚本及测试。不合并职责不同的Runtime、Registry、Provider、缓存和快照，也不主动重写剩余源码提取测试。
+API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRuntime` 的声明字段访问依赖。请求首次读取时固定数据库服务快照，配置诊断读取已发布快照。角色相关的可选依赖在类型上标为 `Optional`，调用处显式判断。测试通过 `backend/tests/runtime_factories.py` 装配真实 dataclass，PostgreSQL 运行时集成测试沿用 `build_runtime`。仓储按账号、会话、日报和确认职责分别注入。
 
 ## Runtime与配置
 

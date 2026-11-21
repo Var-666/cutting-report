@@ -622,7 +622,6 @@ test('leadership and equipment second tables default to the recent twelve months
   const leadership = descriptor('LeadershipReportView')
   const equipment = descriptor('EnergyPeriodReportView')
   const leadershipRange = leadershipQueryScript.slice(leadershipQueryScript.indexOf('async function loadReport'), leadershipQueryScript.indexOf('async function restoreRouteState'))
-  const equipmentRange = equipment.scriptSetup.content.match(/async function loadRange[\s\S]*?\n}\n\nfunction stopSummaryRefresh/)?.[0] || ''
 
   assert.match(leadershipQueryScript, /monthlyPeriodStart = ref\(recentTwelveMonthStart\(today\)\)/)
   assert.match(leadershipQueryScript, /const monthlyReport = ref<(?:LeadershipReport|EnergyPeriodReport) \| null>\(null\)/)
@@ -630,7 +629,9 @@ test('leadership and equipment second tables default to the recent twelve months
   assert.doesNotMatch(leadershipRange, /monthlyReport\.value|monthlyPeriodStart\.value|monthlyPeriodEnd\.value/)
   assert.match(leadershipRange, /renderCharts\(\{ monthly: false \}\)/)
   assert.match(leadership.template.content, /:title="monthlyTitle"/)
-  assert.match(leadership.template.content, /:note="`\$\{monthlyPeriodStart\} 至 \$\{monthlyPeriodEnd\}`"/)
+  const monthlyNote = leadership.template.content.match(/:title="monthlyTitle" :note="([^"]+)"/)[1]
+  const formatPeriod = scriptFunction('formatChineseDate', 'monthlyPeriodStart', 'monthlyPeriodEnd', `return ${monthlyNote}`)
+  assert.equal(formatPeriod(formatChineseDate, '2025-12-01', '2026-11-21'), '2025年12月01日 至 2026年11月21日')
   assert.match(leadership.scriptSetup.content, /summary_period_start: monthlyPeriodStart\.value/)
   assert.match(leadership.scriptSetup.content, /summary_period_end: monthlyPeriodEnd\.value/)
   assert.match(energyDataScript, /summaryRows = computed\(\(\) => sortReportPeriods\(monthlyReport\.value\?\.rows/)

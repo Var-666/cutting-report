@@ -1,4 +1,6 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import cutting_request, embedded_app, replace_database_services
+from tests.runtime_factories import make_device_runtime, make_pipeline_stub
+from app.services.production_reports import CuttingReportProvider
 from app.config import Settings
 from app.services.query_service import QueryService
 from tests.line_fixtures import source_client
@@ -45,6 +47,14 @@ def _pipeline(state_database, tmp_path: Path) -> tuple[Settings, MetadataReposit
     pipeline = ReportPipeline(settings, metadata, query_service=QueryService(settings, client=source_client(settings)))
     pipeline.analysis_service.llm.analyze_context = model_analysis
     return settings, metadata, pipeline
+
+
+def pipeline_device(pipeline):
+    return make_device_runtime(settings=pipeline.settings, pipeline=pipeline,
+        leadership_report_service=pipeline.leadership_service,
+        report_analysis_service=pipeline.analysis_service, workshop=pipeline.workshop_repository,
+        confirmations=pipeline.range_service.confirmations, report_provider=CuttingReportProvider(pipeline.leadership_service),
+        leadership_refresh_worker=SimpleNamespace(is_refreshing=lambda _: False))
 
 
 def test_report_request_normalizes_and_limits_inclusive_period() -> None:
@@ -110,10 +120,10 @@ def test_report_creation_preserves_monthly_and_explicit_range_semantics(body, st
     app = embedded_app()
     app.include_router(reports.router)
     app.dependency_overrides[require_admin] = lambda: {"role": "admin"}
-    app.state.lines = as_line_services({"Cutter01": SimpleNamespace(
+    replace_database_services(app, lines=as_line_services({"Cutter01": make_device_runtime(
         settings=cutting_settings(),
         metadata=SimpleNamespace(create_job=lambda **job: jobs.append(job))
-    )})
+    )}))
 
     @app.middleware("http")
     async def request_context(request, call_next):
@@ -137,11 +147,8 @@ def test_report_creation_replay_is_atomic_and_scoped_to_admin_line_and_payload(s
     def request(line):
         metadata = MetadataRepository(state_database, device_id=line)
         settings = cutting_settings(device_id=line)
-        state = SimpleNamespace(settings=settings, lines=as_line_services({
-            line: SimpleNamespace(settings=settings, metadata=metadata),
-        }))
-        return SimpleNamespace(headers={}, query_params={'device_id': line}, app=SimpleNamespace(state=state),
-                               state=SimpleNamespace(request_id='idempotency-regression'))
+        device = make_device_runtime(settings=settings, metadata=metadata)
+        return cutting_request(device, request_id='idempotency-regression')
 
     selected = request('Cutter01')
     payload = ReportCreateRequest(report_type='leadership', report_date='2026-11-01', parameters={'chart_type': 'line'})
@@ -193,18 +200,11 @@ def test_workshop_top_lengths_use_filtered_rows_beyond_the_visible_page() -> Non
             production_time=datetime(2026, 8, 18, 13),
         )
     )
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="workshop-top-lengths"),
-        app=SimpleNamespace(state=SimpleNamespace(
-            range_report_service=SimpleNamespace(
-                workshop_records=lambda *_: (SimpleNamespace(data_updated_at=None), records)
-            )
-        )),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    device = make_device_runtime(settings=cutting_settings(),
+        pipeline=make_pipeline_stub(range_service=SimpleNamespace(
+            workshop_records=lambda *_: (SimpleNamespace(data_updated_at=None), records))),
+        report_provider=SimpleNamespace(snapshot_service=None))
+    request = cutting_request(device, request_id="workshop-top-lengths")
 
     data = list_range_tasks(
         request, date(2026, 8, 18), date(2026, 8, 18),
@@ -231,23 +231,7 @@ def test_live_equipment_energy_range_is_bounded_to_31_days(state_database, tmp_p
 
 def test_equipment_analysis_reports_long_range_as_validation_error(state_database, tmp_path: Path) -> None:
     _, _, pipeline = _pipeline(state_database, tmp_path)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="analysis-range-limit"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                report_analysis_service=pipeline.analysis_service,
-                range_report_service=pipeline.range_service,
-                leadership_report_service=pipeline.leadership_service,
-                workshop=pipeline.workshop_repository,
-                query_service=pipeline.query_service,
-                energy_period_service=pipeline.energy_period_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="analysis-range-limit")
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -273,19 +257,7 @@ def test_analysis_api_returns_503_without_a_model_result(state_database,
         raise RuntimeError("model unavailable")
 
     monkeypatch.setattr(pipeline.analysis_service.llm, "analyze_context", fail)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="analysis-model-unavailable"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                report_analysis_service=pipeline.analysis_service,
-                leadership_report_service=pipeline.leadership_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="analysis-model-unavailable")
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -312,14 +284,8 @@ def test_analysis_version_check_reads_only_sqlite_metadata() -> None:
                 "updated_at": "2026-09-29T10:00:00+08:00",
             }
 
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="analysis-version"),
-        app=SimpleNamespace(state=SimpleNamespace(metadata=Metadata())),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    device = make_device_runtime(settings=cutting_settings(), metadata=Metadata())
+    request = cutting_request(device, request_id="analysis-version")
 
     result = get_analysis_version("leadership", date(2026, 9, 29), request)
 
@@ -333,23 +299,7 @@ def test_analysis_rejects_a_stale_visible_report_version(state_database,
     tmp_path: Path, report_type: str
 ) -> None:
     _, _, pipeline = _pipeline(state_database, tmp_path)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="analysis-stale-version"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                report_analysis_service=pipeline.analysis_service,
-                range_report_service=pipeline.range_service,
-                leadership_report_service=pipeline.leadership_service,
-                workshop=pipeline.workshop_repository,
-                query_service=pipeline.query_service,
-                energy_period_service=pipeline.energy_period_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="analysis-stale-version")
 
     with pytest.raises(HTTPException) as caught:
         analyze_report(
@@ -381,23 +331,7 @@ def test_page_analysis_uses_the_selected_range(state_database,
     expected_fact_label: str,
 ) -> None:
     _, _, pipeline = _pipeline(state_database, tmp_path)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="analysis-range"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                report_analysis_service=pipeline.analysis_service,
-                range_report_service=pipeline.range_service,
-                leadership_report_service=pipeline.leadership_service,
-                workshop=pipeline.workshop_repository,
-                query_service=pipeline.query_service,
-                energy_period_service=pipeline.energy_period_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="analysis-range")
 
     response = analyze_report(
         AnalysisRequest(
@@ -421,21 +355,7 @@ def test_workshop_page_version_matches_analysis_for_same_day_and_range(state_dat
     tmp_path: Path, end_date: date
 ) -> None:
     _, _, pipeline = _pipeline(state_database, tmp_path)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="workshop-visible-version"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                range_report_service=pipeline.range_service,
-                report_analysis_service=pipeline.analysis_service,
-                workshop=pipeline.workshop_repository,
-                query_service=pipeline.query_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="workshop-visible-version")
     start_date = date(2026, 8, 18)
     page = list_range_tasks(
         request,
@@ -466,20 +386,7 @@ def test_workshop_page_version_matches_analysis_for_same_day_and_range(state_dat
 
 def test_leadership_page_versions_cover_both_analysis_tables(state_database, tmp_path: Path) -> None:
     _, _, pipeline = _pipeline(state_database, tmp_path)
-    request = SimpleNamespace(
-        headers={},
-        state=SimpleNamespace(request_id="leadership-visible-version"),
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                leadership_report_service=pipeline.leadership_service,
-                range_report_service=pipeline.range_service,
-                report_analysis_service=pipeline.analysis_service,
-            )
-        ),
-    )
-    request.query_params = {'device_id': 'Cutter01'}
-    request.app.state.settings = cutting_settings()
-    request.app.state.lines = as_line_services({'Cutter01': request.app.state})
+    request = cutting_request(pipeline_device(pipeline), request_id="leadership-visible-version")
     page = get_leadership_report(
         request,
         report_month="2026-08",

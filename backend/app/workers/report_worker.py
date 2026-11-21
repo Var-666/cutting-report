@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import inspect
 import threading
 from time import monotonic
 from datetime import datetime
@@ -147,15 +146,8 @@ class ReportWorker:
                 event(logger, logging.INFO, "开始生成报表")
                 pipelines = self.pipelines() if callable(self.pipelines) else self.pipelines
                 pipeline = self.pipeline if pipelines is None else pipelines[job["device_id"]]
-                run = pipeline.run
-                parameters = inspect.signature(run).parameters
                 with sql_identity(job["device_id"]):
-                    if "cancellation_check" in parameters:
-                        run(job, cancellation_check=self.stop_event.is_set)
-                    else:
-                        # Keep small test doubles and older integrations compatible while
-                        # the concrete pipeline receives cooperative shutdown checkpoints.
-                        run(job)
+                    pipeline.run(job, cancellation_check=self.stop_event.is_set)
             except ReportAnalysisPendingError as exc:
                 while not self.stop_event.is_set():
                     try:

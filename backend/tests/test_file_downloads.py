@@ -1,4 +1,4 @@
-from tests.web_fixtures import embedded_app
+from tests.web_fixtures import embedded_app, replace_database_services
 from dataclasses import replace
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -344,7 +344,7 @@ def test_download_routes_are_admin_only(tmp_path, state_database, user, expected
     service, payload = make_service(tmp_path, state_database)
     app = embedded_app()
     app.include_router(router)
-    app.state.file_downloads = service
+    replace_database_services(app, file_downloads=service)
     app.dependency_overrides[optional_user] = lambda: user
     client = TestClient(app)
     assert client.post("/api/v1/cutting/downloads", json=payload).status_code == expected
@@ -356,7 +356,7 @@ def test_api_download_saves_record_without_exposing_file_content(tmp_path, state
     service, payload = make_service(tmp_path, state_database)
     app = embedded_app()
     app.include_router(router)
-    app.state.file_downloads = service
+    replace_database_services(app, file_downloads=service)
     app.dependency_overrides[optional_user] = lambda: ADMIN
 
     @app.middleware("http")
