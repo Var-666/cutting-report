@@ -113,6 +113,6 @@ docker compose exec app python scripts/check_welding.py --line-id welding --end 
 
 - `backend/tests/test_welding.py`、`test_welding_mysql.py`：口径、关联、权限、只读事务、导出及版本。
 - `backend/tests/test_database_runtime.py`、`test_welding_snapshots.py`：配置隔离、快照、刷新与故障。
-- `frontend/tests/welding.test.mjs`：页面状态、切换、取消与缓存。
+- `frontend/tests/welding.spec.mjs`：页面状态、切换、取消与缓存。
 
 上述是回归入口，不代表当前生产环境已完成验收；实际连接与抽样结果以现场为准。

@@ -23,7 +23,7 @@ pnpm --dir frontend run typecheck
 - 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
 - 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，PostgreSQL 保存系统元数据、快照和操作记录；旧SQLite迁移栈已退役。
 - 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
-- 测试：Pytest 和 Node.js 内置测试运行器。
+- 测试：后端 Pytest、前端 Vitest 与 Vue Test Utils。
 
 ## 核心目录
 
@@ -116,11 +116,11 @@ pnpm --dir frontend run typecheck
 - 本地后端优先运行受影响的 pytest 用例或模块，修复失败后复验对应范围。
 - PR 由 `Backend Tests` 在隔离 PostgreSQL 18 和 MySQL 8.4 上运行完整 `backend/tests`。保留事务、租约和并发等核心用例及断言。确有耗时的压力测试如需分层，须保留独立的自动化检查。
 - `Backend Tests`、`API contracts` 和 `Frontend CI` 独立执行。合并前须通过全部必需检查。
-- 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和受影响的局部测试；`pnpm test` / `pnpm run build` 用于发布、CI 或明确需要的全量验证。
+- 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和相关文件的 `pnpm test tests/文件名.spec.ts`。Vitest 自动发现测试，PR 依次运行 Lint、类型检查、完整前端测试和构建。发布入口 `pnpm run build` 保留类型检查和测试门禁。
 - 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
 - 报表改动完成后，用同一组筛选与统计区间核对摘要、KPI、图表和明细的数量、单位及时间边界。报表页面、HTML、PDF 和邮件禁止展示辅助说明，包括图表或表格下的小字段落、脚注以及统计方法、比较规则或颜色规则的解释。必要的统计区间、单位、展示数量及异常状态直接使用标题、字段名、数据或状态标签。验收时发现辅助说明须删除后方可交付。
 - 多个测试文件共用的构造函数、记录和桩放在对应业务的测试辅助模块，调用方直接引用辅助模块，不从其他 `test_*.py` 导入。pytest 公共夹具通过 `conftest.py` 注册；仅供单个用例或文件使用的桩就地保留，不为减少文件数合并不同职责的测试。
-- 测试优先验证用户行为、渲染状态和公开契约，不用源码正则锁定内部函数名、变量名、组件布局或 CSS 写法。前端组件测试可复用 `tests/vue-component-helpers.mjs` 编译真实 SFC；已有有效的源码提取行为测试逐步迁移，稳定依赖/权限边界检查可保留。
+- 前端组件使用 Vue Test Utils 挂载真实组件并验证交互，纯业务函数直接导入，优先验证用户可观察的结果和公开契约。禁止新增通过源码正则或截取执行锁定内部函数、变量、模板顺序或 CSS 写法的测试。类型与静态规范交给 vue-tsc 和 ESLint。
 - 复用已有公共能力，不新增无明确职责的兼容转发模块；少量重复不必建立新抽象。删除兼容入口前检查源码、脚本、测试及嵌入式调用，不因层次多而合并 Runtime、缓存或快照机制。
 
 ## API 类型契约（P07）

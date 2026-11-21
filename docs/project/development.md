@@ -84,7 +84,7 @@ pnpm run dev
 
 ```bash
 # frontend/：单个前端用例
-node --import tsx --test --test-name-pattern='incident log links' tests/operations-browser.test.mjs
+pnpm test tests/operations-browser.spec.mjs -t 'incident log links'
 
 # frontend/：类型检查
 pnpm run typecheck
@@ -93,7 +93,7 @@ pnpm run typecheck
 pnpm run build
 ```
 
-`pnpm run build` 依次执行类型检查、前端测试、ECharts 资源同步和 Vite 打包，失败即停止。GitHub 的 Frontend CI 使用同一构建命令；API contracts CI 另检查隔离 PostgreSQL 响应契约和生成类型漂移。
+`pnpm run build` 依次执行类型检查、前端测试、ECharts 资源同步和 Vite 打包，失败即停止。Frontend CI 分步执行 ESLint、类型检查、Vitest 和打包。API contracts CI 另检查隔离 PostgreSQL 响应契约和生成类型漂移。
 
 修改接口模型后，在 `frontend/` 执行 `pnpm run api:generate` 与 `pnpm run api:check`。生成脚本优先使用显式 `PYTHON`，否则探测根目录 `.venv`、`backend/.venv` 中可用的契约依赖，最后使用系统 Python；不启动应用或连接数据源。契约范围与维护规则见 [API 契约说明](../design/API契约与迁移约定.md)。
 

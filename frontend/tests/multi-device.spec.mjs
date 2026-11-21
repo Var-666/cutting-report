@@ -1,0 +1,266 @@
+import { afterEach, test, vi } from 'vitest'
+import assert from 'node:assert/strict'
+import { getDeviceId, deviceUrl, selectDevice, setDeviceCatalog, resetDeviceContext, registerDeviceSwitchQuery, deviceSwitchQuery, registerDeviceSwitchGuard, allowDeviceSwitch } from '../src/api/deviceContext.ts'
+import { createReportCache, reportCache } from '../src/api/reportCache.ts'
+import { listWorkshopTasks, createReport, getDeviceCatalog } from '../src/api/reports.ts'
+import { listWorkshopRangeTasks } from '../src/api/cutting.ts'
+import { changeDevice, deviceSelection, loadDevices } from '../src/state/devices.ts'
+import { formatDeviceDisplay } from '../src/utils/deviceDisplay.ts'
+
+const catalog = { default_device_id: 'Cutter01', items: [
+  { id: 'Cutter01', machine_no: 'Cutter01', name: '20KW切割机' },
+  { id: 'Cutter02', machine_no: 'Cutter02', name: '30KW切割机' },
+] }
+const response = (data) => new Response(JSON.stringify({ success: true, data }), { headers: { 'Content-Type': 'application/json' } })
+
+afterEach(() => { reportCache.clear(); resetDeviceContext() })
+
+function mockSessionStorage(t, initial = {}) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  const values = new Map(Object.entries(initial))
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  }
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage })
+  t.onTestFinished(() => {
+    if (previous) Object.defineProperty(globalThis, 'sessionStorage', previous)
+    else delete globalThis.sessionStorage
+  })
+  return storage
+}
+
+test('refresh restores the chosen equipment before the first report request', async (t) => {
+  const storage = mockSessionStorage(t)
+  const before = await import('../src/api/deviceContext.ts?before-refresh')
+  before.setDeviceCatalog(catalog)
+  before.selectDevice('Cutter02')
+  assert.equal(storage.getItem('cutting-report.device-id'), 'Cutter02')
+  const refreshed = await import('../src/api/deviceContext.ts?after-refresh')
+  assert.equal(refreshed.getDeviceId(), 'Cutter02')
+  assert.match(refreshed.deviceUrl('/api/v1/workshop/latest-date'), /device_id=Cutter02/)
+  refreshed.setDeviceCatalog(catalog)
+  assert.equal(refreshed.getDeviceId(), 'Cutter02')
+})
+
+test('a removed saved device falls back to the catalog default and session reset forgets it', async (t) => {
+  const storage = mockSessionStorage(t, { 'cutting-report.device-id': 'RemovedDevice' })
+  const context = await import('../src/api/deviceContext.ts?removed-device')
+  context.setDeviceCatalog(catalog)
+  assert.equal(context.getDeviceId(), 'Cutter01')
+  assert.equal(storage.getItem('cutting-report.device-id'), 'Cutter01')
+  context.selectDevice('Cutter02')
+  context.resetDeviceContext()
+  assert.equal(context.getDeviceId(), '')
+  assert.equal(storage.getItem('cutting-report.device-id'), null)
+})
+
+test('blocked browser storage does not prevent loading and switching equipment', async (t) => {
+  const storage = mockSessionStorage(t)
+  for (const method of ['getItem', 'setItem', 'removeItem']) storage[method] = () => { throw new DOMException('storage blocked', 'SecurityError') }
+  const context = await import('../src/api/deviceContext.ts?blocked-storage')
+  assert.equal(context.getDeviceId(), '')
+  context.setDeviceCatalog(catalog)
+  context.selectDevice('Cutter02')
+  assert.equal(context.getDeviceId(), 'Cutter02')
+  context.resetDeviceContext()
+  assert.equal(context.getDeviceId(), '')
+})
+
+test('device context rejects unknown equipment and preserves existing report filters in scoped URLs', () => {
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  assert.equal(getDeviceId(), 'Cutter02')
+  const url = new URL(deviceUrl('/api/v1/workshop/range?start_date=2026-10-01&end_date=2026-10-12&project_name=P1'), 'http://test')
+  assert.equal(url.searchParams.get('device_id'), 'Cutter02')
+  assert.equal(url.searchParams.get('start_date'), '2026-10-01')
+  assert.equal(url.searchParams.get('project_name'), 'P1')
+  assert.throws(() => selectDevice('missing'), /设备不存在/)
+  assert.equal(getDeviceId(), 'Cutter02')
+})
+
+test('a fresh session follows the catalog default instead of assuming Cutter01', async (t) => {
+  mockSessionStorage(t)
+  const context = await import('../src/api/deviceContext.ts?catalog-default')
+  context.setDeviceCatalog({ ...catalog, default_device_id: 'Cutter02' })
+  assert.equal(context.getDeviceId(), 'Cutter02')
+  context.selectDevice('Cutter01')
+  const url = new URL(context.deviceUrl('/api/v1/workshop/tasks?report_date=2026-10-19'), 'http://test')
+  assert.equal(url.searchParams.get('device_id'), 'Cutter01', 'the backend default must not redirect an explicit selection')
+})
+
+test('the production directory preserves its last usable catalog and supports retrying a failed read', async t => {
+  let failed = true
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+    assert.equal(url, '/api/v1/production-lines')
+    if (failed) return new Response(JSON.stringify({ detail: '目录暂不可用' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return response(catalog)
+  })
+  await loadDevices({ includeLines: true })
+  assert.equal(deviceSelection.ready, false)
+  assert.equal(deviceSelection.error, '目录暂不可用')
+  failed = false
+  await loadDevices({ includeLines: true, force: true })
+  assert.equal(deviceSelection.ready, true)
+  assert.equal(deviceSelection.id, catalog.default_device_id)
+  assert.equal(deviceSelection.error, '')
+  failed = true
+  await loadDevices({ includeLines: true, force: true })
+  assert.deepEqual(deviceSelection.items, catalog.items)
+  assert.equal(deviceSelection.error, '目录暂不可用')
+  assert.equal(fetch.mock.calls.length, 3)
+})
+
+for (const outcome of ['success', 'failure']) {
+  test(`a late device catalog ${outcome} after logout cannot overwrite the next session`, async (t) => {
+    const pending = []
+    t.onTestFinished(() => { for (const item of pending) item.resolve(response(catalog)) })
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((resolve, reject) => { pending.push({ resolve, reject }) }))
+    const old = loadDevices()
+    assert.equal(pending.length, 1)
+    resetDeviceContext()
+    const fresh = loadDevices()
+    assert.equal(pending.length, 2, 'a new session must start its own catalog request')
+    if (outcome === 'success') pending[0].resolve(response(catalog))
+    else pending[0].reject(new Error('previous session failure'))
+    await old
+    assert.equal(deviceSelection.ready, false)
+    assert.equal(deviceSelection.loading, true)
+    assert.equal(deviceSelection.error, '')
+    assert.deepEqual(deviceSelection.items, [])
+    pending[1].resolve(response(catalog))
+    await fresh
+    assert.equal(deviceSelection.ready, true)
+    assert.equal(deviceSelection.loading, false)
+  })
+}
+
+test('account, settings, usage and file dispatch endpoints stay shared when viewing Cutter02', () => {
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  for (const url of ['/api/v1/auth/status', '/api/v1/automation/schedules', '/api/v1/llm-usage/report', '/api/v1/cutting/dispatches']) {
+    assert.equal(deviceUrl(url), url)
+  }
+  assert.equal(deviceUrl('/api/v1/reports/r2/status?device_id=Cutter02', 'Cutter01'), '/api/v1/reports/r2/status?device_id=Cutter02')
+})
+
+test('same date cache entries cannot return another device report', async () => {
+  setDeviceCatalog(catalog)
+  const cache = createReportCache({ scope: getDeviceId })
+  assert.equal(await cache.read('workshop:2026-10-12', () => 'one'), 'one')
+  selectDevice('Cutter02')
+  assert.equal(await cache.read('workshop:2026-10-12', () => 'two'), 'two')
+  selectDevice('Cutter01')
+  assert.equal(await cache.read('workshop:2026-10-12', () => assert.fail('lost Cutter01 cache')), 'one')
+})
+
+test('switching devices aborts pending shared reads and rejects late results', async () => {
+  setDeviceCatalog(catalog)
+  let resolveOld
+  let oldSignal
+  const old = reportCache.read('workshop:tasks:day', (signal) => {
+    oldSignal = signal
+    return new Promise((resolve) => { resolveOld = resolve })
+  })
+  const rejected = assert.rejects(old, { name: 'AbortError' })
+  await Promise.resolve()
+  changeDevice('Cutter02')
+  assert.equal(oldSignal.aborted, true)
+  const fresh = await reportCache.read('workshop:tasks:day', () => 'Cutter02')
+  resolveOld('Cutter01 late result')
+  await rejected
+  assert.equal(fresh, 'Cutter02')
+  assert.equal(await reportCache.read('workshop:tasks:day', () => assert.fail('late result replaced cache')), 'Cutter02')
+})
+
+test('selected device is sent for task queries and report creation', async (t) => {
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  const requests = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    requests.push([url, options])
+    return response({ report_id: 'r2', items: [] })
+  })
+  await listWorkshopTasks({ reportDate: '2026-10-12' })
+  await createReport({ report_type: 'equipment', report_date: '2026-10-12' })
+  assert.equal(requests.length, 2)
+  for (const [url] of requests) assert.equal(new URL(url, 'http://test').searchParams.get('device_id'), 'Cutter02')
+  assert.equal(JSON.parse(requests[1][1].body).report_date, '2026-10-12')
+  assert.equal(requests[1][1].credentials, 'same-origin')
+})
+
+test('catalog remains authenticated and new device names come from configuration', async (t) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    assert.equal(url, '/api/v1/devices')
+    assert.equal(options.credentials, 'same-origin')
+    return response({ ...catalog, items: [...catalog.items, { id: 'Cutter03', machine_no: 'Cutter03', name: '备用切割机' }] })
+  })
+  setDeviceCatalog(await getDeviceCatalog())
+  assert.equal(formatDeviceDisplay('Cutter02 / Cutter03'), '30KW切割机 / 备用切割机')
+  assert.equal(formatDeviceDisplay('OtherCutter02 Cutter020'), 'OtherCutter02 Cutter020')
+})
+
+test('device switch captures the displayed latest day so another machine cannot silently change the date', () => {
+  const unregisterOld = registerDeviceSwitchQuery('workshop-report', () => ({ start: '2026-10-11' }))
+  const unregisterNew = registerDeviceSwitchQuery('workshop-report', () => ({ start: '2026-10-12', end: '2026-10-12', project: 'P1' }))
+  unregisterOld()
+  assert.deepEqual(deviceSwitchQuery('workshop-report'), { start: '2026-10-12', end: '2026-10-12', project: 'P1' })
+  assert.equal(deviceSwitchQuery('equipment-report'), undefined)
+  unregisterNew()
+  assert.equal(deviceSwitchQuery('workshop-report'), undefined)
+})
+
+
+test('every device including catalog default is explicit in previews exports and polling', () => {
+  assert.throws(() => deviceUrl('/api/v1/workshop/tasks'), /设备目录尚未加载/)
+  setDeviceCatalog(catalog)
+  for (const id of ['Cutter01', 'Cutter02']) {
+    selectDevice(id)
+    for (const path of ['/api/v1/workshop/tasks', '/api/v1/reports/r1/status', '/api/v1/reports/r1/download?format=pdf', '/api/v1/database/preview', '/api/v1/designer/query-tasks/q1/preview']) {
+      assert.equal(new URL(deviceUrl(path), 'http://test').searchParams.get('device_id'), id)
+    }
+  }
+})
+
+test('browsers without URLSearchParams.size retain device and report query parameters', async t => {
+  const descriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, 'size')
+  delete URLSearchParams.prototype.size
+  t.onTestFinished(() => Object.defineProperty(URLSearchParams.prototype, 'size', descriptor))
+  assert.equal(new URLSearchParams('device_id=Cutter02').size, undefined)
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  for (const path of ['/api/v1/workshop/range', '/api/v1/leadership-report', '/api/v1/energy-report/day', '/api/v1/analysis/version', '/api/v1/reports/r1/download']) {
+    const url = new URL(deviceUrl(`${path}?start_date=2026-10-01&format=pdf`), 'http://test')
+    assert.equal(url.searchParams.get('device_id'), 'Cutter02')
+    assert.equal(url.searchParams.get('start_date'), '2026-10-01')
+    assert.equal(url.searchParams.get('format'), 'pdf')
+  }
+  assert.equal(deviceUrl('/api/v1/reports/r1/status?device_id=Cutter01'), '/api/v1/reports/r1/status?device_id=Cutter01')
+  const requests = []
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async url => { requests.push(url); return response({ items: [] }) })
+  await listWorkshopRangeTasks({ startDate: '2026-10-01', endDate: '2026-10-27', projectName: 'P1', page: 2 })
+  assert.equal(requests.length, 1)
+  const params = new URL(requests[0], 'http://test').searchParams
+  assert.equal(params.get('device_id'), 'Cutter02')
+  assert.equal(params.get('start_date'), '2026-10-01')
+  assert.equal(params.get('end_date'), '2026-10-27')
+  assert.equal(params.get('project_name'), 'P1')
+  assert.equal(params.get('page'), '2')
+})
+
+
+test('configuration scope guards prevent losing unsaved connection drafts and release on unmount', async () => {
+  const remove = registerDeviceSwitchGuard('database', async () => false)
+  assert.equal(await allowDeviceSwitch('database'), false)
+  assert.equal(await allowDeviceSwitch('workshop-report'), true)
+  remove()
+  assert.equal(await allowDeviceSwitch('database'), true)
+})
+
+
+test('SQL workbench execution keeps the explicit selected cutting line', () => {
+  setDeviceCatalog(catalog)
+  selectDevice('Cutter02')
+  assert.equal(new URL(deviceUrl('/api/v1/database/sql/execute'), 'http://test').searchParams.get('device_id'), 'Cutter02')
+})
