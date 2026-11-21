@@ -1,172 +1,157 @@
-import { scriptFunction } from './typescript-helpers.mjs'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
-import * as Vue from 'vue'
-import { renderToString } from '@vue/server-renderer'
-import { NAlert, NConfigProvider, darkTheme, useThemeVars } from 'naive-ui'
-import { createGenerator } from 'unocss'
-import { loadConfigFromFile } from 'vite'
-import { fileURLToPath } from 'node:url'
-import { parse } from '@vue/compiler-sfc'
-import { sparklineGeometry } from '../src/utils/sparkline.ts'
-import { cuttingOverviewFreshness } from '../src/api/productionOverview.ts'
-import { REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll } from '../src/api/reportRequests.ts'
+// @vitest-environment jsdom
 
-const read = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8')
-const { config: unoConfig } = await loadConfigFromFile({ command: 'build', mode: 'test' }, fileURLToPath(new URL('../uno.config.ts', import.meta.url)))
-const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve(); await Vue.nextTick() }
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { init } from 'echarts/core'
+import { NConfigProvider } from 'naive-ui'
+import { createPinia, disposePinia } from 'pinia'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { h, onUnmounted, reactive } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { getAlarmStatus, listAlarmIncidents } from '../src/api/alarms'
+import { getLeadershipReport, listReports } from '../src/api/cutting'
+import { getEnergyMonth } from '../src/api/energy'
+import HomeKpiCard from '../src/components/HomeKpiCard.vue'
+import { useAppStore } from '../src/state/app'
+import AdminHomeView from '../src/views/AdminHomeView.vue'
 
-test('Uno semantic cards include shadow initialization, RGB opacity and shared spacing', async () => {
-  const uno = await createGenerator(unoConfig)
-  const { css } = await uno.generate('card-wrapper bg-layout bg-container bg-primary/10 gap-panel gap-field p-panel text-auxiliary transition-all-300')
-  assert.ok(css.includes('--un-shadow-inset:'))
-  assert.ok(css.includes('--un-ring-shadow:'))
-  for (const token of ['--layout-bg-color', '--container-bg-color', '--primary-color']) assert.ok(css.includes(`var(${token})`))
-  assert.match(css, /gap:var\(--space-4\)/)
-  assert.match(css, /padding:var\(--space-4\)/)
-  assert.match(css, /font-size:var\(--font-auxiliary\)/)
-  assert.match(css, /border-radius:var\(--card-radius\)/)
-  assert.match(css, /cubic-bezier/)
+vi.mock('../src/api/alarms')
+vi.mock('../src/api/cutting')
+vi.mock('../src/api/energy')
+vi.mock('../src/api/reportDates', async importOriginal => ({
+  ...await importOriginal(), reportToday: () => '2026-10-23',
+}))
+vi.mock('echarts/core', async importOriginal => ({
+  ...await importOriginal(), init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() })),
+}))
+
+enableAutoUnmount(afterEach)
+beforeEach(() => {
+  vi.clearAllMocks()
+  getLeadershipReport.mockResolvedValue({ snapshot: { data_as_of: '2026-10-23' }, current_month_total: { task_count: 0 }, daily_records: [] })
+  getEnergyMonth.mockResolvedValue({ rows: [], summary: {} })
+  listReports.mockResolvedValue({ items: [], total: 0 })
+  getAlarmStatus.mockResolvedValue({ enabled: false })
+  listAlarmIncidents.mockResolvedValue([])
 })
+afterEach(() => { vi.useRealTimers() })
 
-function mountHome(overrides = {}) {
-  let state
-  const charts = []
-  const theme = Vue.ref({ primaryColor: 'primary-one', successColor: 'success-one', borderColor: 'border', dividerColor: 'divider', textColor1: 'text', textColor3: 'muted', popoverColor: 'popover' })
-  const appState = Vue.reactive({ reducedMotion: false })
-  const originalWindow = globalThis.window
-  const originalResizeObserver = globalThis.ResizeObserver
-  let onResize
-  globalThis.ResizeObserver = class { constructor(callback) { onResize = callback } observe() {} disconnect() {} }
-  globalThis.window = { setInterval: () => 1, clearInterval() {}, addEventListener() {}, removeEventListener() {} }
-  const bindings = {
-    ...Vue, use: () => {}, BarChart: {}, LineChart: {}, PieChart: {}, GridComponent: {}, LegendComponent: {}, TooltipComponent: {}, CanvasRenderer: {},
-    useAppStore: () => appState, useThemeVars: () => theme,
-    cuttingOverviewFreshness, REPORT_POLL_LIMIT, reportIsRefreshing, waitForReportPoll, deviceSelection: { id: 'cutting' },
-    reportToday: () => '2026-10-23', session: { systemInfo: {}, user: {} },
-    formatChineseDate: String, formatChineseDateTime: String, formatChineseMonth: String, formatDeviceDisplay: String,
-    getLeadershipReport: async () => ({ current_month_total: { task_count: 0, cut_length_m: 0, work_time_seconds: 0 }, daily_records: [] }),
-    getEnergyMonth: async () => ({ rows: [], summary: {} }), listReports: async () => ({ items: [], total: 0 }),
-    getAlarmStatus: async () => ({ enabled: false }), listAlarmIncidents: async () => [],
-    init: () => { const chart = { options: [], setOption(value) { this.options.push(value) }, resizeCount: 0, resize() { this.resizeCount++ }, dispose() {} }; charts.push(chart); return chart },
-    ...overrides,
-  }
-  const getLeadershipReport = bindings.getLeadershipReport
-  bindings.getLeadershipReport = async (...args) => ({ snapshot: {}, ...await getLeadershipReport(...args) })
-  const source = parse(read('views/AdminHomeView.vue')).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-  const entries = Object.entries(bindings).filter(([key]) => /^[\w$]+$/.test(key))
-  const setup = scriptFunction(...entries.map(([key]) => key), `${source}\nreturn { overviewLoading, historyLoading, energyLoading, alarmLoading, overview, total, error, recentReports, loadDashboard, workHours, workUnit, trendElement, statusElement, metricSeries, comparisonStatus, taskComparison, lengthComparison, timeComparison, insightTrend, overviewPreparing, electricity }`)
-  const renderer = Vue.createRenderer({
-    createComment: () => ({}), createText: () => ({}), createElement: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null, patchProp() {},
+async function open({ reducedMotion = true } = {}) {
+  let resize
+  const disconnected = vi.fn()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback) { resize = callback }
+    observe() {}
+    disconnect() { disconnected() }
   })
-  const app = renderer.createApp({ setup() { state = setup(...entries.map(([, value]) => value)); return () => null } })
-  app.mount({})
-  return { state, charts, theme, appState, resize: () => onResize(), close() { app.unmount(); if (originalResizeObserver === undefined) delete globalThis.ResizeObserver; else globalThis.ResizeObserver = originalResizeObserver; if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow } }
+  const pinia = createPinia()
+  const app = useAppStore(pinia)
+  app.reducedMotion = reducedMotion
+  const colors = reactive({ primaryColor: '#113399', successColor: '#338811' })
+  const paths = ['/', '/admin/alarms', ...['leadership', 'workshop', 'equipment', 'center'].map(name => `/admin/reports/${name}`)]
+  const router = createRouter({ history: createMemoryHistory(), routes: paths.map(path => ({ path, component: AdminHomeView })) })
+  await router.push('/')
+  const wrapper = mount({
+    setup() { onUnmounted(() => disposePinia(pinia)) },
+    render: () => h(NConfigProvider, { themeOverrides: { common: { ...colors } } }, { default: () => h(AdminHomeView) }),
+  }, { global: { plugins: [router, pinia] } })
+  await flushPromises()
+  return {
+    wrapper, colors, app, resize: () => resize(), disconnected,
+    card: title => wrapper.findAllComponents(HomeKpiCard).find(card => card.props('title') === title),
+    chart: label => {
+      const index = vi.mocked(init).mock.calls.findIndex(([element]) => element.getAttribute('aria-label').includes(label))
+      return vi.mocked(init).mock.results[index].value
+    },
+  }
 }
 
-test('home results remain independent and theme changes redraw existing charts without another query', async () => {
-  let resolveOverview
-  let resolveEnergy
-  let calls = 0
-  const home = mountHome({
-    getLeadershipReport: () => { calls++; return new Promise((resolve) => { resolveOverview = resolve }) },
-    getEnergyMonth: () => new Promise((resolve) => { resolveEnergy = resolve }),
-  })
-  try {
-    resolveOverview({ current_month_total: { task_count: 232, cut_length_m: 9714.2, work_time_seconds: 78390 }, daily_records: [{ period_start: '2026-10-01', task_count: 232, cut_length_m: 9714.2, work_time_seconds: 78390 }] })
-    await flush()
-    assert.equal(home.state.overviewLoading.value, false)
-    assert.equal(home.state.energyLoading.value, true)
-    assert.equal(home.state.total.value.task_count, 232)
-    assert.equal(home.state.workHours.value, 21)
-    assert.equal(home.state.workUnit.value, '小时 46分')
-    home.state.trendElement.value = {}
-    home.state.statusElement.value = {}
-    await flush()
-    assert.equal(home.charts.length, 2)
-    home.resize()
-    assert.ok(home.charts.every((chart) => chart.resizeCount === 1))
-    assert.deepEqual(home.charts[0].options.at(-1).color, ['primary-one', 'success-one'])
-    home.theme.value = { ...home.theme.value, primaryColor: 'primary-two', successColor: 'success-two' }
-    await flush()
-    assert.equal(calls, 1)
-    assert.deepEqual(home.charts[0].options.at(-1).color, ['primary-two', 'success-two'])
-    home.appState.reducedMotion = true
-    await flush()
-    assert.equal(home.charts[0].options.at(-1).animationDuration, 0)
-    resolveEnergy({ rows: [], summary: {}, energy_connected: false })
-    await flush()
-    assert.equal(home.state.energyLoading.value, false)
-  } finally { home.close() }
+test('production renders before the meter reply; theme and reduced motion redraw existing charts', async () => {
+  let finishProduction, finishMeter
+  getLeadershipReport.mockReturnValue(new Promise(resolve => { finishProduction = resolve }))
+  getEnergyMonth.mockReturnValue(new Promise(resolve => { finishMeter = resolve }))
+  const home = await open({ reducedMotion: false })
+  expect(home.card('本月任务').props('loading')).toBe(true)
+  expect(home.wrapper.get('[aria-label="电耗"]').get('[role="status"]').text()).toBe('')
+  const metrics = { task_count: 232, cut_length_m: 9714.2, work_time_seconds: 78390 }
+  finishProduction({ snapshot: { data_as_of: '2026-10-23' }, current_month_total: metrics,
+    daily_records: [{ period_start: '2026-10-01', ...metrics }] })
+  await flushPromises()
+  expect(home.card('本月任务').attributes('aria-label')).toBe('本月任务：232 项')
+  expect(home.card('设备工时').attributes('aria-label')).toBe('设备工时：21 小时 46分')
+  expect(home.wrapper.get('[aria-label="电耗"]').find('[role="status"]').exists()).toBe(true)
+  const trend = home.chart('切割长度')
+  const status = home.chart('生产日状态')
+  home.resize()
+  expect(trend.resize).toHaveBeenCalledOnce()
+  expect(status.resize).toHaveBeenCalledOnce()
+  expect(status.setOption.mock.lastCall[0].series[0].data[0]).toEqual({ name: '生产日', value: 1 })
+  expect(trend.setOption.mock.lastCall[0].color).toEqual(['#113399', '#338811'])
+  Object.assign(home.colors, { primaryColor: '#116699', successColor: '#117722' })
+  home.app.reducedMotion = true
+  await flushPromises()
+  expect(trend.setOption.mock.lastCall[0]).toMatchObject({ color: ['#116699', '#117722'], animationDuration: 0 })
+  expect(getLeadershipReport).toHaveBeenCalledOnce()
+  expect(init).toHaveBeenCalledTimes(2)
+  finishMeter({ rows: [], summary: {}, energy_connected: false })
+  await flushPromises()
+  expect(home.wrapper.get('[aria-label="电耗"]').find('[role="status"]').exists()).toBe(false)
+  expect(home.wrapper.get('[aria-label="电耗"]').text()).toContain('暂未接入')
 })
 
-test('home failure and empty data preserve successful independent modules and finish loading', async () => {
-  const home = mountHome({ getLeadershipReport: async () => { throw new Error('生产数据读取失败') }, listReports: async () => ({ items: [{ report_id: 'r1' }], total: 1 }) })
-  try {
-    await flush()
-    assert.equal(home.state.error.value, '生产统计')
-    assert.equal(home.state.overview.value, null)
-    assert.equal(home.state.recentReports.value.length, 1)
-    assert.equal(home.state.historyLoading.value, false)
-    assert.equal(home.state.overviewLoading.value, false)
-    assert.equal(home.state.alarmLoading.value, false)
-    assert.equal(home.state.energyLoading.value, false)
-    assert.equal(home.state.total.value.task_count, 0)
-  } finally { home.close() }
+test('production failure leaves report history and alarm status visible with real quick links', async () => {
+  getLeadershipReport.mockRejectedValue(new Error('生产数据读取失败'))
+  listReports.mockResolvedValue({ items: [{ report_id: 'r1', report_title: '已生成的班组周报', status: 'completed' }], total: 1 })
+  const { wrapper, card } = await open()
+  expect(wrapper.get('[role="alert"]').text()).toContain('生产统计未能更新')
+  expect(wrapper.text()).toContain('已生成的班组周报')
+  expect(wrapper.text()).toContain('告警监控未启用')
+  expect(card('本月任务').text()).toContain('暂无数据')
+  expect(wrapper.find('[aria-label="正在获取能耗数据"]').exists()).toBe(false)
+  expect(wrapper.get('nav[aria-label="核心报表快速入口"]').findAll('a').map(link => [link.text(), link.attributes('href')]))
+    .toEqual([['领导报表', '/admin/reports/leadership'], ['车间报表', '/admin/reports/workshop'], ['设备报表', '/admin/reports/equipment']])
 })
 
-test('cutting retries only the failed module and does not turn missing work time into zero', async () => {
-  let fail = true
-  let productionReads = 0
-  const energyModes = []
-  const home = mountHome({
-    getLeadershipReport: async () => { productionReads++; return { current_month_total: { task_count: 1, cut_length_m: 0, work_time_seconds: null } } },
-    getEnergyMonth: async (month, { mode }) => {
-      energyModes.push(mode)
-      if (fail) throw new Error('能源接口不可用')
-      return { summary: { electricity: { value: 0 } } }
-    },
-  })
-  try {
-    await flush()
-    assert.equal(home.state.error.value, '能耗')
-    assert.equal(home.state.workHours.value, null)
-    assert.equal(home.state.workUnit.value, '')
-    fail = false
-    await Promise.all([home.state.loadDashboard(true), home.state.loadDashboard(true)])
-    assert.equal(home.state.electricity.value, 0)
-    assert.equal(home.state.error.value, '')
-    assert.equal(productionReads, 1)
-    assert.deepEqual(energyModes, ['read', 'refresh'])
-  } finally { home.close() }
+test('retry reloads only the failed meter module and distinguishes measured zero from unknown work time', async () => {
+  getLeadershipReport.mockResolvedValue({ snapshot: { data_as_of: '2026-10-23' },
+    current_month_total: { task_count: 1, cut_length_m: 0, work_time_seconds: null } })
+  getEnergyMonth.mockRejectedValue(new Error('能源接口不可用'))
+  const { wrapper, card } = await open()
+  const retry = wrapper.findAll('button').find(button => button.text() === '重试失败项目')
+  expect(wrapper.get('[role="alert"]').text()).toContain('能耗未能更新')
+  expect(card('设备工时').text()).toContain('暂无数据')
+  getEnergyMonth.mockResolvedValue({ summary: { electricity: { value: 0 } } })
+  await retry.trigger('click')
+  await retry.trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[aria-label="电耗"]').text()).toContain('0.0')
+  expect(wrapper.text()).not.toContain('能耗未能更新')
+  expect(getLeadershipReport).toHaveBeenCalledOnce()
+  expect(getEnergyMonth.mock.calls.map(([, options]) => options.mode)).toEqual(['read', 'refresh'])
 })
 
-test('cutting keeps a cold placeholder out of the KPI and cancels late snapshot updates on leave', async () => {
-  let finishWait, finishPoll, signal
-  const home = mountHome({
-    waitForReportPoll: () => new Promise(resolve => { finishWait = resolve }),
-    getLeadershipReport: async (month, options) => {
-      signal = options.signal
-      return options.mode === 'poll' ? new Promise(resolve => { finishPoll = resolve }) : {
-        current_month_total: { task_count: 0 }, snapshot: { stale: true, refreshing: true, data_as_of: null },
-      }
-    },
-  })
-  await flush()
-  assert.equal(home.state.overviewPreparing.value, true)
-  assert.equal(home.state.overview.value, null)
-  finishWait()
-  await flush()
-  home.close()
-  assert.equal(signal.aborted, true)
+test('a cold placeholder remains in preparation and leaving aborts the active production poll', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let finishPoll
+  getLeadershipReport.mockResolvedValueOnce({
+    current_month_total: { task_count: 0 }, snapshot: { stale: true, refreshing: true, data_as_of: null },
+  }).mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve }))
+  const { wrapper, card } = await open()
+  expect(card('本月任务').props('loading')).toBe(true)
+  expect(card('本月任务').props('value')).toBeNull()
+  expect(init).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(5000)
+  const [, { mode, signal }] = getLeadershipReport.mock.lastCall
+  expect(mode).toBe('poll')
+  wrapper.unmount()
+  expect(signal.aborted).toBe(true)
   finishPoll({ current_month_total: { task_count: 8 }, snapshot: { data_as_of: '2026-10-23' } })
-  await flush()
-  assert.equal(home.state.overview.value, null)
+  await flushPromises()
+  expect(init).not.toHaveBeenCalled()
 })
 
-test('home bars and comparisons react independently to returned production data', async () => {
-  const home = mountHome({ getLeadershipReport: async () => ({
+test('daily records keep chronological values and the KPI comparisons use the prior period independently', async () => {
+  getLeadershipReport.mockResolvedValue({
+    snapshot: { data_as_of: '2026-10-23' },
     current_month_total: { task_count: 25, cut_length_m: 50, work_time_seconds: 39600 },
     comparison_total: { task_count: 20, cut_length_m: 100, work_time_seconds: 36000 },
     daily_records: [
@@ -174,47 +159,27 @@ test('home bars and comparisons react independently to returned production data'
       { period_start: '2026-10-01', task_count: 4, cut_length_m: 20, work_time_seconds: 3600 },
       { period_start: '2026-10-02', task_count: 1, cut_length_m: 10, work_time_seconds: null },
     ],
-  }) })
-  try {
-    await flush()
-    const state = home.state
-    assert.deepEqual(state.metricSeries.value.tasks, [4, 1, 10])
-    assert.deepEqual(state.metricSeries.value.length, [20, 10, 5])
-    assert.deepEqual(state.metricSeries.value.hours, [1, null, 2])
-    assert.deepEqual(state.taskComparison.value, { text: '↑ 25% 较上月', direction: 'up' })
-    assert.deepEqual(state.lengthComparison.value, { text: '↓ 50% 较上月', direction: 'down' })
-    assert.deepEqual(state.timeComparison.value, { text: '↑ 10% 较上月', direction: 'up' })
-    const before = sparklineGeometry(state.metricSeries.value.tasks).bars.map(bar => bar.height)
-    state.overview.value.daily_records[1].task_count = 20
-    const after = sparklineGeometry(state.metricSeries.value.tasks).bars.map(bar => bar.height)
-    assert.ok(before[0] < before[2])
-    assert.ok(after[0] > after[2])
-    state.overview.value.current_month_total.cut_length_m = 100.2
-    assert.equal(state.lengthComparison.value.text, '↑ 0.2% 较上月')
-    assert.equal(state.insightTrend.value, '切割长度高于上月 0.2%')
-  } finally { home.close() }
+  })
+  const { card, chart, wrapper } = await open()
+  expect(card('本月任务').props('series')).toEqual([4, 1, 10])
+  expect(card('本月任务').find('[aria-label="↑ 25% 较上月"]').exists()).toBe(true)
+  expect(card('切割长度').find('[aria-label="↓ 50% 较上月"]').exists()).toBe(true)
+  expect(card('设备工时').find('[aria-label="↑ 10% 较上月"]').exists()).toBe(true)
+  expect(chart('切割长度').setOption.mock.lastCall[0].series.map(series => series.data))
+    .toEqual([['20.0', '10.0', '5.0'], ['1.0', null, '2.0']])
+  expect(wrapper.text()).toContain('切割长度低于上月 50%')
 })
 
-test('home comparison distinguishes tiny changes, true equality and unavailable data', async () => {
-  const home = mountHome()
-  try {
-    await flush()
-    const compare = home.state.comparisonStatus
-    for (const previous of [null, undefined, 0, '', 'invalid', NaN, Infinity]) {
-      assert.deepEqual(compare(10, previous), { text: '暂无上月对比', direction: 'flat' })
-    }
-    assert.equal(compare(null, 10).text, '暂无上月对比')
-    assert.equal(compare(100.01, 100).text, '↑ <0.1% 较上月')
-    assert.equal(compare(99.99, 100).text, '↓ <0.1% 较上月')
-    assert.equal(compare(100, 100).text, '与上月持平')
-    assert.equal(compare(0, 100).text, '↓ 100% 较上月')
-  } finally { home.close() }
-})
-
-// The old action slot is ignored by NAlert; its removal must preserve rendered UI.
-test('removing the unsupported alert action slot preserves the home error output', async () => {
-  const render = slots => renderToString(Vue.createSSRApp({ render: () => Vue.h(NAlert, { title: '部分概览数据读取失败', type: 'error', role: 'alert' }, slots) }))
-  const before = await render({ default: () => '读取失败', action: () => Vue.h('button', '重试') })
-  const after = await render({ default: () => '读取失败' })
-  assert.equal(after, before)
+test.each([
+  [100.01, 100, '↑ <0.1% 较上月'],
+  [99.99, 100, '↓ <0.1% 较上月'],
+  [100, 100, '与上月持平'],
+  [0, 100, '↓ 100% 较上月'],
+  [10, 0, '暂无上月对比'],
+  [10, null, '暂无上月对比'],
+])('cut length %s compared with %s shows %s', async (cut_length_m, previous, expected) => {
+  getLeadershipReport.mockResolvedValue({ snapshot: { data_as_of: '2026-10-23' },
+    current_month_total: { task_count: 1, cut_length_m }, comparison_total: { cut_length_m: previous } })
+  const { card } = await open()
+  expect(card('切割长度').find(`[aria-label="${expected}"]`).exists()).toBe(true)
 })

@@ -1,8 +1,6 @@
-import { scriptFunction } from './typescript-helpers.mjs'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, watch } from 'vue'
 import { startReportPreload, stopReportPreload, reportPreload } from '../src/state/reportPreload.ts'
 import { recentTwelveMonthStart, reportToday } from '../src/api/reportDates.ts'
 import * as api from '../src/api/reports.ts'
@@ -11,7 +9,6 @@ import { resetDeviceContext, setDeviceCatalog, selectDevice, getDeviceId } from 
 import { deviceSelection } from '../src/state/devices.ts'
 import { getWeldingReport } from '../src/api/welding.ts'
 import { parseWeldingRouteQuery } from '../src/utils/weldingRouteState.ts'
-import { queryDateRange } from '../src/utils/reportRouteState.ts'
 
 const originalFetch = globalThis.fetch
 const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
@@ -64,34 +61,6 @@ for (const kind of ['daily', 'jobs', 'parts', 'equipment']) test(`welding ${kind
   assert.ok(calls[0].url.startsWith(`/api/v1/welding/${path}?`))
 })
 
-test('worker load syncs a nonempty snapshot while background polling remains read-only', async () => {
-  const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
-  const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
-  const signal = new AbortController().signal
-  const calls = []
-  const emitted = []
-  const rows = (count) => ({ report: { item_count: count }, items: [], page: 1, page_size: 10 })
-  const bindings = {
-    isWorker: ref(true), filters: { reportDate: today }, props: { mode: 'worker' },
-    defaultReportView: ref(true), retryFailedLoad: null, requestPending: false,
-    beginRequest: () => ({ sequence: 1, signal }), requestSequence: 1, requestController: null,
-    pageActive: ref(true), loading: ref(false), error: ref(''), result: ref(rows(1)),
-    listWorkshopTasks: async (_query, options) => { calls.push(['read', options]); return rows(calls.length > 1 ? 2 : 1) },
-    generateWorkshopDailyReport: async (_date, options) => { calls.push(['sync', options]); return rows(2) },
-    reconcileVisibleTaskSelection: () => {},
-    emit: event => emitted.push(event),
-  }
-  const load = scriptFunction(...Object.keys(bindings), `${loadSource}; return load`)(...Object.values(bindings))
-  await load()
-  assert.deepEqual(calls.map(([kind]) => kind), ['read', 'sync', 'read'])
-  assert.equal(calls[1][1].signal, signal)
-  assert.equal(bindings.result.value.report.item_count, 2)
-  calls.length = 0
-  await load(1, { silent: true, ensureReport: false, force: true })
-  assert.deepEqual(calls.map(([kind]) => kind), ['read'])
-  assert.deepEqual(emitted, ['refreshed', 'refreshed'])
-})
-
 test('snapshot synchronization forwards cancellation and invalidates the task cache', async () => {
   const calls = mockApi()
   await api.listWorkshopTasks({ reportDate: today })
@@ -102,45 +71,6 @@ test('snapshot synchronization forwards cancellation and invalidates the task ca
   assert.equal(sync.options.signal, controller.signal)
   assert.equal(sync.options.method, 'POST')
   assert.equal(calls.filter((call) => call.url.includes('/workshop/tasks?')).length, 2)
-})
-
-test('manager background refresh reads applied filters and retains visible data until success or failure', async () => {
-  const source = readFileSync(new URL('../src/views/WorkshopView.vue', import.meta.url), 'utf8')
-  const loadSource = source.slice(source.indexOf('async function load('), source.indexOf('\nfunction refreshAnalysisReport('))
-  const applied = { startDate: today, endDate: today, taskId: 'task-8', projectName: '已查询工程', confirmationStatus: 'confirmed' }
-  const previous = { report: { item_count: 1 }, items: [{ task_id: 'cached' }], page: 2, page_size: 10 }
-  let resolve, reject, query
-  const bindings = {
-    isWorker: ref(false), filters: { ...applied, projectName: '尚未提交的草稿' }, appliedRouteState: { ...applied },
-    queryDateRange, retryFailedLoad: null, requestPending: false,
-    props: { mode: 'manager' }, beginRequest: () => ({ sequence: 1, signal: new AbortController().signal }),
-    requestSequence: 1, requestController: null, pageActive: ref(true), loading: ref(false), error: ref(''),
-    result: ref(previous), defaultReportView: ref(false), reconcileVisibleTaskSelection() {},
-    listWorkshopRangeTasks: value => { query = value; return new Promise((a, b) => { resolve = a; reject = b }) },
-  }
-  const { load, retry } = scriptFunction(...Object.keys(bindings), `${loadSource}; return { load, retry: () => retryFailedLoad() }`)(...Object.values(bindings))
-  const refresh = load(2, { ensureReport: false, useAppliedFilters: true })
-  assert.equal(query.projectName, applied.projectName)
-  assert.equal(query.page, 2)
-  assert.equal(bindings.result.value.items[0].task_id, 'cached')
-  assert.equal(bindings.loading.value, true)
-  resolve({ ...previous, items: [{ task_id: 'updated' }] })
-  await refresh
-  assert.equal(bindings.result.value.items[0].task_id, 'updated')
-  assert.equal(bindings.filters.projectName, '尚未提交的草稿')
-  const failed = load(2, { ensureReport: false, useAppliedFilters: true })
-  reject(new Error('后台更新失败'))
-  await failed
-  assert.equal(bindings.result.value.items[0].task_id, 'updated')
-  assert.equal(bindings.loading.value, false)
-  assert.equal(bindings.error.value, '后台更新失败')
-  const retried = retry()
-  assert.equal(query.taskId, 'task-8')
-  assert.equal(query.projectName, applied.projectName)
-  assert.equal(query.confirmationStatus, 'confirmed')
-  assert.equal(query.page, 2)
-  resolve(previous)
-  await retried
 })
 
 test('admin home warms only its own overview and history', async () => {

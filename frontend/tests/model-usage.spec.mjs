@@ -1,293 +1,229 @@
-import { scriptFunction } from './typescript-helpers.mjs'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { test } from 'vitest'
-import * as Vue from 'vue'
-import { compileScript, parse } from '@vue/compiler-sfc'
+// @vitest-environment jsdom
 
-const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const source = read('../src/views/ModelUsageView.vue')
-const script = parse(source).descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { init } from 'echarts/core'
+import { NConfigProvider, NDialogProvider, NSelect, darkTheme } from 'naive-ui'
+import { createPinia, disposePinia } from 'pinia'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { h, onUnmounted } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import AppDatePicker from '../src/components/AppDatePicker.vue'
+import AppSelect from '../src/components/AppSelect.vue'
+import ModelConfiguration from '../src/components/ModelConfiguration.vue'
+import { useThemeStore } from '../src/store/modules/theme'
+import ModelUsageView from '../src/views/ModelUsageView.vue'
+import { stubTableLayout } from './table-layout-fixture.mjs'
 
-function mount(getReport) {
-  let state
-  const theme = Vue.reactive({ darkMode: false })
-  const vars = Vue.ref({ primaryColor: 'primary', successColor: 'success', warningColor: 'warning', textColor1: 'text', textColor2: 'text2', dividerColor: 'divider', borderColor: 'border', popoverColor: 'popover' })
-  const hookSource = read('../src/composables/useReportChartTheme.ts').replace(/^import .*$/gm, '').replace('export function', 'function')
-  const chartThemeHook = scriptFunction('computed', 'watch', 'useThemeVars', 'useThemeStore', `${hookSource}\nreturn useReportChartTheme`)(Vue.computed, Vue.watch, () => vars, () => theme)
-  const charts = []
-  const observers = []
-  const oldObserver = globalThis.ResizeObserver
-  globalThis.ResizeObserver = class { constructor() { observers.push(this) } observe() {} disconnect() { this.disconnected = true } }
-  const bindings = {
-    ...Vue, use: () => {}, BarChart: {}, LineChart: {}, GridComponent: {}, LegendComponent: {},
-    TooltipComponent: {}, CanvasRenderer: {}, getLlmUsageReport: getReport,
-    reportToday: () => '2026-10-12', recentTwelveMonthStart: () => '2025-11-01',
-    useReportChartTheme: chartThemeHook,
-    init: (dom, scheme) => { const chart = { scheme, options: [], setOption(option) { this.options.push(option) }, resize() {}, dispose() { this.disposed = true } }; charts.push(chart); return chart },
-  }
-  const setup = scriptFunction(...Object.keys(bindings), `${script}\nreturn { draft, applied, report, loading, error, load, query, changeGranularity, preset, number, chartElement, drawChart, series, periods }`)
-  const renderer = Vue.createRenderer({
-    createComment: () => ({}), createText: () => ({}), createElement: () => ({}),
-    insert: () => {}, remove: () => {}, setText: () => {}, setElementText: () => {},
-    parentNode: () => null, nextSibling: () => null, patchProp: () => {},
-  })
-  const app = renderer.createApp({ setup() { state = setup(...Object.values(bindings)); return () => null } })
-  app.mount({})
-  const unmount = app.unmount.bind(app)
-  app.unmount = () => { unmount(); if (oldObserver === undefined) delete globalThis.ResizeObserver; else globalThis.ResizeObserver = oldObserver }
-  return { app, state, theme, vars, charts, observers }
-}
+vi.mock('echarts/core', async importOriginal => ({
+  ...await importOriginal(), init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() })),
+}))
+vi.mock('../src/api/reportDates', async importOriginal => ({
+  ...await importOriginal(), reportToday: () => '2026-10-12',
+}))
 
-const result = (marker = 1) => ({ summary: { call_count: 21, metered_count: 20 }, series: [{ period: '2026-10-12', call_count: 21, total_tokens: 0, input_tokens: 0, output_tokens: 0 }], marker })
-const flush = async () => { await Promise.resolve(); await Vue.nextTick(); await Promise.resolve() }
+const configurationPath = '/api/v1/configuration/llm'
+const usagePath = '/api/v1/llm-usage/report'
+const config = { enabled: true, base_url: 'https://provider.invalid/v1', model: 'model-a', active_enabled: true,
+  active_base_url: 'https://provider.invalid/v1', active_model: 'model-a', api_key_configured: true, restart_required: false }
+const response = data => Response.json({ success: true, data })
+const result = (count = 21) => ({
+  summary: { call_count: count, metered_count: count - 1, failed_count: 0, total_tokens: 0 }, scene: '',
+  start_date: '2026-10-01', end_date: '2026-10-12', granularity: 'day', timezone: 'Asia/Shanghai', breakdown: [],
+  series: [{ period: '2026-10-12', call_count: count, total_tokens: 0, input_tokens: 0, output_tokens: 0 }],
+})
 
-function mountModelConfiguration(api) {
-  const element = (tag, name) => ({
-    inheritAttrs: false, props: ['value', 'options', 'disabled'],
-    setup: (props, { slots, attrs, emit }) => () => Vue.h(tag, {
-      ...attrs, value: props.value, disabled: props.disabled,
-      onChange: event => emit('update:value', event.target.value),
-    }, name === 'select' ? props.options?.map(option => Vue.h('option', { value: option.value }, option.label)) : slots.default?.()),
-  })
-  const bindings = { ...api, useUnsavedChanges() {}, NCard: element('section'), NAlert: element('div'), NInput: element('input'),
-    NSelect: element('select', 'select'), NSwitch: element('input'), NButton: element('button'),
-    toError: value => value instanceof Error ? value : new Error(String(value)) }
-  const compiled = compileScript(parse(read('../src/components/ModelConfiguration.vue')).descriptor, {
-    id: 'model-configuration-test', inlineTemplate: true,
-  }).content.replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g, (_, names) => {
-    for (const name of names.split(',')) {
-      const [original, alias = original] = name.trim().split(/\s+as\s+/)
-      bindings[alias] = Vue[original]
-    }
-    return ''
-  }).replace(/^import .*$/gm, '').replace('export default', 'return')
-  const component = scriptFunction(...Object.keys(bindings), compiled)(...Object.values(bindings))
-  const renderer = Vue.createRenderer({
-    createElement: tag => ({ tag, props: {}, children: [] }), createText: text => ({ text }), createComment: () => ({}),
-    insert(node, parent) { parent.children.push(node) }, remove() {}, patchProp(node, key, _, value) { node.props[key] = value },
-    setText(node, text) { node.text = text }, setElementText(node, text) { node.text = text; node.children = [] },
-    parentNode: () => null, nextSibling: () => null,
-  })
-  const root = { children: [] }
-  const app = renderer.createApp(component)
-  app.mount(root)
-  const all = node => [node, ...(node.children || []).flatMap(all)]
-  const text = node => (node.text || '') + (node.children || []).map(text).join('')
-  return { app, text: () => text(root),
-    find: predicate => all(root).find(predicate),
-    async fill(label, value) {
-      const input = all(root).find(node => node.props?.['aria-label'] === label)
-      assert.ok(input, label)
-      input.props.onChange({ target: { value } })
-      await flush()
-    },
-    async click(label) {
-      const button = all(root).find(node => node.tag === 'button' && text(node) === label)
-      assert.ok(button, label)
-      button.props.onClick()
-      await flush()
-    },
-    async save() {
-      all(root).find(node => node.tag === 'form').props.onSubmit({ preventDefault() {} })
-      await flush()
-    },
-  }
-}
+enableAutoUnmount(afterEach)
+beforeEach(() => { vi.mocked(init).mockClear() })
 
-test('model selection uses server credentials and displays the new active model after saving', async () => {
-  const current = { enabled: true, base_url: 'https://maas-api.cmhk.com/v1', model: 'model-a',
-    active_enabled: true, active_base_url: 'https://maas-api.cmhk.com/v1', active_model: 'model-a',
-    api_key_configured: true, restart_required: false }
+async function open({ component = ModelUsageView, fetchResponse, observe = false } = {}) {
   const requests = []
-  let failCatalog = false
-  const view = mountModelConfiguration({
-    getLlmConfiguration: async () => current,
-    listLlmModels: async payload => {
-      requests.push(payload)
-      if (failCatalog) throw new Error('读取模型列表认证失败')
-      return { models: ['model-a', 'model-b'] }
-    },
-    saveLlmConfiguration: async payload => {
-      requests.push(payload)
-      return { ...current, model: payload.model, active_model: payload.model, restart_required: false }
-    },
+  const observers = []
+  stubTableLayout()
+  if (observe) vi.stubGlobal('ResizeObserver', class {
+    disconnect = vi.fn()
+    observe = vi.fn()
+    constructor() { observers.push(this) }
   })
-  try {
-    await flush()
-    assert.ok(view.text().includes('model-a'))
-    assert.deepEqual(requests, [{ base_url: current.base_url, api_key: undefined }])
-    assert.ok(view.text().includes('model-b'))
-    await view.click('刷新模型列表')
-    assert.equal(requests.length, 2)
-    assert.equal(requests.at(-1).api_key, undefined)
-    assert.ok(view.text().includes('model-b'))
-    await view.fill('分析模型', 'model-b')
-    await view.save()
-    assert.equal(requests.at(-1).model, 'model-b')
-    assert.equal(requests.at(-1).api_key, undefined)
-    assert.match(view.text(), /当前 Web 模型\s*model-b/)
-    assert.ok(!view.text().includes('需重启 Web'))
-    failCatalog = true
-    await view.click('刷新模型列表')
-    assert.ok(view.text().includes('读取模型列表认证失败'))
-    assert.equal(view.find(node => node.tag === 'select').props.value, 'model-b')
-  } finally { view.app.unmount() }
-})
-
-for (const configured of [{ base_url: '', api_key_configured: true }, { base_url: 'https://provider.invalid/v1', api_key_configured: false }]) {
-  test(`model catalog waits for missing configuration (${JSON.stringify(configured)})`, async () => {
-    let requests = 0
-    const view = mountModelConfiguration({
-      getLlmConfiguration: async () => ({ ...configured, enabled: false, model: '', active_enabled: false, restart_required: false }),
-      listLlmModels: async () => { requests++; return { models: [] } },
-    })
-    try {
-      await flush()
-      assert.equal(requests, 0)
-      assert.ok(view.text().includes('智能分析模型'))
-    } finally { view.app.unmount() }
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+    const { pathname, searchParams } = new URL(String(input), 'http://localhost')
+    if (pathname.endsWith('/cancel') || pathname === '/api/v1/operations/browser') return Response.json({})
+    expect(options.credentials).toBe('same-origin')
+    const call = { pathname, method: options.method ?? 'GET', params: Object.fromEntries(searchParams), signal: options.signal,
+      body: options.body && JSON.parse(options.body) }
+    requests.push(call)
+    const custom = fetchResponse?.(call)
+    if (custom) return custom
+    if (pathname === configurationPath && call.method === 'GET') return response({ ...config, api_key_configured: false })
+    throw new Error(`Unexpected request ${call.method} ${pathname}`)
   })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/settings/model-usage', component }] })
+  await router.push('/settings/model-usage')
+  const pinia = createPinia()
+  const theme = useThemeStore(pinia)
+  theme.setThemeScheme('light')
+  const wrapper = mount({
+    setup() { onUnmounted(() => disposePinia(pinia)) },
+    render: () => h(NConfigProvider, { theme: theme.darkMode ? darkTheme : null, themeOverrides: theme.naiveTheme },
+      { default: () => h(NDialogProvider, {}, { default: () => h(RouterView) }) }),
+  }, { global: { plugins: [router, pinia], stubs: { teleport: true } } })
+  await flushPromises()
+  return { wrapper, requests, theme, observers,
+    usage: () => requests.filter(call => call.pathname === usagePath),
+    async click(label) {
+      await wrapper.findAll('button').find(button => button.text() === label).trigger('click')
+      await flushPromises()
+    },
+    async setStart(date) {
+      wrapper.findAllComponents(AppDatePicker)[0].vm.$emit('update:modelValue', date)
+      await flushPromises()
+    },
+    async query() {
+      await wrapper.get('[aria-label="用量查询条件"] form').trigger('submit')
+      await flushPromises()
+    },
+  }
 }
 
-test('model usage remains a settings destination and uses the shared authenticated API', () => {
-  assert.match(read('../src/router/index.ts'), /path: 'model-usage'[\s\S]*ModelUsageView\.vue/)
-  assert.match(read('../src/api/system.ts'), /getLlmUsageReport[\s\S]*request<UsageReport>\(`\/api\/v1\/llm-usage\/report\?\$\{query\}`, \{ signal \}\)/)
-  assert.match(source, /消耗趋势与周期汇总/)
-  assert.match(source, /场景与模型分布/)
-  assert.doesNotMatch(source, /逐次调用明细|report\.calls|app-pagination/)
-  assert.doesNotMatch(source, /usage-notes|usage-lifetime|统计说明|统计启用前|formatChineseDateTime/)
+test('model configuration reads the saved catalog without sending an API key and applies the new model immediately', async () => {
+  let failCatalog = false
+  const page = await open({ component: ModelConfiguration, fetchResponse: call => {
+    if (call.pathname.endsWith('/models')) return failCatalog
+      ? Response.json({ detail: '读取模型列表认证失败' }, { status: 403 })
+      : response({ models: ['model-a', 'model-b'] })
+    return response(call.method === 'PUT' ? { ...config, model: call.body.model, active_model: call.body.model } : config)
+  } })
+  const model = page.wrapper.getComponent(NSelect)
+  expect(model.props('options')).toEqual([{ label: 'model-a', value: 'model-a' }, { label: 'model-b', value: 'model-b' }])
+  const catalog = () => page.requests.filter(call => call.pathname.endsWith('/models'))
+  expect(catalog()[0].body).toEqual({ base_url: config.base_url })
+  await page.click('刷新模型列表')
+  expect(catalog().map(call => call.body)).toEqual(Array(2).fill({ base_url: config.base_url }))
+  model.vm.$emit('update:value', 'model-b')
+  await page.wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(page.requests.at(-1)).toMatchObject({ method: 'PUT', body: { model: 'model-b' } })
+  expect(page.requests.at(-1).body).not.toHaveProperty('api_key')
+  expect(page.wrapper.text()).toMatch(/当前 Web 模型\s*model-b/)
+  expect(page.wrapper.text()).not.toContain('需重启 Web')
+  failCatalog = true
+  await page.click('刷新模型列表')
+  expect(page.wrapper.text()).toContain('读取模型列表认证失败')
+  expect(model.props('value')).toBe('model-b')
 })
 
-test('draft filters do not change refreshed or aggregated usage until applied', async () => {
-  const queries = []
-  const { app, state } = mount(async (query) => { queries.push(query); return result() })
-  try {
-    await flush()
-    state.draft.scene = 'alarm'
-    state.draft.startDate = '2026-09-01'
-    await state.load()
-    assert.equal(queries.at(-1).scene, '')
-    assert.equal(queries.at(-1).startDate, '2026-10-01')
-    state.query()
-    await flush()
-    assert.equal(queries.at(-1).scene, 'alarm')
-    assert.equal(queries.at(-1).startDate, '2026-09-01')
-    state.changeGranularity('month')
-    await flush()
-    assert.equal(queries.at(-1).granularity, 'month')
-    assert.equal(queries.at(-1).scene, 'alarm')
-  } finally { app.unmount() }
+test.each([{ base_url: '', api_key_configured: true }, { base_url: config.base_url, api_key_configured: false }])(
+  'model catalog waits for an endpoint and credentials (%j)', async configured => {
+    const { wrapper, requests } = await open({ component: ModelConfiguration, fetchResponse: () => response({ ...config, ...configured }) })
+    expect(requests.map(call => call.pathname)).toEqual([configurationPath])
+    expect(wrapper.text()).toContain('智能分析模型')
+  },
+)
+
+test('period and scene drafts apply only when submitted while granularity updates the successful scope', async () => {
+  const page = await open({ fetchResponse: call => call.pathname === usagePath && response({ ...result(), granularity: call.params.granularity }) })
+  page.wrapper.getComponent(AppSelect).vm.$emit('update:modelValue', 'alarm')
+  await page.setStart('2026-09-01')
+  await page.click('每月')
+  expect(page.usage().at(-1).params).toMatchObject({ start_date: '2026-10-01', scene: '', granularity: 'month' })
+  await page.query()
+  expect(page.usage().at(-1).params).toEqual({ start_date: '2026-09-01', end_date: '2026-10-12', scene: 'alarm', granularity: 'month' })
+  await page.click('每日')
+  expect(page.usage().at(-1).params).toMatchObject({ start_date: '2026-09-01', scene: 'alarm', granularity: 'day' })
+  expect(page.wrapper.text()).toMatch(/消耗趋势与周期汇总.*场景与模型分布/)
+  expect(page.wrapper.text()).not.toContain('逐次调用明细')
 })
 
-test('invalid ranges never query and missing tokens remain different from zero', async () => {
-  let calls = 0
-  const { app, state } = mount(async () => { calls++; return result() })
-  try {
-    await flush()
-    state.draft.startDate = '2026-11-01'
-    state.query()
-    assert.equal(calls, 1)
-    assert.match(state.error.value, /有效/)
-    state.draft.startDate = '2020-01-01'
-    state.query()
-    assert.equal(calls, 1)
-    assert.match(state.error.value, /366/)
-    assert.equal(state.number(null), '—')
-    assert.equal(state.number(0), '0')
-  } finally { app.unmount() }
+test('invalid or oversized intervals show validation without sending another query', async () => {
+  const page = await open({ fetchResponse: call => call.pathname === usagePath && response(result()) })
+  await page.setStart('2026-11-01')
+  await page.query()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('有效')
+  await page.setStart('2020-01-01')
+  await page.query()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('366')
+  expect(page.usage()).toHaveLength(1)
 })
 
-for (const granularity of ['day', 'month']) test(`${granularity} table and chart omit empty periods but keep failed, missing-token and zero-token requests`, async () => {
+test.each(['day', 'month'])('%s table and chart omit empty periods while distinguishing missing and zero tokens', async granularity => {
   const dates = granularity === 'day' ? ['2026-10-01', '2026-10-03', '2026-10-05', '2026-10-07'] : ['2026-07', '2026-08', '2026-09', '2026-10']
-  const rows = [
+  const series = [
     { period: dates[0], before_tracking: true, call_count: null, total_tokens: null },
     { period: dates[1], call_count: 1, metered_count: 0, failed_count: 1, total_tokens: null },
     { period: dates[2], call_count: 0, total_tokens: 0 },
     { period: dates[3], call_count: 1, metered_count: 1, total_tokens: 0 },
   ]
-  const data = { ...result(), granularity, series: rows, summary: { call_count: 2, metered_count: 1, failed_count: 1, total_tokens: 0 } }
-  const page = mount(async () => data)
-  try {
-    await flush()
-    assert.deepEqual(page.state.series.value.map(row => row.period), [dates[1], dates[3]])
-    assert.deepEqual(page.state.periods.value.map(row => row.period), [dates[3], dates[1]])
-    page.state.chartElement.value = {}
-    page.state.drawChart()
-    const option = page.charts.at(-1).options.at(-1)
-    assert.deepEqual(option.xAxis.data, [dates[1], dates[3]].map(period => granularity === 'day' ? period.slice(5) : period))
-    assert.deepEqual(option.series[0].data, [null, 0])
-    assert.equal(page.state.report.value.summary.call_count, 2)
-    assert.equal(data.series.length, 4, 'display filtering must not mutate the API response')
-    page.state.report.value = { ...data, series: [rows[0], rows[2]], summary: { call_count: 0 } }
-    page.state.drawChart()
-    assert.equal(page.state.periods.value.length, 0)
-    assert.equal(page.charts.at(-1).disposed, true)
-    assert.equal(page.observers.at(-1).disconnected, true)
-    assert.match(source, /v-show="series.length" ref="chartElement"/)
-    assert.match(source, /v-if="series.length" class="history-wrap usage-periods"/)
-  } finally { page.app.unmount() }
+  let empty = false
+  const page = await open({ observe: true, fetchResponse: call => call.pathname === usagePath &&
+    response({ ...result(2), granularity, series: empty ? [series[0], series[2]] : series }) })
+  const chart = vi.mocked(init).mock.results[0].value
+  const [option] = chart.setOption.mock.lastCall
+  expect(option.xAxis.data).toEqual([dates[1], dates[3]].map(period => granularity === 'day' ? period.slice(5) : period))
+  expect(option.series[0].data).toEqual([null, 0])
+  const rows = page.wrapper.get('[aria-label="每日或每月 token 汇总"]').findAll('tbody tr')
+  expect(rows.map(row => row.findAll('td')[4].text())).toEqual(['0', '—'])
+  expect(rows[1].findAll('td')[6].text()).toBe('1')
+  empty = true
+  await page.query()
+  expect(page.wrapper.text()).toContain('当前区间暂无用量记录')
+  expect(page.wrapper.find('[aria-label="每日或每月 token 汇总"]').exists()).toBe(false)
+  expect(page.wrapper.get('[role="img"][aria-label^="总 token"]').isVisible()).toBe(false)
+  expect(chart.dispose).toHaveBeenCalledOnce()
+  expect(page.observers.some(observer => observer.disconnect.mock.calls.length === 1)).toBe(true)
 })
 
-test('superseded and unmounted requests cannot replace the selected usage report', async () => {
+test('a superseded usage request cannot replace the current result and unmount aborts the active read', async () => {
   const pending = []
-  const { app, state } = mount((query, { signal }) => new Promise((resolve) => pending.push({ query, signal, resolve })))
-  const newer = state.load()
-  assert.equal(pending[0].signal.aborted, true)
-  pending[1].resolve(result(2))
-  await newer
-  pending[0].resolve(result(1))
-  await flush()
-  assert.equal(state.report.value.marker, 2)
-  const last = state.load()
-  app.unmount()
-  assert.equal(pending[2].signal.aborted, true)
-  pending[2].resolve(result(1))
-  await last
-  assert.equal(state.report.value.marker, 2)
+  const page = await open({ fetchResponse: call => call.pathname === usagePath && new Promise(resolve => pending.push({ ...call, resolve })) })
+  await page.setStart('2026-09-01')
+  await page.query()
+  expect(pending[0].signal.aborted).toBe(true)
+  pending[1].resolve(response(result(32)))
+  await flushPromises()
+  pending[0].resolve(response(result(11)))
+  await flushPromises()
+  const overview = page.wrapper.get('[aria-label="区间用量概览"]')
+  expect(overview.text()).toContain('32')
+  expect(overview.text()).not.toContain('11')
+  await page.query()
+  page.wrapper.unmount()
+  expect(pending[2].signal.aborted).toBe(true)
+  pending[2].resolve(response(result(11)))
+  await flushPromises()
+  expect(init).toHaveBeenCalledOnce()
 })
 
-test('query failures preserve the last successful report and can be retried', async () => {
+test('query failure keeps displayed data and retry reloads the successful scope', async () => {
   let fail = false
-  const { app, state } = mount(async () => {
-    if (fail) throw new Error('用量读取失败')
-    return result()
-  })
-  try {
-    await flush()
-    fail = true
-    await state.load()
-    assert.equal(state.error.value, '用量读取失败')
-    assert.equal(state.report.value.marker, 1)
-    assert.equal(state.loading.value, false)
-    fail = false
-    await state.load()
-    assert.equal(state.error.value, '')
-  } finally { app.unmount() }
+  const page = await open({ fetchResponse: call => call.pathname === usagePath && (fail
+    ? Response.json({ detail: '用量读取失败' }, { status: 500 }) : response(result(32))) })
+  fail = true
+  await page.query()
+  expect(page.wrapper.get('[role="alert"]').text()).toContain('用量读取失败')
+  expect(page.wrapper.get('[aria-label="区间用量概览"]').text()).toContain('32')
+  fail = false
+  await page.click('重试')
+  expect(page.wrapper.text()).not.toContain('用量读取失败')
+  expect(page.usage().map(call => call.params)).toEqual(Array(3).fill(page.usage()[0].params))
 })
 
-test('usage chart follows dark mode and semantic colors without refetching or leaking observers', async () => {
-  let calls = 0
-  const page = mount(async () => { calls++; return result() })
-  try {
-    await flush()
-    page.state.chartElement.value = {}
-    page.state.drawChart()
-    assert.equal(page.charts.length, 1)
-    page.theme.darkMode = true
-    await flush()
-    assert.equal(page.charts[0].disposed, true)
-    assert.equal(page.observers[0].disconnected, true)
-    assert.equal(page.charts.at(-1).scheme, 'dark')
-    assert.equal(page.charts.at(-1).options.at(-1).backgroundColor, 'transparent')
-    page.vars.value = { ...page.vars.value, primaryColor: 'new-primary' }
-    await flush()
-    assert.equal(page.charts.at(-1).options.at(-1).color[0], 'new-primary')
-    page.theme.darkMode = false
-    await flush()
-    assert.equal(page.charts.at(-1).scheme, undefined)
-    assert.equal(calls, 1)
-  } finally { page.app.unmount() }
-  assert.ok(page.charts.every(chart => chart.disposed))
-  assert.ok(page.observers.every(observer => observer.disconnected))
+test('usage chart redraws for dark mode and the selected color without a new query', async () => {
+  const page = await open({ observe: true, fetchResponse: call => call.pathname === usagePath && response(result()) })
+  const firstChart = vi.mocked(init).mock.results[0].value
+  const originalColor = page.theme.themeColor
+  page.theme.setThemeScheme('dark')
+  await flushPromises()
+  expect(firstChart.dispose).toHaveBeenCalledOnce()
+  expect(vi.mocked(init).mock.lastCall[1]).toBe('dark')
+  page.theme.updateThemeColors('primary', '#cc4400')
+  await flushPromises()
+  const current = vi.mocked(init).mock.results.at(-1).value
+  expect(current.setOption.mock.lastCall[0]).toMatchObject({ backgroundColor: 'transparent', color: [page.theme.themeColor, expect.any(String), expect.any(String)] })
+  expect(page.usage()).toHaveLength(1)
+  page.theme.updateThemeColors('primary', originalColor)
+  page.theme.setThemeScheme('light')
+  await flushPromises()
+  expect(vi.mocked(init).mock.lastCall[1]).toBeUndefined()
+  page.wrapper.unmount()
+  expect(vi.mocked(init).mock.results.every(({ value }) => value.dispose.mock.calls.length > 0)).toBe(true)
+  expect(page.observers.every(observer => observer.disconnect.mock.calls.length > 0)).toBe(true)
 })

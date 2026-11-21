@@ -1,28 +1,31 @@
+// @vitest-environment jsdom
+
 import assert from 'node:assert/strict'
+import { mount } from '@vue/test-utils'
 import { test } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { parse } from '@vue/compiler-sfc'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { h } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import CuttingLayout from '../src/layouts/CuttingLayout.vue'
 import { cuttingRoutes } from '../src/router/cuttingRoutes.ts'
 
-const stub = { render: () => null }
+const page = { render: () => h('h1', '文件派发') }
 
-test('file dispatch omits a redundant one-item submenu', () => {
-  const source = readFileSync(new URL('../src/layouts/CuttingLayout.vue', import.meta.url), 'utf8')
-  const { descriptor } = parse(source)
-
-  assert.doesNotMatch(descriptor.template.content, /report-navigation|文件派发子导航|RouterLink/)
-  assert.match(descriptor.template.content, /<RouterView/)
-  assert.equal(descriptor.styles.length, 0)
+test('file dispatch opens directly without a redundant one-item submenu', async t => {
+  const router = routerForTest()
+  await router.push('/admin/cutting-dispatch')
+  const wrapper = mount(RouterView, { global: { plugins: [router] } })
+  t.onTestFinished(() => wrapper.unmount())
+  assert.equal(wrapper.get('h1').text(), '文件派发')
+  assert.equal(wrapper.findAll('nav, [role="navigation"], a').length, 0)
 })
 function routerForTest() {
   return createRouter({
     history: createMemoryHistory(),
     routes: [{
-      path: '/admin', component: stub, meta: { role: 'admin' },
+      path: '/admin', component: RouterView, meta: { role: 'admin' },
       children: [{
-        ...cuttingRoutes, component: stub,
-        children: cuttingRoutes.children.map((route) => route.component ? { ...route, component: stub } : route),
+        ...cuttingRoutes, component: CuttingLayout,
+        children: cuttingRoutes.children.map((route) => route.component ? { ...route, component: page } : route),
       }],
     }],
   })
