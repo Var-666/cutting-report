@@ -17,10 +17,10 @@ from app.device_config import load_line_catalog
 from app.database.mysql import MySqlClient
 from app.database.source_registry import DatabaseSourceRegistry
 from app.config import settings_for_line
-from app.database.welding import WeldingRepository, WeldingUnavailable, TABLES, valid_serial, valid_time
+from app.modules.welding.repository import WeldingRepository, WeldingUnavailable, TABLES, valid_serial, valid_time
 from app.models.domain import to_primitive
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 
 
 def inspect_source(client: MySqlClient) -> dict:

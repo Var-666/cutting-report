@@ -13,13 +13,13 @@ from app.database.report_snapshots import ReportSnapshotRepository
 from app.database.postgres import execution_scope
 from tests.postgres_fixtures import state_settings
 from app.database.coordination import CoordinationRepository
-from app.database.welding import WeldingUnavailable
-from app.database.welding import JOB_FIELDS, PART_FIELDS, WeldingRepository
-from app.models.welding import WeldingQuery
+from app.modules.welding.repository import WeldingUnavailable
+from app.modules.welding.repository import JOB_FIELDS, PART_FIELDS, WeldingRepository
+from app.modules.welding.models import WeldingQuery
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
 from app.services.production_reports import report_provider
-from app.services.welding_service import WeldingService
+from app.modules.welding.service import WeldingService
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
@@ -98,7 +98,7 @@ def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_s
 
 def test_welding_report_distinguishes_zero_activity_from_unusable_source_records(configured, monkeypatch, caplog):
     _, _, _, source, service = configured
-    caplog.set_level(logging.INFO, logger='app.services.welding_service')
+    caplog.set_level(logging.INFO, logger='app.modules.welding.service')
     statistics = source.statistics
     invalid_rows = 0
 
@@ -334,7 +334,7 @@ def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, mo
         @staticmethod
         def now(zone):
             return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
-    monkeypatch.setattr('app.services.welding_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.welding.service.datetime', Clock)
     plan = service.refresh_plan()
     month_start = selected.replace(day=1)
     month_end = selected.replace(day=monthrange(selected.year, selected.month)[1])
@@ -659,7 +659,7 @@ def test_legacy_refresh_tasks_are_skipped_before_opening_mysql(configured, kind,
     from time import time
     _, snapshots, _, source, service = configured
     source.down = True
-    with caplog.at_level('INFO', logger='app.services.welding_service'):
+    with caplog.at_level('INFO', logger='app.modules.welding.service'):
         service.refresh_summary(kind, query().model_dump(mode='json'), requested_at=time())
     assert not source.calls
     assert snapshots.get(service._snapshot_key(query(), kind)) is None

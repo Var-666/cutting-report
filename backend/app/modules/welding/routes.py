@@ -16,16 +16,16 @@ from app.services.production_lines import resolve_line_service
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
 from app.models.domain import to_primitive
-from app.models.welding import WeldingAnalysisRequest, WeldingQuery, ReportType
+from app.modules.welding.models import WeldingAnalysisRequest, WeldingQuery, ReportType
 from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import ReportAnalysis
-from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport, WeldingPart, WeldingHealth
-from app.database.welding import WeldingUnavailable
+from app.modules.welding.contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport, WeldingPart, WeldingHealth
+from app.modules.welding.repository import WeldingUnavailable
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
 from app.services.pdf_service import PdfRenderError
 from app.core.request_cancellation import SqlRequestCancelled
-from app.services.welding_export import WeldingExport, csv_bytes, COLUMNS
-from app.services.welding_service import WeldingService
+from app.modules.welding.export import WeldingExport, csv_bytes, COLUMNS
+from app.modules.welding.service import WeldingService
 
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ def seam_export(request: Request, part_id: int):
         raise HTTPException(status_code=409, detail='工件关联待核实，暂不能导出焊缝')
     if total > 100000:
         raise HTTPException(status_code=422, detail='焊缝超过100,000行，请缩小范围')
-    from app.services.welding_service import mapped_row
+    from app.modules.welding.service import mapped_row
     content = csv_bytes(COLUMNS['seams'], [mapped_row(row, 'seams') for row in rows],
                         [('数据来源', '小组立焊接线'), ('工件ID', str(part_id)),
                          ('生成时间', datetime.now(ZoneInfo(instance.settings.weld_db_timezone)).isoformat()),

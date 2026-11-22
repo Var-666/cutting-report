@@ -7,9 +7,9 @@ from datetime import date
 import pytest
 
 from tests.line_fixtures import welding_settings
-from app.database.welding import WeldingRepository
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.repository import WeldingRepository
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def test_project_statistics_preserve_unique_ownership_filters_and_units(project_
 
 
 def test_shared_source_scope_applies_to_parts_seams_and_direct_drilldown(project_statistics):
-    from app.database.welding import SEAM_FIELDS
+    from app.modules.welding.repository import SEAM_FIELDS
     _, session = project_statistics
     session.fetch("UPDATE weld_part_info_table SET device_no=CASE WHEN serial_number IN ('B','C') THEN 1 ELSE 0 END")
     columns = ','.join(f'{name} ' + ('INTEGER' if name in ('id', 'device_no', 'robot_no') else 'TEXT') for name in SEAM_FIELDS.split(', '))

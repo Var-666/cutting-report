@@ -167,9 +167,9 @@ def test_cancellation_never_returns_history(analysis_export, error):
 @pytest.mark.parametrize('format', ['html', 'pdf'])
 def test_welding_export_keeps_history_for_viewing_and_uses_only_matching_analysis_in_file(tmp_path, monkeypatch, kind, format):
     from app.models.domain import AnalysisResult
-    from app.models.welding import WeldingQuery
-    from app.services.welding_export import WeldingExport
-    from app.services.welding_service import WeldingService
+    from app.modules.welding.models import WeldingQuery
+    from app.modules.welding.export import WeldingExport
+    from app.modules.welding.service import WeldingService
     from tests.line_fixtures import welding_settings
 
     settings = welding_settings(project_root=tmp_path, llm_enabled=True)
@@ -186,7 +186,7 @@ def test_welding_export_keeps_history_for_viewing_and_uses_only_matching_analysi
     service.report = current_report
     model = Mock(side_effect=lambda *_: AnalysisResult(status='success', overview=f'本次分析{count}项',
         features='特点', alerts='关注', suggestions='建议', facts=[dict(label='分析任务数', value=count)]))
-    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', model)
+    monkeypatch.setattr('app.modules.welding.service.LlmService.analyze_context', model)
     exporter = WeldingExport(settings, service, None)
     first = exporter.prepare(kind, query, format)[0].decode()
     assert '本次分析2项' in first and model.call_count == 1
@@ -211,10 +211,10 @@ def test_welding_export_keeps_history_for_viewing_and_uses_only_matching_analysi
 
 def test_welding_export_without_success_maps_failure_to_retryable_response(tmp_path):
     from fastapi import HTTPException
-    from app.api.welding import source_errors
-    from app.models.welding import WeldingQuery
-    from app.services.welding_export import WeldingExport
-    from app.services.welding_service import WeldingService
+    from app.modules.welding.routes import source_errors
+    from app.modules.welding.models import WeldingQuery
+    from app.modules.welding.export import WeldingExport
+    from app.modules.welding.service import WeldingService
     from tests.line_fixtures import welding_settings
 
     settings = welding_settings(project_root=tmp_path, llm_enabled=False)

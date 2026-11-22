@@ -86,8 +86,8 @@ def collect_files(root: Path) -> dict[str, bytes]:
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
         "frontend/src/views/CuttingDispatchView.vue",
-        "backend/app/api/welding.py", "backend/app/database/welding.py",
-        "backend/app/services/welding_service.py", "frontend/src/views/WeldingReportView.vue",
+        "backend/app/modules/welding/routes.py", "backend/app/modules/welding/repository.py",
+        "backend/app/modules/welding/service.py", "frontend/src/views/WeldingReportView.vue",
     )
     for name in required:
         if name not in payload:

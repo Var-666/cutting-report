@@ -3,7 +3,7 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
-from app.models.welding import WeldingQuery
+from app.modules.welding.models import WeldingQuery
 from app.models.report_data import ReportDataMeta
 
 

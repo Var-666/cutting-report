@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from tests.line_fixtures import welding_settings
-from app.database.welding import WeldingRepository
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.repository import WeldingRepository
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 
 
 class Repository(WeldingRepository):

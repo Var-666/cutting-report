@@ -17,7 +17,7 @@ from app.config import Settings
 from app.database.source_registry import DatabaseSourceRegistry, SourceConflict
 from app.device_config import ProductionLineCatalog, load_line_catalog
 from app.models.database_sources import DatabaseSourceRequest
-from app.models.welding import WeldingQuery
+from app.modules.welding.models import WeldingQuery
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
 from app.services.production_lines import supports_path, registered_lines
@@ -112,7 +112,7 @@ def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(postgres_st
 
 
 def test_shared_mysql_scope_is_required_and_bound_in_sql(postgres_state, tmp_path):
-    from app.database.welding import WeldingRepository
+    from app.modules.welding.repository import WeldingRepository
     cfg = configuration(tmp_path, welding=True)
     catalog = load_line_catalog(cfg.production_lines_json)
     first = catalog.get('welding')

@@ -47,12 +47,12 @@ from app.core.sql_capacity import SqlCapacity
 from app.services.worker_status import WorkerStatusReader
 from app.services.operations_service import OperationsService
 from app.services.database_runtime import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
-from app.database.welding import WeldingRepository
+from app.modules.welding.repository import WeldingRepository
 from app.database.mysql import MySqlClient
 from app.database.sqlserver import SqlServerClient
 from app.database.hr import HrRepository
 from app.database.magic_box import MagicBoxConfigRepository
-from app.services.welding_service import WeldingService
+from app.modules.welding.service import WeldingService
 from app.database.source_registry import DatabaseSourceRegistry, SourceNotFound
 from app.database.bm_projects import BmProjectRepository
 from app.services.ship_name_service import ShipNameService

@@ -9,11 +9,11 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
-from app.api.welding import router
+from app.modules.welding.routes import router
 from app.database.metadata import MetadataRepository
 from app.models.domain import AnalysisResult, to_primitive
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 from app.services.report_analysis_service import AnalysisUnavailableError, AnalysisDataVersionMismatch
 from app.services.llm_service import AnalysisOutputValidationError, LlmService
 from app.services.report_analysis.brief_validation import validate_welding_quantities
@@ -38,7 +38,7 @@ def analysis_service(state_database, tmp_path, monkeypatch):
         return WeldingService(settings, None, analyses=MetadataRepository(state_database, device_id=settings.device_id, analysis_scope=scope))
     model = Mock(side_effect=lambda *_: AnalysisResult(status='success', overview='原有焊接分析', features='特征',
         alerts='关注', suggestions='建议', facts=[{'label': 'job_count', 'value': 3}]))
-    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', model)
+    monkeypatch.setattr('app.modules.welding.service.LlmService.analyze_context', model)
     return build, model
 
 
@@ -47,7 +47,7 @@ def test_success_survives_restart_memory_expiry_and_paging_without_calling_model
     service = build()
     first = to_primitive(service.analyze_report('daily', QUERY, report(), 'a' * 64))
     assert first['generated_at'] != report()['meta']['calculated_at']
-    monkeypatch.setattr('app.services.welding_service.monotonic', lambda: 10**15)
+    monkeypatch.setattr('app.modules.welding.service.monotonic', lambda: 10**15)
     restarted = build()
     paged = QUERY.model_copy(update={'page': 2, 'page_size': 50, 'sort_by': 'length', 'descending': False})
     cached = restarted.analyze_report('daily', paged, report(), 'a' * 64)
@@ -246,7 +246,7 @@ def test_historical_export_metrics_do_not_mix_new_report_values():
     ('disabled', '模型尚未启用'),
 ])
 def test_cold_welding_analysis_explains_failure_without_provider_details(analysis_service, failure, expected):
-    from app.api.welding import _analyze, WeldingAnalysisRequest
+    from app.modules.welding.routes import _analyze, WeldingAnalysisRequest
     build, model = analysis_service
     service = build()
     if failure == 'disabled':

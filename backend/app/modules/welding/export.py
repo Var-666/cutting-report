@@ -6,11 +6,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.config import Settings
-from app.models.welding import ReportType, WeldingQuery
+from app.modules.welding.models import ReportType, WeldingQuery
 from app.services.pdf_service import PdfService
 from app.services.report_generation.common import report_analysis_payload
 from app.services.report_service import ReportService
-from app.services.welding_service import WeldingService
+from app.modules.welding.service import WeldingService
 
 
 REPORT_TITLES = {'daily': '每日生产统计', 'parts': '工件生产明细', 'jobs': '焊接作业明细', 'equipment': '设备与机器人生产统计'}

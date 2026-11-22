@@ -160,7 +160,7 @@ def clock(monkeypatch):
         def now(cls, tz=None):
             return datetime.fromtimestamp(value[0], tz)
     monkeypatch.setattr('app.scheduler.datetime', ClockDateTime)
-    monkeypatch.setattr('app.services.welding_service.datetime', ClockDateTime)
+    monkeypatch.setattr('app.modules.welding.service.datetime', ClockDateTime)
     monkeypatch.setattr('app.services.production_reports.datetime', ClockDateTime)
     monkeypatch.setattr('app.scheduler.time', lambda: value[0])
     monkeypatch.setattr('app.scheduler.monotonic', lambda: value[1])

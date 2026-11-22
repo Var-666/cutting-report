@@ -41,7 +41,7 @@ from app.config import Settings
 from app.api.devices import router as devices_router
 from app.api.runtime import application_state, request_settings, runtime_state
 from app.api.workloads import build_workloads
-from app.api.welding import router as welding_router
+from app.modules.welding.routes import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.api.pdm_statistics import router as pdm_statistics_router
 from app.services.application_runtime import build_runtime

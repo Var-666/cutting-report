@@ -19,9 +19,9 @@ from app.core.sql_capacity import SqlCapacity
 from app.database.mysql import MySqlClient
 from app.models.database_sources import DatabaseSourceConfig
 from tests.line_fixtures import welding_settings
-from app.database.welding import WeldingRepository, WeldingUnavailable, job_source, job_aggregate, job_conditions, valid_serial, valid_time
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.repository import WeldingRepository, WeldingUnavailable, job_source, job_aggregate, job_conditions, valid_serial, valid_time
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 
 
 @pytest.fixture(scope='module')
@@ -115,7 +115,7 @@ def test_real_mysql_metrics_boundaries_and_invalid_dates(weld_mysql):
 
 
 def test_real_mysql_export_closes_at_17_and_counts_parts_per_window(weld_mysql, monkeypatch):
-    from app.services.welding_export import WeldingExport
+    from app.modules.welding.export import WeldingExport
 
     jobs = weld_mysql.report('jobs', period(), export_limit=5001, include_closing_comparison=True)
     today = jobs['closing_comparison'][0]
@@ -247,7 +247,7 @@ def test_combined_statistics_match_original_queries_and_materialize_the_source_o
     {'end': date(2026, 10, 31)}, {'start': date(2026, 2, 1), 'end': date(2026, 2, 28)}])
 def test_part_scope_matches_original_project_totals_and_page_queries(weld_mysql, changes):
     import json
-    from app.database.welding import PART_FIELDS
+    from app.modules.welding.repository import PART_FIELDS
     repository = weld_mysql.repository
     query = WeldingQuery.model_validate({**period().model_dump(), **changes})
     where, values = job_conditions(query)
@@ -339,7 +339,7 @@ def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
 def test_real_mysql_api_exports_and_pdf(postgres_state, weld_mysql, monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
-    from app.api.welding import router
+    from app.modules.welding.routes import router
     from app.api.database import router as database_router
     from app.services.llm_service import LlmService
     from tests.analysis_fakes import model_analysis

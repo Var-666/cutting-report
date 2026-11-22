@@ -24,10 +24,10 @@ from app.services.query_cache import QueryCache
 from app.database.report_snapshots import ReportKey, fingerprint
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.database.mysql import MySqlSession
-from app.database.welding import CLOSING_JOB_METRICS, WeldingRepository, WeldingUnavailable, aggregate_sort_key
+from app.modules.welding.repository import CLOSING_JOB_METRICS, WeldingRepository, WeldingUnavailable, aggregate_sort_key
 from app.database.metadata import MetadataRepository
 from app.models.domain import to_primitive
-from app.models.welding import ReportType, WeldingQuery, WELD_TYPES
+from app.modules.welding.models import ReportType, WeldingQuery, WELD_TYPES
 from app.services.llm_prompts import PROMPT_VERSION
 from app.services.llm_service import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmService, analysis_error_message,

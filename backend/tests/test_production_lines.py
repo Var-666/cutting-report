@@ -8,7 +8,7 @@ from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
-from app.api.welding import service
+from app.modules.welding.routes import service
 from app.device_config import load_line_catalog
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context

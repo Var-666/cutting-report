@@ -149,7 +149,7 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
         )
         old_welding = previous[0].lines["welding"].service
         old_welding.remember_analysis("unchanged-data", "old-welding-analysis")
-        from app.models.welding import WeldingQuery
+        from app.modules.welding.models import WeldingQuery
         selected = WeldingQuery(start=date(2026, 11, 11), end=date(2026, 11, 11))
         old_welding.analysis_metadata.save_analysis(
             cache_key=old_welding._analysis_key('a' * 64, 'daily', selected), report_type='welding_daily',
