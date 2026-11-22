@@ -1,9 +1,9 @@
-"""Read-only cutting report options and latest production date."""
+"""Read-only SQL Server queries for cutting reports."""
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from app.database.sqlserver import SqlServerClient
+from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter
 
 
@@ -14,6 +14,20 @@ class CuttingQueryRepository:
     def __init__(self, client: SqlServerClient | None, machine_no: str) -> None:
         self.client = client
         self.machine_no = machine_no
+
+    def report_rows(self, name: str, parameters: tuple) -> list[dict[str, Any]]:
+        sql = (QUERY_DIR / name).read_text(encoding="utf-8")
+        if "TODO:" in sql:
+            raise SqlServerConfigurationError(
+                f"{name} 尚未映射实际 SQL Server 表结构，不能关闭演示模式"
+            )
+        return self.client.fetch_all(sql, parameters)
+
+    def leadership_result_sets(self, range_start: date, range_end: date) -> list[list[dict[str, Any]]]:
+        return self.client.fetch_result_sets(
+            (QUERY_DIR / "leadership_report.sql").read_text(encoding="utf-8"),
+            (self.machine_no, range_start, range_end),
+        )
 
     def list_projects(self, filters: ReportFilter) -> list[dict[str, Any]]:
         return self.client.fetch_all(

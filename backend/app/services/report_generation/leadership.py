@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.models.domain import AnalysisResult, LeadershipReportResult, to_primitive
 from app.services.chart_service import ChartService
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.range_report_service import RangeReportService, previous_equal_range
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.range_reports import RangeReportService, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_generation.common import (
     report_analysis_payload,

@@ -224,7 +224,7 @@ def test_cutting_save_rebuilds_bound_services_preserves_old_request_and_shared_c
     assert runtime_state(old_request) is old
     assert fresh.file_downloads._slots is old.file_downloads._slots
     for key in ('Cutter01', 'Cutter02'):
-        assert fresh.lines[key].cutting().query_service.client.connection_config()['host'] == 'new.test'
+        assert fresh.lines[key].cutting().query_service.repository.client.connection_config()['host'] == 'new.test'
         assert fresh.lines[key].background.energy_history_worker._completion is old.lines[key].background.energy_history_worker._completion
     saved = read_runtime_env(cfg.runtime_settings_env_path)
     assert 'SQLSERVER_PASSWORD' not in saved and 'WELD_DB_HOST' not in saved

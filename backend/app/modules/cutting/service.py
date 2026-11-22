@@ -6,19 +6,18 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import partial
 import logging
-from pathlib import Path
 from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.core.operations_logging import data_quality
-from app.database.cutting_queries import CuttingQueryRepository
+from app.modules.cutting.repository import CuttingQueryRepository
 from app.services.ship_name_service import ShipNameService
 from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache as _QueryCache
 from app.services.report_closing_comparison import CUTOFF, Totals, business_day_window, closing_bucket
-from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
+from app.database.sqlserver import SqlServerClient
 from app.models.domain import (
     EquipmentRecord,
     QueryBundle,
@@ -27,7 +26,8 @@ from app.models.domain import (
     WorkshopRecord,
 )
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.query_service')
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,9 +58,7 @@ class QueryService:
         self.settings = settings
         self.ship_names = ship_names
         self.cache_revision = CacheRevision(settings, "production")
-        self.client = client
         self.repository = repository or CuttingQueryRepository(client, settings.report_machine_no)
-        self.query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
         self._equipment_cache = _QueryCache[EquipmentQueryResult]()
         self._bundle_cache = _QueryCache[QueryBundle]()
         self._equipment_metrics_cache_lock = Lock()
@@ -298,8 +296,8 @@ class QueryService:
                 stamp += timedelta(days=1)
             return totals
 
-        rows = self.client.fetch_all(
-            self._read_query("equipment_month_work_time.sql"),
+        rows = self.repository.report_rows(
+            "equipment_month_work_time.sql",
             (self.settings.report_machine_no, start_date, end_exclusive),
         )
         for row in rows:
@@ -336,9 +334,7 @@ class QueryService:
             None if self.ship_names else filters.ship_no,
             None if self.ship_names else filters.ship_no,
         )
-        rows = self.client.fetch_all(
-            self._read_query("equipment.sql"), parameters
-        )
+        rows = self.repository.report_rows("equipment.sql", parameters)
         records = [
             EquipmentRecord(
                 task_id=str(row["task_id"]),
@@ -453,14 +449,6 @@ class QueryService:
             total["work_time_seconds"] += int(row.work_time or 0)
         return buckets
 
-    def _read_query(self, name: str) -> str:
-        sql = (self.query_dir / name).read_text(encoding="utf-8")
-        if "TODO:" in sql:
-            raise SqlServerConfigurationError(
-                f"{name} 尚未映射实际 SQL Server 表结构，不能关闭演示模式"
-            )
-        return sql
-
     def _observe_query_quality(self, kind: str, filters: ReportFilter, rows, records, latest_update):
         seen = set()
         invalid = 0
@@ -496,7 +484,7 @@ class QueryService:
             None if self.ship_names else filters.ship_no,
             None if self.ship_names else filters.ship_no,
         )
-        rows = self.client.fetch_all(self._read_query("summary_base.sql"), parameters)
+        rows = self.repository.report_rows("summary_base.sql", parameters)
         records = [
             SummaryBaseRecord(
                 task_id=str(row["task_id"]),
@@ -539,7 +527,7 @@ class QueryService:
             None if self.ship_names else filters.ship_no,
             None if self.ship_names else filters.ship_no,
         )
-        rows = self.client.fetch_all(self._read_query("workshop.sql"), parameters)
+        rows = self.repository.report_rows("workshop.sql", parameters)
         records = [
             WorkshopRecord(
                 task_id=str(row["task_id"]),

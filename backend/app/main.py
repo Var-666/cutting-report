@@ -20,7 +20,7 @@ from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
 from app.api.automation import router as automation_router
-from app.api.cutting import router as cutting_router, callback_router as magic_box_callback_router
+from app.modules.cutting.routes import router as cutting_router, callback_router as magic_box_callback_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
@@ -29,14 +29,14 @@ from app.api.database_monitors import router as database_monitors_router
 from app.api.operations import router as operations_router
 from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
-from app.api.equipment import router as equipment_router
-from app.api.energy import router as energy_router
-from app.api.leadership import router as leadership_router
-from app.api.options import router as options_router
+from app.modules.cutting.equipment_routes import router as equipment_router
+from app.modules.energy.routes import router as energy_router
+from app.modules.cutting.leadership_routes import router as leadership_router
+from app.modules.cutting.options_routes import router as options_router
 from app.api.reports import router as reports_router
 from app.api.reports import view_router
 from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
-from app.api.workshop import router as workshop_router
+from app.modules.cutting.workshop_routes import router as workshop_router
 from app.config import Settings
 from app.api.devices import router as devices_router
 from app.api.runtime import application_state, request_settings, runtime_state

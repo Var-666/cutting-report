@@ -10,7 +10,7 @@ from app.modules.welding.models import WeldingQuery
 from app.services.alarm_report_service import AlarmReportService
 from app.services.chart_service import ChartService
 from app.services.custom_report_service import CustomReportService
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.leadership import LeadershipReportService
 from app.services.pdf_service import PdfService
 from app.services.report_closing_comparison import closing_comparison
 from app.services.report_service import ReportService

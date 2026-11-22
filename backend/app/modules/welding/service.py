@@ -38,7 +38,8 @@ from app.services.report_closing_comparison import Totals, Window, closing_compa
 from app.core.request_cancellation import SqlRequestCancelled
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.welding_service')
 WELDING_PROMPT_VERSION = f'{PROMPT_VERSION}:scoped-evidence-v3'
 
 WELDING_EVIDENCE = {

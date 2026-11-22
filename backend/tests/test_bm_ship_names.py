@@ -18,15 +18,15 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.database.bm_projects import BmProjectRepository
 from app.database.source_registry import SourceConflict
 from app.database.sqlserver import SqlServerClient
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.database_sources import DatabaseSourceRequest
 from app.models.domain import ReportFilter, WorkshopRecord
 from app.services.application_runtime import build_runtime
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.ship_name_service import ShipNameService
-from app.services.workshop_service import WorkshopService
+from app.modules.cutting.workshop import WorkshopService
 
 
 def record(task='1', **changes):
@@ -90,7 +90,7 @@ def test_all_report_queries_map_and_filter_names_before_statistics(kind):
             segment_name='S1', program_no='N1', cut_length=1, groove_length=0, work_time=60,
             production_time=datetime(2026, 11, 1, 8))
         return [base, {**base, 'task_id':'2', 'project_code':'MISSING', 'ship_no':'MISSING'}]
-    service.client = SimpleNamespace(fetch_all=fetch)
+    service.repository.client = SimpleNamespace(fetch_all=fetch)
     filters = ReportFilter(report_date=date(2026, 11, 1), ship_no='18600DWT-02')
     def records(result):
         return result.records if kind == 'equipment' else getattr(result, f'{kind}_records')
@@ -249,7 +249,7 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_
             dict(task_id='2',project_code='MISSING',ship_no='MISSING',segment_name='S2',program_no='N2',
                 cut_length=Decimal('2.4'),groove_length=Decimal('0.2'),work_time=Decimal('120'),
                 production_time=datetime(2026,11,1,9),source_updated_at=datetime(2026,11,1,9,2))]
-    query.client = SimpleNamespace(fetch_all=lambda sql, values: [
+    query.repository.client = SimpleNamespace(fetch_all=lambda sql, values: [
         row for row in rows if values[1] <= row['source_updated_at'] < values[2]
     ])
     pipeline = ReportPipeline(cfg,metadata,query_service=query)

@@ -28,7 +28,8 @@ from app.modules.welding.export import WeldingExport, csv_bytes, COLUMNS
 from app.modules.welding.service import WeldingService
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.welding')
 
 
 router = APIRouter(prefix='/api/v1/welding', tags=['welding'], dependencies=[Depends(require_admin)])

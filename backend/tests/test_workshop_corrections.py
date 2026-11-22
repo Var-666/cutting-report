@@ -9,10 +9,10 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user, require_worker
-from app.api.workshop import router
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_routes import router
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.database.sessions import SessionRepository
 from app.models.domain import WorkshopRecord
 

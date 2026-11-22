@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.models.domain import to_primitive
 from app.services.chart_service import ChartService
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.leadership import LeadershipReportService
 from app.services.pdf_service import PdfService
 from app.services.report_analysis.leadership import build_context
 from app.services.report_service import ReportService

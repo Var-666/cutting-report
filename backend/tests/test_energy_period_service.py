@@ -13,13 +13,13 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.api.auth import require_admin
-from app.api.energy import router
+from app.modules.energy.routes import router
 from app.models.domain import to_primitive
-from app.services.energy_api import EnergyApiError
-from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
-from app.services.query_service import QueryService
+from app.modules.energy.client import EnergyApiError
+from app.modules.energy.periods import EnergyPeriodService, restore_task_energy_records
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import cutting_settings, source_client
-from app.workers.energy_history_worker import EnergyHistoryWorker
+from app.modules.energy.history import EnergyHistoryWorker
 from tests.energy_fixtures import record, GAS, ELECTRIC, MeterStub, sparse_november_readings
 
 
@@ -518,7 +518,7 @@ def test_unified_tasks_apply_transition_by_actual_task_time(tmp_path, state_data
 
 
 def test_task_sparse_estimates_survive_api_serialization_restore_summary_and_analysis(tmp_path, state_database):
-    from app.models.energy_contracts import TaskEnergyReport
+    from app.modules.energy.contracts import TaskEnergyReport
     from app.services.report_analysis.equipment import build_context
     energy, _ = service(tmp_path, state_database, rows=sparse_november_readings(),
         energy_sampling_change_at="2026-09-04")

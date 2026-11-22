@@ -27,7 +27,8 @@ from app.services.device_runtime import DeviceRuntime
 from app.api.report_reads import statistics_page
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.leadership')
 router = APIRouter(
     prefix="/api/v1/leadership-report",
     tags=["leadership-report"],

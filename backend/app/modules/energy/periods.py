@@ -15,16 +15,17 @@ from zoneinfo import ZoneInfo
 
 from app.core.operations_logging import data_quality
 from app.models.domain import to_primitive
-from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyReadingSource
+from app.modules.energy.client import EnergyApiClient, EnergyApiError, EnergyReadingSource
 from app.services.report_cache_policy import report_ttl
-from app.services.energy_service import (
-    STATUS_TEXT, interval_consumption, local_time, make_series, sampling_policy, task_energy_note,
-    observe_task_energy, overlapping_energy_tasks,
+from app.modules.energy.tasks import (
+    STATUS_TEXT, observe_task_energy, overlapping_energy_tasks, task_energy_note, task_intervals, task_meter_consumption,
 )
-from app.services.equipment_service import sort_equipment_records, summarize_equipment
+from app.modules.energy.meter import interval_consumption, local_time, make_series, sampling_policy
+from app.modules.cutting.equipment import sort_equipment_records, summarize_equipment
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.energy_period_service')
 LABELS = {**STATUS_TEXT, "partial": "已有数据", "pending": "时段未结束",
           "future": "日期未到", "not_queried": "尚未查询", "missing": "缺少有效边界读数"}
 CHANNELS = ("gas", "electricity")
@@ -451,17 +452,7 @@ class EnergyPeriodService:
         if not clean:
             return result([], "unavailable", "")
 
-        intervals = {}
-        for row in clean:
-            try:
-                start = local_time(row.production_time, self.settings.timezone)
-                end = local_time(row.production_end_time, self.settings.timezone)
-                if end <= start or end - start > timedelta(days=7):
-                    continue
-            except (TypeError, ValueError, OverflowError):
-                continue
-            intervals[row.task_id] = (start, end)
-
+        intervals = task_intervals(clean, self.settings.timezone)
         conflicts = overlapping_energy_tasks(intervals)
         usable = {task_id: interval for task_id, interval in intervals.items() if task_id not in conflicts}
 
@@ -497,28 +488,12 @@ class EnergyPeriodService:
 
             start, end = usable[row.task_id]
 
-            def calculate(key, factor):
-                measured = interval_consumption(
-                    series[key], start, end,
-                    max_gap_seconds=self.settings.energy_report_max_gap_seconds,
-                    interpolate=self.settings.energy_allow_interpolation,
-                    factor=Decimal(factor),
-                    estimate=True,
-                    **sampling_policy(self.settings),
-                )
-                return {"parameter_id": key, **measured}
-
-            gas = calculate(self.gas_id, self.settings.energy_gas_factor)
-            meters = [calculate(key, self.settings.energy_electricity_factor)
-                      for key in self.electricity_ids]
-            electric_failure = next((meter["status"] for meter in meters if meter["value"] is None), None)
-            electric_status = electric_failure or (
-                "estimated" if any(meter["status"] == "estimated" for meter in meters)
-                else "interpolated" if any(meter["status"] == "interpolated" for meter in meters) else "measured"
-            )
-            electric_value = None if electric_failure else sum(
-                (meter["value"] for meter in meters), Decimal("0")
-            )
+            gas, meters, electric_value, electric_status = task_meter_consumption(
+                series, start, end, gas_id=self.gas_id, electricity_ids=self.electricity_ids,
+                gas_factor=Decimal(self.settings.energy_gas_factor),
+                electricity_factor=Decimal(self.settings.energy_electricity_factor),
+                max_gap_seconds=self.settings.energy_report_max_gap_seconds,
+                interpolate=self.settings.energy_allow_interpolation, policy=sampling_policy(self.settings))
             details = {
                 "method": "cumulative_difference",
                 "scope": "任务实际开始至结束（含期间待机）",

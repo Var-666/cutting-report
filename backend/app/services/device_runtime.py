@@ -5,36 +5,36 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from pydantic import TypeAdapter
 from app.models.domain import EquipmentRecord, ReportFilter
-from app.services.leadership_report_service import _previous_month
+from app.modules.cutting.leadership import _previous_month
 from typing import TYPE_CHECKING
 
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
-from app.database.cutting_queries import CuttingQueryRepository
+from app.modules.cutting.repository import CuttingQueryRepository
 from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
-from app.database.leadership_snapshots import LeadershipSnapshotRepository
+from app.modules.cutting.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.postgres import PostgresDatabase
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.alarm_monitor_service import AlarmMonitorService
 from app.services.alarm_report_service import AlarmReportService
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.production_reports import CuttingReportProvider
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.reports import CuttingReportProvider
 from app.services.pipeline import ReportPipeline
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.pdf_service import PdfService
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.ship_name_service import ShipNameService
-from app.services.energy_service import EquipmentEnergyService
-from app.services.energy_period_service import EnergyPeriodService
-from app.services.range_report_service import RangeReportService
+from app.modules.energy.tasks import EquipmentEnergyService
+from app.modules.energy.periods import EnergyPeriodService
+from app.modules.cutting.range_reports import RangeReportService
 from app.workers.alarm_worker import AlarmWorker
 from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
-from app.workers.energy_history_worker import EnergyHistoryWorker
+from app.modules.energy.history import EnergyHistoryWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
 
 if TYPE_CHECKING:
@@ -89,7 +89,7 @@ class DeviceRuntime:
         if history.enabled:
             self.recover_background()
             today = history.service.now().date()
-            from app.workers.energy_history_worker import _shift_month
+            from app.modules.energy.history import _shift_month
             history.schedule_range(_shift_month(today.replace(day=1), -11), today)
 
     def recover_background(self) -> None:

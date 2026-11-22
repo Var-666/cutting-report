@@ -9,7 +9,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.models.domain import (
     EquipmentRecord,
     production_day,
@@ -22,13 +22,13 @@ from app.models.domain import (
     WorkshopRecord,
     to_primitive,
 )
-from app.services.energy_period_service import (
+from app.modules.energy.periods import (
     channel_result,
     restore_task_energy_records,
     total_channel,
 )
-from app.services.equipment_service import summarize_equipment
-from app.services.query_service import EquipmentQueryResult, QueryService
+from app.modules.cutting.equipment import summarize_equipment
+from app.modules.cutting.service import EquipmentQueryResult, QueryService
 from app.services.report_closing_comparison import ClosingGrouping, Totals, Window, closing_comparison, sum_closing_totals
 
 

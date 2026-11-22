@@ -10,7 +10,7 @@ from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
 from app.database.metadata import MetadataRepository
 from app.models.domain import EquipmentRecord, WorkshopRecord
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.leadership import LeadershipReportService
 from app.services.llm_service import LlmRequestTimeout
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
 from app.services.report_generation.common import report_analysis_payload

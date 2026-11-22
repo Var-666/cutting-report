@@ -14,7 +14,7 @@ from app.services.report_analysis.common import (
     _table,
     _work_time_outliers,
 )
-from app.services.statistics_service import build_worker_work_summaries
+from app.modules.cutting.statistics import build_worker_work_summaries
 
 
 def _workshop_task_rows(records: list[WorkshopRecord]) -> list[dict]:

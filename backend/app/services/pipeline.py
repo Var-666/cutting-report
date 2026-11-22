@@ -12,25 +12,25 @@ from app.core.operations_logging import event
 from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
 from app.database.automation import AutomationRepository
-from app.database.energy import EnergyReportRepository
+from app.modules.energy.repository import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.unit_of_work import UnitOfWork
 from app.models.domain import AnalysisResult
 from app.services.chart_service import ChartService
 from app.services.custom_report_service import CustomReportService
-from app.services.energy_service import EquipmentEnergyService
-from app.services.energy_period_service import EnergyPeriodService
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService
+from app.modules.energy.tasks import EquipmentEnergyService
+from app.modules.energy.periods import EnergyPeriodService
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.service import QueryService
+from app.modules.cutting.range_reports import RangeReportService
 from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError, ReportAnalysisService
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
 from app.core.request_cancellation import SqlRequestCancelled
 from app.services.report_service import ReportService
-from app.services.statistics_service import StatisticsService
+from app.modules.cutting.statistics import StatisticsService
 from app.services.report_generation.leadership import prepare_report as prepare_leadership_report
 from app.services.report_generation.workshop import prepare_report as prepare_workshop_report
 from app.services.report_generation.equipment import prepare_report as prepare_equipment_report
@@ -75,12 +75,12 @@ class ReportPipeline:
             client=self.energy_service.client,
             query_service=self.query_service,
         )
-        self.leadership_service = LeadershipReportService(settings, client=self.query_service.client)
+        self.leadership_service = LeadershipReportService(settings, client=self.query_service.repository.client)
         self.statistics_service = StatisticsService()
         self.chart_service = ChartService(settings.chart_top_n)
         self.analysis_service = ReportAnalysisService(settings, metadata, query_service=self.query_service)
         self.report_service = ReportService(settings)
-        self.custom_report_service = CustomReportService(settings, client=self.query_service.client)
+        self.custom_report_service = CustomReportService(settings, client=self.query_service.repository.client)
         if workshop_repository is None:
             workshop_repository = WorkshopReportRepository(self.database, scope_machine_no=settings.report_machine_no)
         self.workshop_repository = workshop_repository

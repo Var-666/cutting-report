@@ -11,12 +11,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import alarms, cutting, workshop
+from app.api import alarms
+from app.modules.cutting import routes as cutting, workshop_routes as workshop
 from app.api.auth import require_admin, require_user, require_worker
 from app.database.alarms import AlarmRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
 from app.services.alarm_analysis_service import AlarmAnalysisService
 from app.services.llm_service import AnalysisOutputValidationError

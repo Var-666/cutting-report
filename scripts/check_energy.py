@@ -20,8 +20,8 @@ from app.config import Settings, settings_for_line
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
 from app.models.domain import to_primitive
-from app.services.energy_api import EnergyApiClient, EnergyApiError
-from app.services.energy_service import make_series
+from app.modules.energy.client import EnergyApiClient, EnergyApiError
+from app.modules.energy.meter import make_series
 
 
 def main():

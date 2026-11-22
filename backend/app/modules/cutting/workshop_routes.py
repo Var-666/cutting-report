@@ -6,7 +6,7 @@ from app.api.workloads import query_requests
 from app.api.devices import device_state
 from app.api.auth import require_admin, require_user, require_worker
 from app.database.sqlserver import SqlServerConfigurationError
-from app.database.workshop_errors import (
+from app.modules.cutting.workshop_errors import (
     ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError,
     DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError,
 )
@@ -19,8 +19,8 @@ from app.models.workshop_requests import (
     ConfirmTaskRequest, ConfirmSnapshotTaskRequest, ConfirmTasksRequest,
     RevokeTaskRequest, CorrectTaskRequest,
 )
-from app.services.workshop_service import WorkshopService, WorkshopTaskNotFoundError, _workshop_trend
-from app.services.workshop_sorting import sort_workshop_by_recency
+from app.modules.cutting.workshop import WorkshopService, WorkshopTaskNotFoundError, _workshop_trend
+from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 
 router = APIRouter(prefix='/api/v1/workshop', tags=['workshop-confirmation'], dependencies=[Depends(require_user), Depends(device_state)])

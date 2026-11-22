@@ -2,8 +2,8 @@
 from datetime import date, datetime, timedelta
 
 from tests.energy_fixtures import GAS, ELECTRIC, configured, MeterStub
-from app.database.energy import EnergyReportRepository
-from app.services.energy_period_service import EnergyPeriodService
+from app.modules.energy.repository import EnergyReportRepository
+from app.modules.energy.periods import EnergyPeriodService
 
 DAY = date(2026, 8, 18)
 START = datetime(2026, 8, 18)

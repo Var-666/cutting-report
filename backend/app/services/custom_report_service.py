@@ -12,7 +12,7 @@ from typing import Any, Iterable, Iterator
 from app.config import Settings
 from app.database.sqlserver import SqlServerClient
 from app.services.sql_workbench_service import SqlWorkbenchService
-from app.services.range_report_service import validate_report_range
+from app.modules.cutting.range_reports import validate_report_range
 from app.core.report_deadline import ensure_time_remaining
 
 

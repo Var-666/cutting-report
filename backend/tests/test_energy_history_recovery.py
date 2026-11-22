@@ -6,9 +6,9 @@ import pytest
 from app.core.operations_logging import configured_logging, operation_context
 from app.database.operations import OperationsRepository
 from app.models.operations import IncidentFilters
-from app.services.energy_api import EnergyApiError
+from app.modules.energy.client import EnergyApiError
 from app.services.operations_service import BUSINESS_ERROR_CODES, RECOVERY_EVIDENCE
-from app.workers.energy_history_worker import EnergyHistoryWorker
+from app.modules.energy.history import EnergyHistoryWorker
 from tests.energy_period_fixtures import NOW, service
 
 
@@ -173,7 +173,7 @@ def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, state_dat
 
 def test_sampling_configuration_isolates_persisted_queue(tmp_path, state_database):
     from dataclasses import replace
-    from app.services.energy_period_service import EnergyPeriodService
+    from app.modules.energy.periods import EnergyPeriodService
 
     worker, _ = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))

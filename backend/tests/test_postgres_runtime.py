@@ -26,7 +26,7 @@ from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
 from app.database.metadata import MetadataRepository
 from app.database.downloads import DownloadRepository
-from app.database.energy import EnergyReportRepository
+from app.modules.energy.repository import EnergyReportRepository
 from app.database.report_snapshots import ReportSnapshotRepository, ReportKey, ReportSnapshot, fingerprint
 from app.database.llm_usage import LlmUsageRepository
 from app.models.conditions import ConditionGroup, ConditionRule
@@ -183,10 +183,10 @@ def test_download_conditions_snapshots_energy_and_llm(state):
 
 def test_workshop_confirmation_serializes_and_audits(state):
     from decimal import Decimal
-    from app.database.confirmations import ConfirmationRepository
+    from app.modules.cutting.confirmations import ConfirmationRepository
     from app.database.users import UserRepository
-    from app.database.workshop_errors import ConfirmationConflictError
-    from app.database.workshop_reports import WorkshopReportRepository
+    from app.modules.cutting.workshop_errors import ConfirmationConflictError
+    from app.modules.cutting.workshop_repository import WorkshopReportRepository
     from app.models.domain import WorkshopRecord
     database, _, _ = state
     repo = WorkshopReportRepository(database, scope_machine_no='Cutter01')
@@ -221,7 +221,7 @@ def test_automation_email_alarm_dispatch_and_retention(state):
     from app.database.automation import AutomationRepository
     from app.database.alarms import AlarmRepository
     from app.database.definitions import DefinitionRepository
-    from app.database.dispatch import DispatchRepository
+    from app.modules.cutting.dispatch_repository import DispatchRepository
     from app.database.retention import RetentionRepository
     database, _, _ = state
     now = datetime.now(timezone.utc)

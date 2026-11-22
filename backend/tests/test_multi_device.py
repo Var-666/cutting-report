@@ -1,7 +1,7 @@
 from tests.runtime_factories import make_device_runtime, make_pipeline_stub
 from tests.web_fixtures import request_for, embedded_app, database_services, replace_database_services
 from pathlib import Path
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import source_client
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
@@ -18,7 +18,7 @@ import pytest
 
 from app.api.auth import require_admin, require_user
 from app.api.devices import router as devices_router
-from app.api.options import router as options_router
+from app.modules.cutting.options_routes import router as options_router
 from app.api.reports import router as reports_router
 from tests.line_fixtures import CUTTING_SCOPES, cutting_settings, line_settings, configuration
 from app.device_config import load_line_catalog
@@ -26,20 +26,20 @@ from app.database.alarms import AlarmRepository
 from app.database.alarm_source import SqlServerAlarmSource
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
+from app.modules.cutting.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_errors import ConfirmationNotFoundError
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_errors import ConfirmationNotFoundError
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import LeadershipPeriodRecord, WorkshopRecord
 from app.services.automation_service import AutomationService
 from app.services.device_runtime import build_device_runtime
 from app.services.custom_report_service import CustomReportService
 from app.services.pipeline import ReportPipeline
-from app.services.energy_period_service import EnergyPeriodService
-from app.services.energy_service import EquipmentEnergyService
-from app.database.energy import EnergyReportRepository
+from app.modules.energy.periods import EnergyPeriodService
+from app.modules.energy.tasks import EquipmentEnergyService
+from app.modules.energy.repository import EnergyReportRepository
 from app.workers.report_worker import ReportWorker
 from tests.energy_fixtures import MeterStub, record
 
@@ -373,7 +373,9 @@ def test_global_repositories_cannot_implicitly_create_device_data(database):
 
 
 def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
-    from app.api import alarms, analysis, conditions, database as database_api, designer, energy, equipment, leadership, workshop
+    from app.api import alarms, analysis, conditions, database as database_api, designer
+    from app.modules.energy import routes as energy
+    from app.modules.cutting import equipment_routes as equipment, leadership_routes as leadership, workshop_routes as workshop
     db, admin = database
     app = embedded_app()
     replace_database_services(app, catalog=load_line_catalog(cutting_settings().production_lines_json))

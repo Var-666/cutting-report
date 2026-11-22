@@ -5,11 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.database.cutting_queries import CuttingQueryRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.repository import CuttingQueryRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.workshop_errors import DailyReportSourceMismatchError, DailyReportRecordMismatchError
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.workshop_errors import DailyReportSourceMismatchError, DailyReportRecordMismatchError
 from app.models.domain import WorkshopRecord
 
 

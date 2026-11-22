@@ -10,7 +10,7 @@ import pytest
 
 from app.api.auth import optional_user
 from app.api.conditions import router as conditions_router
-from app.api.cutting import router as cutting_router
+from app.modules.cutting.routes import router as cutting_router
 from app.api.downloads import router as downloads_router
 from app.config import Settings
 from app.database.downloads import DownloadRepository
@@ -20,7 +20,7 @@ from app.models.conditions import ConditionError, prepare
 from app.database.condition_fields import fields_for
 from app.database.condition_query import compile_conditions, matches_conditions
 from app.services.condition_service import schema_for
-from app.services.cutting_dispatch_service import CuttingDispatchService
+from app.modules.cutting.dispatch import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
 from app.services.file_source import DisabledFileSource
 

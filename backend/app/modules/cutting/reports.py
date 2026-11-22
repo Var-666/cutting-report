@@ -1,40 +1,20 @@
-"""Business adapters share a small access contract, not a common set of metrics."""
 from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime
+from time import time
+from typing import Any
 from zoneinfo import ZoneInfo
-from typing import TYPE_CHECKING, Any, Iterator, Protocol, TypeVar
+
 from pydantic import TypeAdapter
 
 from app.models.domain import LeadershipReportResult, QueryBundle, ReportFilter, to_primitive
 from app.database.report_snapshots import ReportKey, fingerprint
+from app.modules.cutting.equipment import summarize_equipment
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.range_reports import validate_report_range
 from app.services.report_snapshots import ReportData, ReportSnapshotService
 from app.services.report_cache_policy import report_refresh_seconds
-
-if TYPE_CHECKING:
-    from app.services.database_runtime import DatabaseServices
-    from app.services.leadership_report_service import LeadershipReportService
-
-
-Query = TypeVar('Query', contravariant=True)
-
-
-class ProductionReportProvider(Protocol[Query]):
-    """Queries stay line-specific; refresh plans carry JSON-safe task queries.
-
-    source_identity is an opaque connection/scope identity, never an AI data
-    version. ReportData metadata describes freshness; payload versions retain
-    their existing business algorithms.
-    """
-    report_types: tuple[str, ...]
-
-    def source_identity(self) -> str: ...
-    def fetch_summary(self, report_type: str, query: Query, *, force: bool = False,
-                      requested_at: float | None = None) -> ReportData: ...
-    def fetch_detail(self, report_type: str, query: Query) -> object: ...
-    def refresh_summary(self, report_type: str, query: dict, *, requested_at: float | None = None) -> None: ...
-    def refresh_plan(self) -> list[tuple[dict, int]]: ...
 
 
 class CuttingReportProvider:
@@ -84,7 +64,6 @@ class CuttingReportProvider:
             end = query.get('end', start)
             start = date.fromisoformat(start) if isinstance(start, str) else start
             end = date.fromisoformat(end) if isinstance(end, str) else end
-            from app.services.range_report_service import validate_report_range
             validate_report_range(start, end)
             query.update(start=start.isoformat(), end=end.isoformat())
             query.pop('report_date', None)
@@ -109,7 +88,6 @@ class CuttingReportProvider:
             bundle = ranges.workshop_bundle(start, end, force=True)
             return TypeAdapter(QueryBundle).dump_python(bundle, mode='json')
         if report_type == 'equipment':
-            from app.services.equipment_service import summarize_equipment
             result = self.pipeline.query_service.fetch_equipment_data(ReportFilter(report_date=start), force=True)
             enriched = self.pipeline.energy_service.enrich(result.records, force=True)
             if enriched.source_failed:
@@ -176,7 +154,6 @@ class CuttingReportProvider:
 
     def refresh_summary(self, report_type: str, query: dict, *, requested_at: float | None = None) -> None:
         if self.snapshot_service and requested_at is None:
-            from time import time
             requested_at = time()
         self.fetch_summary(report_type, query, force=True, requested_at=requested_at)
 
@@ -192,21 +169,3 @@ class CuttingReportProvider:
                         ('energy:month', {'report_month': today})]
         return [(self.snapshot_service.task_payload(self._snapshot_key(kind, self._query(kind, query))),
                  report_refresh_seconds(self.settings)) for kind, query in queries]
-
-
-def report_provider(context: DatabaseServices, line_id: str) -> ProductionReportProvider[Any]:
-    if line_id in context.shared_reports:
-        return context.shared_reports[line_id]
-    if not context.catalog.get(line_id).enabled:
-        raise ValueError("产线已停用")
-    line = context.lines.get(line_id)
-    if line is None:
-        raise ValueError('产线没有登记报表服务')
-    return line.report_provider
-
-
-def report_providers(context: DatabaseServices) -> Iterator[tuple[str, ProductionReportProvider[Any]]]:
-    for line_id, line in context.lines.items():
-        if line.config.enabled:
-            yield line_id, line.report_provider
-    yield from context.shared_reports.items()

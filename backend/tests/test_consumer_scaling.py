@@ -7,7 +7,7 @@ from time import monotonic, sleep
 import pytest
 
 from app.database.coordination import CoordinationRepository
-from app.database.energy import EnergyReportRepository
+from app.modules.energy.repository import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.postgres import ExecutionLeaseLost, execution_scope
 from app.database.postgres_migrations import MigrationError, prepare_consumers

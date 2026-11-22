@@ -3,7 +3,7 @@
 External production sources are replaced; routes, services and JSON conversion run.
 """
 
-from app.services.production_reports import CuttingReportProvider
+from app.modules.cutting.reports import CuttingReportProvider
 from tests.runtime_factories import make_device_runtime
 from tests.web_fixtures import embedded_app, database_services, replace_database_services
 from tests.line_fixtures import source_client
@@ -15,14 +15,15 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import auth, leadership
+from app.api import auth
+from app.modules.cutting import leadership_routes as leadership
 from app.modules.welding import routes as welding
 from tests.line_fixtures import cutting_settings, welding_settings
 from app.device_config import load_line_catalog
 from app.modules.welding.repository import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
 from app.database.sessions import SessionRepository
 from app.database.users import UserRepository
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.welding.service import WeldingService
 
 

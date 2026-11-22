@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.api.workshop import sort_workshop_records
+from app.modules.cutting.workshop_routes import sort_workshop_records
 from app.models.domain import WorkshopRecord
 
 

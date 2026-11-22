@@ -1,4 +1,4 @@
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import source_client
 from datetime import date, datetime
 from copy import deepcopy
@@ -10,9 +10,9 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import ReportFilter
 from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
@@ -346,8 +346,8 @@ def report_flow(state_database, tmp_path, monkeypatch):
                                  work_time_seconds=sum(row["work_time"] for row in tasks)))
         return [daily, projects]
 
-    monkeypatch.setattr(pipeline.query_service.client, "fetch_all", fetch_all)
-    monkeypatch.setattr(pipeline.leadership_service.client, "fetch_result_sets", fetch_result_sets)
+    monkeypatch.setattr(pipeline.query_service.repository.client, "fetch_all", fetch_all)
+    monkeypatch.setattr(pipeline.leadership_service.repository.client, "fetch_result_sets", fetch_result_sets)
     pipeline.analysis_service.llm.analyze_context = model_analysis
     reports, analyses = {}, []
     original_render = pipeline.report_service.render

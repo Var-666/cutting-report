@@ -13,11 +13,11 @@ from app.services.production_lines import ProductionLineRuntime
 from app.services.device_runtime import DeviceRuntime, build_device_runtime
 from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
-from app.database.leadership_snapshots import LeadershipSnapshotRepository
+from app.modules.cutting.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.report_snapshots import ReportSnapshotRepository, fingerprint
 from app.database.automation import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.dispatch import DispatchRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.database_monitors import DatabaseMonitorRepository
 from app.services.database_monitor_service import DatabaseMonitorService
@@ -33,7 +33,7 @@ from app.services.worker_auth_service import WorkerAuthService
 from app.services.automation_service import AutomationService
 from app.services.automation_runtime import AutomationRuntime
 from app.services.configuration_diagnostics import ConfigurationDiagnostics
-from app.services.cutting_dispatch_service import CuttingDispatchService
+from app.modules.cutting.dispatch import CuttingDispatchService
 from app.services.email_service import EmailService
 from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService

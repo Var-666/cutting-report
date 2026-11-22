@@ -8,7 +8,7 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.models.domain import EquipmentRecord, QueryBundle, ReportFilter
-from app.services.query_service import EquipmentQueryResult, QueryService
+from app.modules.cutting.service import EquipmentQueryResult, QueryService
 
 
 def _service(tmp_path: Path) -> QueryService:
@@ -22,7 +22,7 @@ def test_report_query_observes_invalid_rows_and_confirms_successful_empty_result
     day = date(2026, 8, 25)
     rows = [{'task_id': 'example-task', 'production_date': day}, {'task_id': 'example-task', 'production_date': day},
             {'task_id': None, 'production_date': day}, {'task_id': 'another-task', 'production_date': day + timedelta(days=1)}]
-    monkeypatch.setattr(service.client, 'fetch_all', lambda *_: rows)
+    monkeypatch.setattr(service.repository.client, 'fetch_all', lambda *_: rows)
     read = getattr(service, f'fetch_{kind}_data')
     filters = ReportFilter(report_date=day)
     with caplog.at_level('INFO', logger='app.services.query_service'):
@@ -45,7 +45,7 @@ def test_cutting_options_keep_source_scope_and_bound_filter_parameters(tmp_path,
     def fetch(sql, parameters):
         calls.append((sql, parameters))
         return [{column: 'P001'}, {column: 'P002'}]
-    monkeypatch.setattr(service.client, 'fetch_all', fetch)
+    monkeypatch.setattr(service.repository.client, 'fetch_all', fetch)
     selected = ReportFilter(report_date=date(2026, 8, 1), period_start=date(2026, 8, 1),
                             period_end=date(2026, 8, 3), project_code="P'001")
     assert getattr(service, f'list_{kind}')(selected) == ['P001', 'P002']
@@ -64,7 +64,7 @@ def test_cutting_options_keep_source_scope_and_bound_filter_parameters(tmp_path,
 def test_latest_production_date_query_preserves_empty_and_driver_date_values(tmp_path, monkeypatch, rows, expected):
     service = _service(tmp_path)
     calls = []
-    monkeypatch.setattr(service.client, 'fetch_all', lambda sql, parameters: calls.append(parameters) or rows)
+    monkeypatch.setattr(service.repository.client, 'fetch_all', lambda sql, parameters: calls.append(parameters) or rows)
     assert service.latest_production_date(date(2026, 8, 26)) == expected
     assert service.latest_production_date(date(2026, 8, 26)) == expected
     assert calls == [('Cutter01', date(2026, 8, 26))]
@@ -161,7 +161,7 @@ def test_sqlserver_equipment_fetch_executes_only_equipment_query(
             }
         ]
 
-    monkeypatch.setattr(service.client, "fetch_all", fetch_all)
+    monkeypatch.setattr(service.repository.client, "fetch_all", fetch_all)
 
     result = service.fetch_equipment_data(
         ReportFilter(report_date=date(2026, 8, 25))
@@ -200,7 +200,7 @@ def test_summary_and_workshop_ranges_each_execute_one_cached_query(
             }
         ]
 
-    monkeypatch.setattr(service.client, "fetch_all", fetch_all)
+    monkeypatch.setattr(service.repository.client, "fetch_all", fetch_all)
     filters = ReportFilter(report_date=date(2026, 8, 25))
 
     summary = service.fetch_summary_data(filters)
@@ -241,7 +241,7 @@ def test_equipment_monthly_metrics_reuse_the_range_query(
     service = _service(tmp_path)
     calls = []
     monkeypatch.setattr(
-        service.client,
+        service.repository.client,
         "fetch_all",
         lambda sql, parameters: calls.append((sql, parameters)) or [],
     )
@@ -268,7 +268,7 @@ def _cache_result(kind, version):
 def test_query_cache_expiry_and_force_refresh_keep_the_latest_result(tmp_path, monkeypatch, kind):
     service = _service(tmp_path)
     clock = [1000.0]
-    monkeypatch.setattr("app.services.query_service.monotonic", lambda: clock[0])
+    monkeypatch.setattr("app.modules.cutting.service.monotonic", lambda: clock[0])
     monkeypatch.setattr("app.services.query_cache.monotonic", lambda: clock[0])
     calls = []
 

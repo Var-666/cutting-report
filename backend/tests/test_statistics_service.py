@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.models.domain import SummaryBaseRecord, WorkshopRecord
-from app.services.statistics_service import (
+from app.modules.cutting.statistics import (
     StatisticsService,
     build_top_cut_length_tasks,
     build_worker_work_summaries,

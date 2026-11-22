@@ -7,11 +7,12 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.core.operations_logging import event
-from app.services.energy_period_service import EnergyPeriodService
+from app.modules.energy.periods import EnergyPeriodService
 from app.services.report_cache_policy import report_ttl, report_refresh_seconds
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.workers.energy_history_worker')
 
 
 def _shift_month(month_start: date, offset: int) -> date:

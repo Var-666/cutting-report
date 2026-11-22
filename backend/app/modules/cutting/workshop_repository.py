@@ -8,9 +8,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 from app.models.domain import WorkshopRecord
-from app.database.workshop_scope import WorkshopScopeRepository
-from app.database.confirmations import ConfirmationRepository
-from app.database.workshop_errors import DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError, DailyReportExistsError
+from app.modules.cutting.workshop_scope import WorkshopScopeRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_errors import DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError, DailyReportExistsError
 
 _SNAPSHOT_DECIMAL_FIELDS = frozenset(
     {"cut_length", "groove_length", "work_time"}

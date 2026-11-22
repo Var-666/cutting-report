@@ -21,7 +21,7 @@ from app.services.application_runtime import ApplicationRuntime, build_runtime
 from app.services.database_runtime import database_context
 from app.services.llm_service import background_llm_work, generation_priority
 from app.services.worker_status import role_health
-from app.services.production_reports import report_provider
+from app.modules.reports.provider import report_provider
 from app.workers.bounded_executor import BoundedExecutor
 from app.workers.report_worker import ReportWorker
 

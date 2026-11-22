@@ -27,10 +27,10 @@ from app.database.source_registry import (
 
 if TYPE_CHECKING:
     from app.services.application_runtime import ApplicationRuntime
-    from app.services.cutting_dispatch_service import CuttingDispatchService
+    from app.modules.cutting.dispatch import CuttingDispatchService
     from app.services.file_download_service import FileDownloadService
     from app.services.worker_auth_service import WorkerAuthService
-    from app.services.production_reports import ProductionReportProvider
+    from app.modules.reports.provider import ProductionReportProvider
 
 
 @dataclass(frozen=True)

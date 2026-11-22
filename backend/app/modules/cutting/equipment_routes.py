@@ -16,14 +16,15 @@ from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
-from app.models.energy_contracts import EquipmentReport
-from app.services.equipment_service import (
+from app.modules.energy.contracts import EquipmentReport
+from app.modules.cutting.equipment import (
     summarize_equipment,
 )
 from app.core.request_cancellation import SqlRequestCancelled
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.equipment')
 router = APIRouter(
     prefix="/api/v1/equipment-report",
     tags=["equipment-report"],

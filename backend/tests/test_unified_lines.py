@@ -42,7 +42,7 @@ def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(postg
     try:
         assert set(context.lines) == {'Cutter01', 'Cutter02', 'Cutter03', 'welding', 'welding-2'}
         one, three = (context.lines[key].cutting() for key in ('Cutter01', 'Cutter03'))
-        assert one is not three and one.query_service.client is three.query_service.client
+        assert one is not three and one.query_service.repository.client is three.query_service.repository.client
         assert one.settings.report_machine_no == 'Cutter01' and three.settings.report_machine_no == 'Cutter03'
         assert one.metadata.device_id == 'Cutter01' and three.metadata.device_id == 'Cutter03'
         assert one.report_provider.source_identity() != three.report_provider.source_identity()
@@ -70,8 +70,8 @@ def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_oper
         assert fresh.lines['Cutter01'] is not old.lines['Cutter01']
         assert fresh.lines['Cutter02'] is not old.lines['Cutter02']
         assert fresh.lines['welding'] is old.lines['welding']
-        assert old.lines['Cutter01'].cutting().query_service.client.connection_config()['host'] == 'cutting.test'
-        assert fresh.lines['Cutter01'].cutting().query_service.client.connection_config()['host'] == 'new.test'
+        assert old.lines['Cutter01'].cutting().query_service.repository.client.connection_config()['host'] == 'cutting.test'
+        assert fresh.lines['Cutter01'].cutting().query_service.repository.client.connection_config()['host'] == 'new.test'
         assert fresh.lines['Cutter01'].report_provider.source_identity() != old.lines['Cutter01'].report_provider.source_identity()
         assert worker.database_runtime.current_context is old_worker
         assert database_context(worker).lines['Cutter01'].settings.source_fingerprint == fresh.lines['Cutter01'].settings.source_fingerprint
@@ -175,7 +175,7 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
     for runtime in (web, worker):
         context = database_context(runtime)
         assert {'Cutter03', 'weld-2'} <= context.lines.keys()
-        assert context.lines['Cutter03'].cutting().query_service.client.connection_config()['host'] == 'sql-3.test'
+        assert context.lines['Cutter03'].cutting().query_service.repository.client.connection_config()['host'] == 'sql-3.test'
         assert context.lines['weld-2'].service.repository.client.config.host == 'mysql-2.test'
         process = SchedulerProcess(context.settings, runtime)
         process._schedule()
@@ -251,7 +251,7 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(postgres_s
     context = database_context(runtime)
     assert context.settings.effective_data_source_mode == 'demo'
     assert set(context.lines) == {'Cutter01', 'Cutter02', 'welding'}
-    assert context.lines['Cutter01'].cutting().query_service.client is None
+    assert context.lines['Cutter01'].cutting().query_service.repository.client is None
     assert not context.lines['welding'].config.enabled
 
 

@@ -8,7 +8,7 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.services.leadership_report_service import LeadershipReportService, _previous_month
+from app.modules.cutting.leadership import LeadershipReportService, _previous_month
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.llm_service import background_llm_work
 from app.workers.parallel_analysis import ParallelAnalysisTasks

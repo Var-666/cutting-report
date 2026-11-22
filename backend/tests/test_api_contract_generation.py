@@ -9,7 +9,7 @@ import importlib.util
 from pydantic import ValidationError
 import pytest
 
-from app.models.cutting_contracts import CuttingFile, CuttingDispatch
+from app.modules.cutting.contracts import CuttingFile, CuttingDispatch
 from tests.dispatch_fixtures import dispatch_service as _service
 
 
@@ -62,7 +62,9 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
 def contract_http(tmp_path, postgres_state):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
+    from app.api import automation, configuration, database, reports, analysis
+    from app.modules.cutting import leadership_routes as leadership, equipment_routes as equipment
+    from app.modules.energy import routes as energy
     from app.api.auth import require_admin
     from tests.line_fixtures import configuration as line_configuration
     from app.services.application_runtime import build_runtime
@@ -130,7 +132,7 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
 def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contract_http):
     from app.models.contracts import Page
     from app.models.report_contracts import LeadershipReport, ReportAccepted, ReportJob
-    from app.models.energy_contracts import EquipmentReport, TaskEnergyReport, EnergyRangeReport, EnergyPeriodReport, EnergyDayReport, EnergyMonthReport
+    from app.modules.energy.contracts import EquipmentReport, TaskEnergyReport, EnergyRangeReport, EnergyPeriodReport, EnergyDayReport, EnergyMonthReport
     client = contract_http
     params = {'device_id': 'Cutter01'}
     for path, query, model in [
@@ -146,7 +148,7 @@ def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contr
         response = client.get(f'/api/v1/{path}', params={**params, **query})
         assert response.status_code == 503 and response.headers['X-Report-Error'] == 'snapshot_refresh_busy'
         from app.services.database_runtime import database_context
-        from app.services.production_reports import report_provider
+        from app.modules.reports.provider import report_provider
         runtime = client.app.state.runtime
         owner = runtime.coordination.acquire('worker:contract', ttl=30)
         task = runtime.coordination.claim_task(owner, analysis=False)
@@ -178,7 +180,7 @@ def test_required_dispatch_fields_cannot_silently_disappear():
 def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, file_type):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import cutting
+    from app.modules.cutting import routes as cutting
     from app.api.auth import require_user
 
     service, _, admin = _service(state_database, tmp_path)
@@ -214,14 +216,14 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     from types import SimpleNamespace
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import cutting, workshop
+    from app.modules.cutting import routes as cutting, workshop_routes as workshop
     from app.api.auth import require_admin, require_user, require_worker
     from app.models.domain import WorkshopRecord
 
     service, dispatches, admin = _service(state_database, tmp_path)
-    from app.database.confirmations import ConfirmationRepository
+    from app.modules.cutting.confirmations import ConfirmationRepository
     from app.database.users import UserRepository
-    from app.database.workshop_reports import WorkshopReportRepository
+    from app.modules.cutting.workshop_repository import WorkshopReportRepository
     repository = WorkshopReportRepository(dispatches.database, scope_machine_no='Cutter01')
     confirmations = ConfirmationRepository(dispatches.database, scope_machine_no='Cutter01')
     worker = UserRepository(dispatches.database).create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')

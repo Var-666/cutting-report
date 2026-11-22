@@ -10,7 +10,7 @@ from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
-from app.models.energy_contracts import EnergyDayReport, TaskEnergyReport, EnergyMonthReport, EnergyPeriodReport, EnergyRangeReport
+from app.modules.energy.contracts import EnergyDayReport, TaskEnergyReport, EnergyMonthReport, EnergyPeriodReport, EnergyRangeReport
 from app.services.report_analysis_service import (
     analysis_table_source_version,
     equipment_analysis_source_version,
@@ -21,7 +21,8 @@ from app.core.report_deadline import ReportOperationTimeout
 
 
 router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.energy')
 
 
 def _add_analysis_source_version(task_report: dict) -> dict:

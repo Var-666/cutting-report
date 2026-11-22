@@ -8,10 +8,10 @@ import pytest
 
 from app.models.domain import AnalysisResult, EquipmentRecord, QueryBundle, SummaryBaseRecord
 from app.services.chart_service import ChartService
-from app.services.energy_period_service import EnergyPeriodService
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.query_service import EquipmentQueryResult, QueryService
-from app.services.range_report_service import RangeReportService
+from app.modules.energy.periods import EnergyPeriodService
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.service import EquipmentQueryResult, QueryService
+from app.modules.cutting.range_reports import RangeReportService
 from app.services.report_generation.equipment import prepare_report as equipment_report
 from app.services.report_generation.leadership import prepare_report as leadership_report
 from tests.line_fixtures import cutting_settings

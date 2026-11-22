@@ -5,7 +5,6 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 import logging
-from pathlib import Path
 from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -16,10 +15,11 @@ from app.services.cache_revision import CacheRevision
 from app.services.query_cache import QueryCache
 from app.services.report_cache_policy import report_cache_seconds
 from app.services.report_snapshots import observe_report_snapshot
-from app.database.leadership_snapshots import (
+from app.modules.cutting.leadership_snapshots import (
     LeadershipMonthSnapshot,
     LeadershipSnapshotRepository,
 )
+from app.modules.cutting.repository import CuttingQueryRepository
 from app.database.sqlserver import SqlServerClient
 from app.models.domain import (
     LeadershipPeriodRecord,
@@ -31,7 +31,8 @@ from app.models.domain import (
 
 ZERO = Decimal("0")
 METER_PRECISION = Decimal("0.001")
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.leadership_report_service')
 
 
 def _decimal(value: object) -> Decimal:
@@ -62,14 +63,8 @@ class LeadershipReportService:
     ) -> None:
         self.settings = settings
         self.cache_revision = CacheRevision(settings, "leadership")
-        self.client = client
+        self.repository = CuttingQueryRepository(client, settings.report_machine_no)
         self.snapshots = snapshots
-        self.query_path = (
-            Path(__file__).resolve().parents[1]
-            / "database"
-            / "queries"
-            / "leadership_report.sql"
-        )
         self._cache_lock = Lock()
         self._query_cache = QueryCache[LeadershipReportResult]()
         self._cache: dict[tuple, tuple[float, float, LeadershipReportResult]] = {}
@@ -187,10 +182,7 @@ class LeadershipReportService:
         self, range_start: date, range_end: date
     ) -> dict[date, LeadershipMonthSnapshot]:
         started_at = monotonic()
-        result_sets = self.client.fetch_result_sets(
-            self.query_path.read_text(encoding="utf-8"),
-            (self.settings.report_machine_no, range_start, range_end),
-        )
+        result_sets = self.repository.leadership_result_sets(range_start, range_end)
         if len(result_sets) != 2:
             raise RuntimeError("领导报表批量查询未返回预期的两个结果集")
 

@@ -12,7 +12,7 @@ from app.api.runtime import runtime_state, request_settings
 from app.api.auth import require_admin
 from app.models.conditions import ConditionSearch
 from app.models.conditions import ConditionError
-from app.services.cutting_dispatch_service import (
+from app.modules.cutting.dispatch import (
     CuttingDispatchError,
     CuttingFileNotFoundError,
     DispatchConflictError,
@@ -21,7 +21,7 @@ from app.services.cutting_dispatch_service import (
 )
 from app.services.magic_box_service import MagicBoxError
 from app.models.contracts import ApiEnvelope
-from app.models.cutting_contracts import (
+from app.modules.cutting.contracts import (
     Items, Page, CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
     MachineResult, CuttingDispatch, BatchCreationResult, DispatchTrend,
     MagicBoxTaskFinishedRequest, MagicBoxCallbackResponse,

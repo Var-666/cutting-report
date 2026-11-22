@@ -8,15 +8,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.workshop import _workshop_trend
+from app.modules.cutting.workshop_routes import _workshop_trend
 from tests.line_fixtures import cutting_settings, source_client
 settings = cutting_settings()
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord, to_primitive
-from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService
+from app.modules.cutting.service import QueryService
+from app.modules.cutting.range_reports import RangeReportService
 from app.services.report_analysis_service import workshop_analysis_source_version
 
 
@@ -28,7 +28,7 @@ END = datetime(2026, 9, 30, 1)
 @pytest.mark.parametrize('source', ['summary_base', 'workshop', 'equipment', 'leadership_report',
     'leadership_projects', 'equipment_month_work_time', 'list_projects', 'list_ships', 'latest_production_date'])
 def test_source_queries_assign_cross_day_and_cross_month_tasks_to_completion_day(source):
-    query = (Path(__file__).parents[1] / 'app/database/queries' / f'{source}.sql').read_text()
+    query = (Path(__file__).parents[1] / 'app/modules/cutting/queries' / f'{source}.sql').read_text()
     # Exercise the production date expression using SQLite's date conversion;
     # the SQL Server batch, driver and query plan still require site validation.
     line = next(line for line in query.splitlines() if ' AS production_date' in line)
@@ -81,7 +81,7 @@ def test_sqlserver_mapping_retains_business_day_for_all_report_paths(date_value)
         assert "source.production_date AS production_date" in query
         return [row]
 
-    service.client = SimpleNamespace(fetch_all=fetch)
+    service.repository.client = SimpleNamespace(fetch_all=fetch)
     filters = ReportFilter(report_date=DAY)
     bundles = [service.fetch_report_data(filters), service.fetch_summary_data(filters), service.fetch_workshop_data(filters)]
     records = [record for bundle in bundles for group in
@@ -113,7 +113,7 @@ def test_leadership_daily_totals_and_workshop_trend_use_business_day_without_sta
 
 def test_equipment_daily_rows_keep_cross_day_task_in_selected_day():
     query = QueryService(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0), client=source_client(replace(settings, data_source_mode="sqlserver", report_data_cache_seconds=0)))
-    query.client = SimpleNamespace(fetch_all=lambda *args: [source_row()])
+    query.repository.client = SimpleNamespace(fetch_all=lambda *args: [source_row()])
     source = query.fetch_equipment_data(ReportFilter(report_date=DAY))
     energy = SimpleNamespace(get_task_range=lambda *args, **kwargs: {
         "records": to_primitive(source.records), "summary": {"energy_data_mode": "missing", "total_work_time": 5400},

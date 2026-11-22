@@ -17,8 +17,8 @@ from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import ReportAnalysis, AnalysisVersion, WorkshopAnalysisScope
-from app.services.energy_period_service import restore_task_energy_records
-from app.services.range_report_service import filter_workshop_records, previous_equal_range, validate_report_range
+from app.modules.energy.periods import restore_task_energy_records
+from app.modules.cutting.range_reports import filter_workshop_records, previous_equal_range, validate_report_range
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
     AnalysisUnavailableError,

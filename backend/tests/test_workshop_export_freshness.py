@@ -11,13 +11,13 @@ import pytest
 
 from app.models.domain import AnalysisResult, QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord
 from app.services.chart_service import ChartService
-from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService
+from app.modules.cutting.service import QueryService
+from app.modules.cutting.range_reports import RangeReportService
 from app.services.report_analysis.workshop import build_context
 from app.services.report_generation.workshop import prepare_report
 from app.services.report_service import ReportService
-from app.services.statistics_service import StatisticsService
-from app.services.workshop_service import WorkshopService
+from app.modules.cutting.statistics import StatisticsService
+from app.modules.cutting.workshop import WorkshopService
 from tests.line_fixtures import cutting_settings
 
 

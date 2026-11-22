@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin, require_user
-from app.api.cutting import router
+from app.modules.cutting.routes import router
 from tests.dispatch_fixtures import dispatch_service as _service
 
 

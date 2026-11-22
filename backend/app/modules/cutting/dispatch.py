@@ -11,7 +11,7 @@ import logging
 
 from app.core.operations_logging import event
 from app.config import Settings
-from app.database.dispatch import DispatchRepository, dispatch_retry_safe
+from app.modules.cutting.dispatch_repository import DispatchRepository, dispatch_retry_safe
 from app.database.pdm import PdmRepository
 from app.services.file_download_service import DownloadError, FileDownloadService, build_catalog_path
 from app.services.file_source import FileSource, normalize_relative_path
@@ -24,7 +24,8 @@ from app.services.magic_box_service import (
 from app.core.report_deadline import operation_deadline
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.cutting_dispatch_service')
 
 class CuttingDispatchError(RuntimeError):
     pass
@@ -431,7 +432,7 @@ class CuttingDispatchService:
             received_at=self._now(),
         )
         if not matched:
-            logging.getLogger(__name__).warning("魔盒完成通知未匹配本系统真实派发记录，未更新任务 task_identifier=%s machine_ip=%s",
+            logging.getLogger('app.services.cutting_dispatch_service').warning("魔盒完成通知未匹配本系统真实派发记录，未更新任务 task_identifier=%s machine_ip=%s",
                                               task_identifier or "[empty]", machine_ip)
         return matched
 

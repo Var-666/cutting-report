@@ -161,7 +161,7 @@ def clock(monkeypatch):
             return datetime.fromtimestamp(value[0], tz)
     monkeypatch.setattr('app.scheduler.datetime', ClockDateTime)
     monkeypatch.setattr('app.modules.welding.service.datetime', ClockDateTime)
-    monkeypatch.setattr('app.services.production_reports.datetime', ClockDateTime)
+    monkeypatch.setattr('app.modules.cutting.reports.datetime', ClockDateTime)
     monkeypatch.setattr('app.scheduler.time', lambda: value[0])
     monkeypatch.setattr('app.scheduler.monotonic', lambda: value[1])
     monkeypatch.setattr('app.worker.monotonic', lambda: value[1])
@@ -422,7 +422,7 @@ def test_web_submissions_are_polled_each_tick_and_capacity_release_admits_deferr
 def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bounded(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
     from app.services.database_runtime import database_context
-    from app.services.production_reports import report_providers
+    from app.modules.reports.provider import report_providers
     from app.models.database_sources import DatabaseSourceRequest
     process = SchedulerProcess(state_settings(configuration(tmp_path, real=True, welding=True, leadership_report_reconcile_hour=0),postgres_state))
     process._schedule()

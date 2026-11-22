@@ -5,9 +5,9 @@ from typing import Any
 
 
 from uuid import uuid4
-from app.database.workshop_scope import WorkshopScopeRepository
+from app.modules.cutting.workshop_scope import WorkshopScopeRepository
 from app.database.users import UserRepository
-from app.database.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError
+from app.modules.cutting.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError
 
 class ConfirmationRepository(WorkshopScopeRepository):
     def list_worker_tasks(self, *, worker_id: str, start_date: str, end_date: str,

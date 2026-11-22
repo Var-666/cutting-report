@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -13,10 +12,12 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.core.operations_logging import data_quality
 from app.models.domain import EquipmentRecord
-from app.services.energy_api import EnergyApiClient, EnergyApiError, EnergyReadingSource
-from app.services.equipment_service import mock_energy, sort_equipment_records
+from app.modules.energy.client import EnergyApiClient, EnergyApiError, EnergyReadingSource
+from app.modules.energy.meter import interval_consumption, local_time, make_series, sampling_notice, sampling_policy
+from app.modules.cutting.equipment import mock_energy, sort_equipment_records
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.energy_service')
 
 
 STATUS_TEXT = {
@@ -29,11 +30,6 @@ STATUS_TEXT = {
     "unavailable": "能管数据不可用", "mock": "模拟数据",
 }
 TASK_OVERLAP_TOLERANCE = timedelta(minutes=1)
-
-
-def local_time(value, timezone: str) -> datetime:
-    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return parsed.astimezone(ZoneInfo(timezone)).replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
 def overlapping_energy_tasks(intervals: dict[str, tuple[datetime, datetime]]) -> set[str]:
@@ -50,128 +46,37 @@ def overlapping_energy_tasks(intervals: dict[str, tuple[datetime, datetime]]) ->
     return conflicts
 
 
-def make_series(rows, ids, timezone):
-    readings: dict[str, dict[datetime, Decimal | None]] = {key: {} for key in ids}
-    invalid = set()
-    for row in rows:
-        key = str(row.get("MfId", "")).lower()
-        if key not in readings:
-            continue
+def task_intervals(records, timezone: str) -> dict[str, tuple[datetime, datetime]]:
+    intervals = {}
+    for row in records:
         try:
-            stamp = local_time(row.get("Mt"), timezone)
+            start = local_time(row.production_time, timezone)
+            end = local_time(row.production_end_time, timezone)
         except (TypeError, ValueError, OverflowError):
-            invalid.add(key)
             continue
-        try:
-            value = Decimal(str(row.get("Mv")))
-            if not value.is_finite() or value < 0:
-                value = None
-        except (InvalidOperation, ValueError):
-            value = None
-        previous = readings[key].get(stamp)
-        if stamp in readings[key] and previous != value:
-            value = None
-        readings[key][stamp] = value
-    return {key: (sorted(points.items()), key in invalid) for key, points in readings.items()}
+        if end > start and end - start <= timedelta(days=7):
+            intervals[row.task_id] = (start, end)
+    return intervals
 
 
-def sampling_policy(settings):
-    """Shared transition policy for legacy task and unified energy reports."""
-    if not settings.energy_sampling_change_at:
-        return {}
-    if not 60 <= settings.energy_new_max_gap_seconds <= 3600:
-        raise ValueError("新采样间隔上限必须为 60—3600 秒")
-    return {"sampling_change_at": local_time(settings.energy_sampling_change_at, settings.timezone),
-            "new_max_gap_seconds": settings.energy_new_max_gap_seconds}
+def task_meter_consumption(series, start, end, *, gas_id, electricity_ids,
+                           gas_factor, electricity_factor, max_gap_seconds, interpolate, policy):
+    def calculate(key, factor):
+        return {"parameter_id": key, **interval_consumption(series[key], start, end,
+            max_gap_seconds=max_gap_seconds, interpolate=interpolate, factor=factor,
+            estimate=True, **policy)}
 
-
-def sampling_notice(settings, historical_gap):
-    policy = sampling_policy(settings)
-    if not policy:
-        return f"最大允许采样间隔 {historical_gap} 秒。"
-    stamp = policy["sampling_change_at"].isoformat(sep=" ")
-    return (f"采样规则切换时间 {stamp}（{settings.timezone}）；"
-            f"此前允许间隔 {historical_gap} 秒，此后 {policy['new_max_gap_seconds']} 秒；"
-            "超过上限的时段标为数据缺口，不计入有效耗量。")
-
-
-def interval_consumption(series, start, end, *, max_gap_seconds, interpolate, factor=Decimal("1"),
-                         sampling_change_at=None, new_max_gap_seconds=180, estimate=False):
-    points, invalid = series
-    result = {"value": None, "status": "missing"}
-    if invalid:
-        return {**result, "status": "invalid_reading"}
-    times = [stamp for stamp, _ in points]
-    left = bisect_right(times, start) - 1
-    right = bisect_left(times, end)
-    allow_estimate = estimate and interpolate
-    if (left < 0 or right >= len(points)) and not allow_estimate:
-        return result
-    left, right = max(0, left), min(right, len(points) - 1)
-    selected = points[left:right + 1]
-    if len(selected) < 2:
-        return {**result, "sample_count": len(selected)}
-    if any(value is None for _, value in selected):
-        return {**result, "status": "invalid_reading"}
-    sparse = False
-    for (t0, v0), (t1, v1) in zip(selected, selected[1:]):
-        if v1 < v0:
-            return {**result, "status": "counter_reset"}
-        # Check each side separately when samples straddle the acquisition change.
-        # A normal final historical sample must not be judged as a one-minute sample.
-        before_end = min(t1, sampling_change_at) if sampling_change_at else t1
-        old_gap = max(0, (before_end - t0).total_seconds())
-        new_gap = max(0, (t1 - max(t0, sampling_change_at)).total_seconds()) if sampling_change_at else 0
-        if old_gap > max_gap_seconds or new_gap > new_max_gap_seconds:
-            if not allow_estimate:
-                return {**result, "status": "gap"}
-            sparse = True
-    estimated = start not in times or end not in times
-    if estimated and not interpolate:
-        return result
-
-    def boundary(stamp):
-        i = bisect_left(times, stamp)
-        if times[i] == stamp:
-            return points[i][1]
-        t0, v0 = points[i - 1]
-        t1, v1 = points[i]
-        ratio = Decimal(str((stamp - t0).total_seconds())) / Decimal(str((t1 - t0).total_seconds()))
-        return v0 + (v1 - v0) * ratio
-
-    covered_start = max(start, selected[0][0])
-    covered_end = min(end, selected[-1][0])
-    if covered_end <= covered_start:
-        return result
-    partial = covered_start != start or covered_end != end
-    try:
-        start_value, end_value = boundary(covered_start), boundary(covered_end)
-        covered_seconds = Decimal(str((covered_end - covered_start).total_seconds()))
-        task_seconds = Decimal(str((end - start).total_seconds()))
-        observed = (end_value - start_value) * factor
-        consumption = observed * task_seconds / covered_seconds if partial else observed
-        consumption = consumption.quantize(Decimal("0.001"))
-    except ArithmeticError:
-        return {**result, "status": "invalid_reading"}
-    estimation = {}
-    if sparse or partial:
-        estimation = {
-            "estimation_method": "average_rate" if partial else "cumulative_difference",
-            "covered_start": covered_start, "covered_end": covered_end,
-            "covered_seconds": covered_seconds, "task_seconds": task_seconds,
-            "observed_consumption": observed,
-            "observed_start_reading": start_value, "observed_end_reading": end_value,
-        }
-    return {
-        "value": consumption,
-        "status": "estimated" if sparse or partial else "interpolated" if estimated else "measured",
-        "start_reading": start_value if covered_start == start else None,
-        "end_reading": end_value if covered_end == end else None,
-        "first_sample_time": selected[0][0], "first_sample_value": selected[0][1],
-        "last_sample_time": selected[-1][0], "last_sample_value": selected[-1][1],
-        "sample_count": len(selected), "conversion_factor": factor,
-        **estimation,
-    }
+    gas = calculate(gas_id, gas_factor) if gas_id else {"value": None, "status": "unconfigured"}
+    meters = [calculate(key, electricity_factor) for key in electricity_ids]
+    if not meters:
+        return gas, meters, None, "unconfigured"
+    failure = next((meter["status"] for meter in meters if meter["value"] is None), None)
+    if failure:
+        return gas, meters, None, failure
+    value = sum((meter["value"] for meter in meters), Decimal("0"))
+    status = ("estimated" if any(meter["status"] == "estimated" for meter in meters)
+              else "interpolated" if any(meter["status"] == "interpolated" for meter in meters) else "measured")
+    return gas, meters, value, status
 
 
 def task_energy_note(gas, meters, electric_status):
@@ -271,20 +176,10 @@ class EquipmentEnergyService:
         if not ids:
             return unavailable("请确认气量单位以及需要合计的电表参数编号和单位")
 
-        intervals = {}
         reference = context_records if context_records is not None else records
         # Aliases share one meter set and use the same overlap tolerance.
-        for row in reference:
-            if row.equipment_id not in cfg.energy_equipment_ids:
-                continue
-            try:
-                start = local_time(row.production_time, cfg.timezone)
-                end = local_time(row.production_end_time, cfg.timezone)
-                if end <= start or end - start > timedelta(days=7):
-                    continue
-            except (TypeError, ValueError, OverflowError):
-                continue
-            intervals[row.task_id] = (start, end)
+        intervals = task_intervals(
+            (row for row in reference if row.equipment_id in cfg.energy_equipment_ids), cfg.timezone)
         conflicts = overlapping_energy_tasks(intervals)
         usable = {row.task_id: intervals[row.task_id] for row in clean
                   if row.task_id in intervals and row.task_id not in conflicts and row.equipment_id in cfg.energy_equipment_ids}
@@ -317,21 +212,11 @@ class EquipmentEnergyService:
             details = {"method": "cumulative_difference", "start": start, "end": end,
                        "scope": "任务实际开始至结束（含期间待机）；不是全天总耗量"}
 
-            def calculate(key, factor):
-                return {"parameter_id": key, **interval_consumption(series[key], start, end,
-                    max_gap_seconds=cfg.energy_max_gap_seconds,
-                    interpolate=cfg.energy_allow_interpolation, factor=factor, estimate=True, **policy)}
-
-            gas = calculate(gas_id, gas_factor) if gas_ready else {"value": None, "status": "unconfigured"}
-            electricity = [calculate(key, electric_factor) for key in electric_ids] if electric_ready else []
-            electric_status = next((item["status"] for item in electricity if item["value"] is None), None)
-            electric_value = None
-            if not electricity:
-                electric_status = "unconfigured"
-            elif electric_status is None:
-                electric_value = sum((item["value"] for item in electricity), Decimal("0"))
-                electric_status = ("estimated" if any(item["status"] == "estimated" for item in electricity)
-                                   else "interpolated" if any(item["status"] == "interpolated" for item in electricity) else "measured")
+            gas, electricity, electric_value, electric_status = task_meter_consumption(
+                series, start, end, gas_id=gas_id if gas_ready else None,
+                electricity_ids=electric_ids if electric_ready else (), gas_factor=gas_factor,
+                electricity_factor=electric_factor, max_gap_seconds=cfg.energy_max_gap_seconds,
+                interpolate=cfg.energy_allow_interpolation, policy=policy)
             details.update(gas={**gas, "unit": units["gas"]}, electricity={"meters": electricity, "unit": units["electricity"]})
             output.append(replace(row, gas_consumption=gas["value"], electricity_consumption=electric_value,
                 gas_data_status=gas["status"], electricity_data_status=electric_status, energy_details=details,

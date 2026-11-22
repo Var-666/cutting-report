@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.models.domain import AnalysisResult, EquipmentRecord, ReportFilter, to_primitive
 from app.services.chart_service import ChartService
-from app.services.energy_period_service import EnergyPeriodService, restore_task_energy_records
-from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService, previous_equal_range
+from app.modules.energy.periods import EnergyPeriodService, restore_task_energy_records
+from app.modules.cutting.service import QueryService
+from app.modules.cutting.range_reports import RangeReportService, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_generation.common import (
     report_analysis_payload,

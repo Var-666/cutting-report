@@ -9,7 +9,7 @@ from app.database.coordination import CoordinationRepository
 from app.database.report_snapshots import ReportSnapshotRepository
 from app.models.pdm_statistics import PdmStatisticsQuery
 from app.services.pdm_statistics import PdmStatisticsService, PDM_STATISTICS_SCOPE
-from app.services.production_reports import report_provider, report_providers
+from app.modules.reports.provider import report_provider, report_providers
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshFailed
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings

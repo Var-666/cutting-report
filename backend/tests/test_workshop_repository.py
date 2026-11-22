@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.identity_security import AuthenticationError, hash_password, verify_password
 from app.database.sessions import SessionRepository
 from app.database.users import UserRepository
-from app.database.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError, DailyReportExistsError
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_errors import ConfirmationConflictError, ConfirmationNotFoundError, ConfirmationPermissionError, DailyReportExistsError
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
 
 

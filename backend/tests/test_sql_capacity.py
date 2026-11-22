@@ -555,7 +555,8 @@ def test_unsaved_probe_ids_share_fixed_slots_without_polluting_source_registrati
 @pytest.mark.parametrize('error', [SqlRequestCancelled('cancelled'), SqlCapacityError('queue_full'), ReportOperationTimeout('deadline')])
 def test_report_boundaries_preserve_cancellation_capacity_and_total_timeout(monkeypatch, boundary, error):
     from datetime import date
-    from app.api import energy, equipment, leadership
+    from app.modules.energy import routes as energy
+    from app.modules.cutting import equipment_routes as equipment, leadership_routes as leadership
     from tests.line_fixtures import as_line_services, cutting_settings
     def fail(*args, **kwargs): raise error
     settings = cutting_settings()

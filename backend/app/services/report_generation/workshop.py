@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import (
     AnalysisResult,
     QueryBundle,
@@ -17,9 +17,9 @@ from app.models.domain import (
 )
 from app.models.report_contracts import WorkshopAnalysisScope
 from app.services.chart_service import ChartService
-from app.services.equipment_service import summarize_equipment
-from app.services.query_service import QueryService
-from app.services.range_report_service import RangeReportService, filter_workshop_records, previous_equal_range
+from app.modules.cutting.equipment import summarize_equipment
+from app.modules.cutting.service import QueryService
+from app.modules.cutting.range_reports import RangeReportService, filter_workshop_records, previous_equal_range
 from app.services.report_analysis_service import ReportAnalysisService
 from app.services.report_closing_comparison import Totals, business_day_window
 from app.services.report_generation.common import (
@@ -35,8 +35,8 @@ from app.services.report_generation.common import (
     report_reference_at,
 )
 from app.services.report_generation.equipment import analyze_legacy_daily
-from app.services.statistics_service import StatisticsService, build_worker_work_summaries
-from app.services.workshop_sorting import sort_workshop_by_recency
+from app.modules.cutting.statistics import StatisticsService, build_worker_work_summaries
+from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
 
 
 def _workshop_bundle(records: list[WorkshopRecord], data_updated_at: datetime | None) -> QueryBundle:

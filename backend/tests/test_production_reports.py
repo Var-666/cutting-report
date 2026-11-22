@@ -5,12 +5,13 @@ from dataclasses import replace
 import pytest
 
 from app.services.application_runtime import build_runtime
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.production_reports import CuttingReportProvider, report_provider, report_providers
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.cutting.reports import CuttingReportProvider
+from app.modules.reports.provider import report_provider, report_providers
 from app.services.report_snapshots import ReportSnapshotService
 from app.database.report_snapshots import ReportKey, ReportSnapshotRepository
-from app.services.energy_api import EnergyApiError
-from app.services.range_report_service import RangeReportService
+from app.modules.energy.client import EnergyApiError
+from app.modules.cutting.range_reports import RangeReportService
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
 from tests.line_fixtures import configuration, cutting_settings

@@ -18,7 +18,7 @@ from app.modules.welding.repository import JOB_FIELDS, PART_FIELDS, WeldingRepos
 from app.modules.welding.models import WeldingQuery
 from app.services.application_runtime import build_runtime
 from app.services.database_runtime import database_context
-from app.services.production_reports import report_provider
+from app.modules.reports.provider import report_provider
 from app.modules.welding.service import WeldingService
 from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
@@ -98,7 +98,7 @@ def test_paging_uses_one_live_count_with_identical_predicates_and_keeps_cached_s
 
 def test_welding_report_distinguishes_zero_activity_from_unusable_source_records(configured, monkeypatch, caplog):
     _, _, _, source, service = configured
-    caplog.set_level(logging.INFO, logger='app.modules.welding.service')
+    caplog.set_level(logging.INFO, logger='app.services.welding_service')
     statistics = source.statistics
     invalid_rows = 0
 
@@ -625,7 +625,7 @@ def test_hot_configuration_never_reuses_previous_source_snapshots(configured, mo
 @pytest.mark.parametrize('current_seconds, history_seconds', [(600, 86400), (73, 119), (0, 0)])
 def test_existing_configuration_controls_current_history_and_filtered_freshness(configured, current_seconds, history_seconds):
     cfg, _, _, _, service = configured
-    from app.services.leadership_report_service import LeadershipReportService
+    from app.modules.cutting.leadership import LeadershipReportService
     from app.services.report_cache_policy import report_ttl
     cfg = replace(cfg, leadership_report_cache_seconds=current_seconds,
                   leadership_report_history_cache_seconds=history_seconds, report_background_refresh_seconds=317)
@@ -659,7 +659,7 @@ def test_legacy_refresh_tasks_are_skipped_before_opening_mysql(configured, kind,
     from time import time
     _, snapshots, _, source, service = configured
     source.down = True
-    with caplog.at_level('INFO', logger='app.modules.welding.service'):
+    with caplog.at_level('INFO', logger='app.services.welding_service'):
         service.refresh_summary(kind, query().model_dump(mode='json'), requested_at=time())
     assert not source.calls
     assert snapshots.get(service._snapshot_key(query(), kind)) is None

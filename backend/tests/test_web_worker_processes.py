@@ -349,9 +349,9 @@ def test_foreground_process_promotes_and_reuses_another_process_generation(tmp_p
 def test_worker_refresh_invalidates_only_its_device_local_caches(tmp_path, postgres_state, monkeypatch):
     from dataclasses import replace
     from datetime import date
-    from app.services.query_service import QueryService, EquipmentQueryResult
+    from app.modules.cutting.service import QueryService, EquipmentQueryResult
     from app.models.domain import ReportFilter
-    from app.services.leadership_report_service import LeadershipReportService
+    from app.modules.cutting.leadership import LeadershipReportService
     configured = configuration(tmp_path, postgres_state)
     runtime = build_runtime(configured, role="worker")
     from tests.line_fixtures import line_settings

@@ -416,8 +416,8 @@ def test_web_repeated_transient_failures_become_incidents(tmp_path, monkeypatch)
 def test_workshop_conflicts_stay_expected_and_server_failures_are_correlated(tmp_path, monkeypatch):
     from psycopg import OperationalError
     from app import main
-    from app.api import workshop
-    from app.database.workshop_errors import ConfirmationConflictError
+    from app.modules.cutting import workshop_routes as workshop
+    from app.modules.cutting.workshop_errors import ConfirmationConflictError
 
     web = embedded_app()
     web.middleware('http')(main.request_id_middleware)

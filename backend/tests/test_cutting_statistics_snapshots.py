@@ -66,7 +66,7 @@ def test_cutting_http_reader_reports_cold_preparation_instead_of_zero(configured
 
 
 def test_workshop_overlays_current_confirmations_without_refreshing_the_source(configured, monkeypatch):
-    from app.services.workshop_service import WorkshopService
+    from app.modules.cutting.workshop import WorkshopService
     _, provider = configured
     selected = date(2026, 11, 19)
     provider.refresh_summary('workshop:source', {'report_date': selected})
@@ -168,7 +168,7 @@ def test_energy_snapshot_cannot_hide_cross_day_finalization(configured, monkeypa
 def test_energy_source_outages_do_not_replace_successful_statistics(configured, monkeypatch, kind):
     from datetime import timedelta, timezone
     from app.database.report_snapshots import ReportSnapshot, fingerprint
-    from app.services.energy_service import EnergyResult
+    from app.modules.energy.tasks import EnergyResult
     runtime, provider = configured
     selected = date(2026, 11, 19)
     query = {'report_date': selected}

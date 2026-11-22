@@ -17,7 +17,7 @@ from app.database.source_registry import DatabaseSourceRegistry, source_configs_
 from tests.line_fixtures import configuration, line_settings, source_client
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 
 
 settings = Settings()
@@ -120,7 +120,7 @@ def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkey
     def unavailable(*args):
         raise SqlServerConfigurationError("生产数据库未配置")
 
-    monkeypatch.setattr(service.client, "fetch_all", unavailable)
+    monkeypatch.setattr(service.repository.client, "fetch_all", unavailable)
     with pytest.raises(SqlServerConfigurationError, match="生产数据库未配置"):
         service.fetch_report_data(ReportFilter(report_date=date(2026, 10, 13)))
 

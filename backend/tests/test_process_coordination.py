@@ -184,7 +184,7 @@ def test_executor_bounds_running_and_waiting_work():
 
 
 def test_energy_snapshot_compare_and_swap_keeps_concurrent_result(postgres_state):
-    from app.database.energy import EnergyReportRepository
+    from app.modules.energy.repository import EnergyReportRepository
     repository = EnergyReportRepository(postgres_state[0])
     original = {"report_date": "2026-10-24", "updated_at": "same-second", "rows": []}
     newer = {**original, "rows": [{"value": 1}]}

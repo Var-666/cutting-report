@@ -1,4 +1,4 @@
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import source_client
 from datetime import datetime
 from pathlib import Path

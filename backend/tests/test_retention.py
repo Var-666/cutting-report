@@ -9,13 +9,13 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.database.alarms import AlarmRepository
 from app.database.automation import AutomationRepository
-from app.database.dispatch import DispatchRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.metadata import MetadataRepository
 from app.database.retention import RetentionRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.services.retention_service import RetentionService
 from app.workers.retention_worker import RetentionWorker
 
@@ -75,7 +75,7 @@ def _alarm(source_id: int, *, closed: bool) -> dict:
 
 def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_list(state_database, tmp_path):
     from app.database.pdm import MockPdmRepository
-    from app.services.cutting_dispatch_service import CuttingDispatchService
+    from app.modules.cutting.dispatch import CuttingDispatchService
     from app.services.file_source import DisabledFileSource
 
     *_, dispatches, _downloads, retention, admin = _repositories(state_database, tmp_path)

@@ -42,7 +42,7 @@ from app.services.report_analysis.leadership import build_context as build_leade
 from app.services.report_analysis.workshop import build_context as build_workshop_context
 from app.services.report_analysis.equipment import build_context as build_equipment_context
 from app.services.report_analysis.brief import period_scope
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.report_closing_comparison import Window
 
 

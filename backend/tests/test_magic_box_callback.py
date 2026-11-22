@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from app.api.cutting import callback_router, router
-from app.models.cutting_contracts import CuttingDispatch
+from app.modules.cutting.routes import callback_router, router
+from app.modules.cutting.contracts import CuttingDispatch
 from tests.dispatch_fixtures import dispatch_service as _service
 
 
@@ -34,7 +34,7 @@ def test_callback_validation_logs_field_errors_without_request_secrets(
     import json
     from fastapi.exceptions import RequestValidationError
     from app.main import safe_connection_validation
-    from app.api.cutting import require_callback_source
+    from app.modules.cutting.routes import require_callback_source
 
     app = embedded_app()
     app.add_exception_handler(RequestValidationError, safe_connection_validation)
@@ -64,7 +64,7 @@ def test_callback_validation_logs_field_errors_without_request_secrets(
 def test_failed_callback_logs_no_raw_task_fields_or_nested_values(caplog):
     from fastapi.exceptions import RequestValidationError
     from app.main import safe_connection_validation
-    from app.api.cutting import require_callback_source
+    from app.modules.cutting.routes import require_callback_source
 
     app = embedded_app()
     app.add_exception_handler(RequestValidationError, safe_connection_validation)

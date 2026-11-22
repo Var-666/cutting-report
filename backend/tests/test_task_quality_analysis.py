@@ -13,7 +13,7 @@ from app.services.report_analysis.brief import model_context
 from app.services.report_analysis.common import normalize_analysis_context
 from app.services.report_analysis.brief_validation import validate_brief, validate_welding_quantities
 from app.services.report_analysis_service import ReportAnalysisService
-from app.services.statistics_service import StatisticsService
+from app.modules.cutting.statistics import StatisticsService
 from app.services.report_service import ReportService
 from app.services.llm_service import LlmService
 from tests.line_fixtures import cutting_settings

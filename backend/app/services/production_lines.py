@@ -11,7 +11,7 @@ from app.device_config import ProductionLineInstance
 
 if TYPE_CHECKING:
     from app.services.database_runtime import DatabaseServices
-    from app.services.production_reports import ProductionReportProvider
+    from app.modules.reports.provider import ProductionReportProvider
     from app.services.device_runtime import DeviceRuntime
     from app.services.pipeline import ReportPipeline
     from app.database.coordination import CoordinationRepository

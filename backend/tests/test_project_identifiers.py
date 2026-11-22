@@ -10,10 +10,10 @@ import pytest
 from tests.line_fixtures import cutting_settings, source_client
 settings = cutting_settings()
 from app.models.domain import ReportFilter
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 
 
-QUERY_DIR = Path(__file__).parents[1] / "app/database/queries"
+QUERY_DIR = Path(__file__).parents[1] / "app/modules/cutting/queries"
 SOURCES = ["summary_base", "workshop", "equipment", "leadership_report", "leadership_projects", "list_projects", "list_ships"]
 ROWS = [(None, "CMYZ0170"), ("", " CMYZ0170 "), ("   ", "CMYZ0170"),
         (" NAME-P ", "OTHER-CODE"), ("NAME-ONLY", None), (None, None), (" ", " ")]

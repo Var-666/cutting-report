@@ -8,10 +8,10 @@ from app.models.workshop_requests import (
     ConfirmTaskRequest, ConfirmSnapshotTaskRequest, ConfirmTasksRequest,
     RevokeTaskRequest, CorrectTaskRequest,
 )
-from app.services.statistics_service import build_top_cut_length_tasks, build_worker_work_summaries, build_workshop_task_distributions
+from app.modules.cutting.statistics import build_top_cut_length_tasks, build_worker_work_summaries, build_workshop_task_distributions
 from app.services.report_analysis_service import analysis_period_label, workshop_analysis_source_version
-from app.services.workshop_sorting import sort_workshop_by_recency
-from app.services.range_report_service import filter_workshop_records, validate_report_range
+from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
+from app.modules.cutting.range_reports import filter_workshop_records, validate_report_range
 
 
 class WorkshopTaskNotFoundError(ValueError):

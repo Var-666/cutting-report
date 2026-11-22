@@ -16,9 +16,9 @@ from app.api.analysis import AnalysisRequest, _is_default_view, router
 from app.api.auth import require_admin
 from app.database.metadata import MetadataRepository
 from app.models.domain import ReportFilter
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.leadership import LeadershipReportService
 from app.services.llm_service import background_llm_work
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
 from tests.analysis_fakes import model_analysis
 from app.services.report_analysis.workshop import build_context as build_workshop_context

@@ -1,7 +1,7 @@
 from datetime import datetime
 from types import SimpleNamespace
 
-from app.api.workshop import _workshop_trend
+from app.modules.cutting.workshop_routes import _workshop_trend
 
 
 def _row(stamp: str, *, project: str, confirmed: bool):

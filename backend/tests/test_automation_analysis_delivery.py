@@ -9,7 +9,7 @@ from app.database.coordination import CoordinationRepository
 from app.database.postgres import execution_scope
 from app.services.pipeline import ReportPipeline
 from app.services.pipeline import ReportAnalysisPendingError
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.llm_service import LlmRequestTimeout
 from app.workers.report_worker import ReportWorker
 from tests.analysis_fakes import model_analysis

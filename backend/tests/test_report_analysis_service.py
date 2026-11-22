@@ -17,13 +17,13 @@ import httpx
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.metadata import MetadataRepository
 from app.models.domain import AnalysisResult, ReportFilter
-from app.services.equipment_service import mock_energy, sort_equipment_records
-from app.services.leadership_report_service import LeadershipReportService
+from app.modules.cutting.equipment import mock_energy, sort_equipment_records
+from app.modules.cutting.leadership import LeadershipReportService
 from app.services.llm_service import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
     _LlmCapacity, background_llm_work, llm_capacity,
 )
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from app.services.report_analysis_service import (
     AnalysisDataVersionMismatch,
     AnalysisUnavailableError,
