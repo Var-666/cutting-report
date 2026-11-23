@@ -11,10 +11,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
-from app.services.automation_service import AutomationService
-from app.services.email_report import EmailReport
-from app.services.email_service import EmailService, EmailDeliveryFailure
+from app.modules.automation.runtime import AutomationRuntime
+from app.modules.automation.delivery import DeliveryService
+from app.modules.automation.email_report import EmailReport
+from app.modules.automation.email import EmailService, EmailDeliveryFailure
 from app.services.pdf_service import PdfService, PdfRenderError
 from app.services.report_service import ReportService
 
@@ -40,7 +40,7 @@ def test_email_contains_html_related_images_and_optional_original_attachment(tmp
             sent.append(BytesParser(policy=policy.default).parsebytes(message.as_bytes()))
             return {}
 
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP", SMTP)
     cfg = replace(settings, project_root=tmp_path, smtp_enabled=True, smtp_host="smtp.test",
                   smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False, smtp_use_ssl=False)
     images = {f"report-page-{number}@test": b"\x89PNG\r\n\x1a\n" + bytes([number]) for number in (1, 2)}
@@ -71,7 +71,7 @@ def test_render_failure_is_retryable_and_does_not_connect_to_smtp(tmp_path, monk
     def fail(path, **kwargs):
         raise PdfRenderError("Chromium failed")
 
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP", lambda *a, **k: pytest.fail("SMTP must not be contacted"))
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP", lambda *a, **k: pytest.fail("SMTP must not be contacted"))
     cfg = replace(settings, smtp_enabled=True, smtp_host="smtp.test", smtp_from_email="report@example.com")
     email = EmailService(cfg, pdf_service=SimpleNamespace(render_email=fail))
     with pytest.raises(EmailDeliveryFailure, match="尚未提交 SMTP"):
@@ -83,16 +83,13 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
     from tests.automation_fixtures import NOW
 
     clock = SimpleNamespace(value=100.0)
-    monkeypatch.setattr('app.services.automation_service.monotonic', lambda: clock.value)
+    monkeypatch.setattr('app.modules.automation.delivery.monotonic', lambda: clock.value)
     cfg = replace(settings, project_root=tmp_path, email_retry_base_seconds=60)
     cfg.reports_dir.mkdir()
     archive = b'<h1>report</h1>'
     (cfg.reports_dir / 'r.html').write_bytes(archive)
     failures = []
-    service = object.__new__(AutomationService)
-    service.settings = cfg
-    service.runtime = AutomationRuntime(cfg)
-    service.repository = SimpleNamespace(
+    repository = SimpleNamespace(
         claim_delivery=lambda now: {'delivery_id': 'd1', 'attempt_count': 1, 'relative_path': 'r.html', 'attach_report': False,
                                     'ai_status': 'success', 'sha256': sha256(archive).hexdigest()},
         mark_delivery_failed=lambda *a, **k: failures.append(k),
@@ -102,7 +99,7 @@ def test_retry_wait_starts_after_slow_report_preparation(tmp_path, monkeypatch):
         clock.value += 120
         raise EmailDeliveryFailure('report rendering timed out')
 
-    service.email_service = SimpleNamespace(send=render_timeout)
+    service = DeliveryService(cfg, repository, SimpleNamespace(send=render_timeout), AutomationRuntime(cfg))
     assert service.process_next_email(NOW)
     from datetime import timedelta
     assert failures[0]['now'] == (NOW + timedelta(seconds=120)).isoformat(timespec='seconds')
@@ -179,16 +176,14 @@ def test_automation_prepares_body_independently_of_attachment_and_rejects_invali
     sent, failed = [], []
     delivery = {"delivery_id": "d1", "attempt_count": 1, "relative_path": relative_path, "attach_report": attach,
                 'ai_status': 'success', 'sha256': sha256(report.read_bytes()).hexdigest()}
-    service = object.__new__(AutomationService)
-    service.settings = cfg
-    service.runtime = AutomationRuntime(cfg)
-    service.repository = SimpleNamespace(
+    repository = SimpleNamespace(
         claim_delivery=lambda now: delivery,
         mark_delivery_sent=lambda *a, **k: True,
         mark_delivery_failed=lambda *a, **k: failed.append(k),
         mark_delivery_unknown=lambda *a, **k: pytest.fail("preparation is safe to retry"),
     )
-    service.email_service = SimpleNamespace(send=lambda *a, **k: sent.append((a, k)) or "<id@test>")
+    email = SimpleNamespace(send=lambda *a, **k: sent.append((a, k)) or "<id@test>")
+    service = DeliveryService(cfg, repository, email, AutomationRuntime(cfg))
     from tests.automation_fixtures import NOW
     assert service.process_next_email(NOW)
     if relative_path == "r.html":

@@ -11,7 +11,7 @@ from app.services.llm_service import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
     _LlmCapacity, background_llm_work, llm_capacity, post_llm_json,
 )
-from app.services.alarm_analysis_service import AlarmAnalysisService
+from app.modules.alarms.analysis import AlarmAnalysisService
 from app.services.report_analysis.workshop import build_context
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
@@ -38,7 +38,7 @@ def test_report_input_budget_rejects_before_network(state_database, tmp_path, mo
 def test_alarm_input_budget_rejects_before_network(state_database, tmp_path, monkeypatch):
     settings = config(tmp_path, llm_max_input_chars=1000)
     service = AlarmAnalysisService(settings, database=state_database)
-    monkeypatch.setattr('app.services.alarm_analysis_service.httpx.Client',
+    monkeypatch.setattr('app.modules.alarms.analysis.httpx.Client',
                         lambda **kwargs: (_ for _ in ()).throw(AssertionError('network called')))
     incident = {'incident_id': 'i', 'machine_no': 'm', 'alarm_type': 't', 'alarm_code': 'c' * 2000,
                 'alarm_class': 'a', 'alarm_desc': 'd', 'severity': 'warning', 'status': 'open',
@@ -334,7 +334,7 @@ def test_alarm_output_budget_is_checked_before_json_parsing(state_database, tmp_
     transport = httpx.MockTransport(lambda request: httpx.Response(
         200, json={"choices": [{"message": {"content": "x" * 1001}}]},
     ))
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client",
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     with pytest.raises(AnalysisOutputValidationError, match="超过配置容量"):
         AlarmAnalysisService(settings, database=state_database).analyze([])

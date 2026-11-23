@@ -5,7 +5,7 @@ import pytest
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
 from app.database.source_registry import DatabaseSourceRegistry
-from app.database.alarms import AlarmRepository
+from app.modules.alarms.repository import AlarmRepository
 from scripts import prepare_alarm_monitor
 
 

@@ -64,7 +64,7 @@ class AutomationProcess:
             self.stop()
             raise RuntimeError('已有有效 Automation 租约')
         try:
-            with self.scope(): self.runtime.automation.recover_interrupted_deliveries()
+            with self.scope(): self.runtime.automation.deliveries.recover_interrupted_deliveries()
             for thread in self.threads: thread.start()
             self._heartbeat()
         except BaseException:
@@ -153,10 +153,10 @@ class AutomationProcess:
                 if reconcile:
                     # This thread is the only SMTP consumer under the lease.
                     self._checkpoint("email", "recovering")
-                    self.runtime.automation.recover_interrupted_deliveries()
+                    self.runtime.automation.deliveries.recover_interrupted_deliveries()
                     reconcile = False
                 self._checkpoint("email", "delivery")
-                if self.automation_service.process_next_email(datetime.now(timezone)):
+                if self.automation_service.delivery.process_next_email(datetime.now(timezone)):
                     continue
             except ExecutionLeaseLost:
                 raise

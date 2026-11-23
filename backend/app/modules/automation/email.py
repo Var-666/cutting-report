@@ -7,7 +7,7 @@ from pathlib import Path
 from time import monotonic
 
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.runtime import AutomationRuntime
 from app.services.pdf_service import PdfService
 
 

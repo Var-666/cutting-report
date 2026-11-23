@@ -17,7 +17,7 @@ from app.config import (
 )
 from app.configuration_sources import load_environment
 from app.device_config import load_line_catalog
-from app.services.automation_runtime import AutomationRuntime, HOT_SETTINGS, validate_automation_settings
+from app.modules.automation.runtime import AutomationRuntime, HOT_SETTINGS, validate_automation_settings
 from app.services.database_runtime import DatabaseRuntime, DATABASE_FIELDS, DATABASE_DIAGNOSTIC_KEYS, validate_sources
 from pydantic import ValidationError
 

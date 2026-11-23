@@ -41,7 +41,7 @@ class AlarmReportService:
     def __init__(self, settings: Settings, pdf_service: PdfService) -> None:
         self.settings = settings
         self.pdf_service = pdf_service
-        template_dir = Path(__file__).resolve().parents[1] / "templates"
+        template_dir = Path(__file__).resolve().parents[2] / "templates"
         self.environment = Environment(
             loader=FileSystemLoader(template_dir),
             autoescape=select_autoescape(["html", "xml", "j2"]),
@@ -99,7 +99,7 @@ class AlarmReportService:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
-                logging.getLogger(__name__).warning("alarm attempt artifact cleanup failed", exc_info=True)
+                logging.getLogger('app.services.alarm_report_service').warning("alarm attempt artifact cleanup failed", exc_info=True)
 
     def discard(self, artifact: dict[str, Any]) -> None:
         root = self.settings.reports_dir.resolve()

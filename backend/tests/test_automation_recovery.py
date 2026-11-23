@@ -19,13 +19,13 @@ def test_restart_recovers_reserved_run_and_completed_outbox_once(workflow):
     # The artifact committed, but the completion callback never ran.
     assert service.reconcile_runs(NOW) == 1
     assert service.reconcile_runs(NOW) == 0
-    delivery = repository.claim_delivery(STAMP)
+    delivery = repository.deliveries.claim_delivery(STAMP)
     assert delivery is not None
-    repository.mark_delivery_sent(delivery, message_id="test-id", now=STAMP)
-    repository.enqueue_delivery(report_id, subject="repeat", now=STAMP)
+    repository.deliveries.mark_delivery_sent(delivery, message_id="test-id", now=STAMP)
+    repository.deliveries.enqueue_delivery(report_id, subject="repeat", now=STAMP)
     assert repository.get_run(run["run_id"])["status"] == "sent"
-    assert repository.delivery_for_report(report_id)["status"] == "sent"
-    assert repository.claim_delivery(STAMP) is None
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "sent"
+    assert repository.deliveries.claim_delivery(STAMP) is None
 
 
 def test_concurrent_recovery_and_manual_enqueue_create_only_one_job(workflow):
@@ -49,7 +49,7 @@ def test_recovery_isolates_callback_failure_and_repairs_failed_run(workflow, mon
     original = service.report_completed
     monkeypatch.setattr(service, "report_completed", lambda *args: (_ for _ in ()).throw(OperationalError("db outage")))
     assert service.reconcile_runs(NOW) == 0
-    assert repository.delivery_for_report(report_id) is None
+    assert repository.deliveries.delivery_for_report(report_id) is None
     monkeypatch.setattr(service, "report_completed", original)
     assert service.reconcile_runs(NOW) == 1
 

@@ -19,12 +19,12 @@ from app.services.production_lines import supports_path
 from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
 from app.api.analysis import router as analysis_router
-from app.api.automation import router as automation_router
+from app.modules.automation.routes import router as automation_router
 from app.modules.cutting.routes import router as cutting_router, callback_router as magic_box_callback_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
-from app.api.alarms import router as alarms_router
+from app.modules.alarms.routes import router as alarms_router
 from app.api.database_monitors import router as database_monitors_router
 from app.api.operations import router as operations_router
 from app.api.llm_usage import router as llm_usage_router

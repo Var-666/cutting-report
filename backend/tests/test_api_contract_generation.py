@@ -62,7 +62,8 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
 def contract_http(tmp_path, postgres_state):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import automation, configuration, database, reports, analysis
+    from app.modules.automation import routes as automation
+    from app.api import configuration, database, reports, analysis
     from app.modules.cutting import leadership_routes as leadership, equipment_routes as equipment
     from app.modules.energy import routes as energy
     from app.api.auth import require_admin
@@ -100,7 +101,7 @@ def check_contract(response, model):
 def test_configuration_and_automation_documented_responses_match_http_payloads(contract_http):
     from app.models.contracts import Items, Page
     from app.models.configuration_contracts import DatabaseConfiguration, DatabaseStatus, ConfigurationSaved, ConfigurationDiagnostics, LlmConfiguration
-    from app.models.automation_contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
+    from app.modules.automation.contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
     client = contract_http
     check_contract(client.get('/api/v1/database/status'), DatabaseStatus)
     check_contract(client.get('/api/v1/database/configuration'), DatabaseConfiguration)
@@ -267,11 +268,11 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
     from zoneinfo import ZoneInfo
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import alarms
+    from app.modules.alarms import routes as alarms
     from app.api.auth import require_admin
     from app.config import Settings
-    from app.database.alarms import AlarmRepository
-    from app.services.alarm_analysis_service import AlarmAnalysisService
+    from app.modules.alarms.repository import AlarmRepository
+    from app.modules.alarms.analysis import AlarmAnalysisService
     from tests.test_alarm_monitor import alarm
 
     repository = AlarmRepository(state_database, source_name='production')
@@ -307,8 +308,8 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
             'limitations': ['仅依据告警记录'],
         }
         AlarmAnalysisService._validate(analysis, facts)
-        repository.reserve_report(proposed_report_id='report', emission_key='report', machine_no='Cutter01', incident_ids=[incident['incident_id']], now='2026-10-28T09:00:00+08:00')
-        repository.complete_report('report', analysis=analysis, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
+        repository.reports.reserve_report(proposed_report_id='report', emission_key='report', machine_no='Cutter01', incident_ids=[incident['incident_id']], now='2026-10-28T09:00:00+08:00')
+        repository.reports.complete_report('report', analysis=analysis, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
         response = client.get('/api/v1/alarms/incidents/page?device_id=Cutter01')
         assert response.status_code == 200, response.text
         assert response.json()['data']['total'] == 1
@@ -318,7 +319,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
             assert response.status_code == 200, response.text
             data = response.json()['data']
             item = data[0] if isinstance(data, list) else data['items'][0]
-            original = repository.get_report('report')
+            original = repository.reports.get_report('report')
             assert original.keys() <= item.keys()
             assert item['analysis'] == analysis
             assert type(item['analysis']['actions'][0]['priority']) is type(priority)

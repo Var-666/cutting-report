@@ -5,7 +5,7 @@ import httpx
 
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
-from app.services.alarm_analysis_service import AlarmAnalysisService
+from app.modules.alarms.analysis import AlarmAnalysisService
 from app.services.llm_usage_service import record_llm_call
 from app.services.llm_service import LlmService
 from app.services.llm_prompts import ALARM_SYSTEM_PROMPT
@@ -98,7 +98,7 @@ def test_alarm_model_request_adds_provider_token_usage(state_database, tmp_path,
             assert _kwargs['json']['messages'][0] == {'role': 'system', 'content': ALARM_SYSTEM_PROMPT}
             return ModelResponse()
 
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     AlarmAnalysisService(settings, database=state_database).analyze([])
     assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 1, "total_tokens": 9,

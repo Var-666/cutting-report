@@ -14,15 +14,17 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import Settings
-from app.database.alarms import AlarmRepository, AlarmLeaseLostError
-from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.alarm_report_service import (
+from app.modules.alarms.leases import AlarmLeaseLostError
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.alarms.analysis import AlarmAnalysisService
+from app.modules.alarms.reports import (
     ALARM_REPORT_FAILED, ALARM_REPORT_RATE_LIMITED, AlarmReportService, alarm_report_error_message,
 )
 from app.services.report_closing_comparison import Totals, Window, closing_comparison, closing_bucket, sum_closing_totals
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.alarm_monitor_service')
 
 
 class AlarmSource(Protocol):
@@ -97,7 +99,7 @@ class AlarmMonitorService:
 
             heartbeat = threading.Thread(target=copy_context().run, args=(renew,), name="alarm-lease-renewal", daemon=True)
             heartbeat.start()
-            self.repository.recover_interrupted_reports(owner, lease_now())
+            self.repository.reports.recover_interrupted_reports(owner, lease_now())
             return self._run_owned(now, owner, lease_now, lost)
         finally:
             stop_renewal.set()
@@ -248,7 +250,7 @@ class AlarmMonitorService:
             lease_owner=owner, lease_now=lease_now(),
         )
         self._check_lease(owner, lease_now, lost)
-        incidents = self.repository.list_unreported_incidents(
+        incidents = self.repository.reports.list_unreported_incidents(
             limit=100,
             monitor_start_at=self.settings.alarm_monitor_start_at,
         )
@@ -267,7 +269,7 @@ class AlarmMonitorService:
         proposed_id = f"alarm_{now:%Y%m%d_%H%M%S}_{uuid4().hex[:6]}"
         machines = sorted({item["machine_no"] for item in incidents})
         machine_no = ", ".join(machines)
-        report_id = self.repository.reserve_report(
+        report_id = self.repository.reports.reserve_report(
             proposed_report_id=proposed_id,
             emission_key=emission_key,
             machine_no=machine_no,
@@ -288,7 +290,7 @@ class AlarmMonitorService:
                 execution_id=owner,
                 comparison=self._closing_comparison(machines, now, next_cursor >= high_water),
             )
-            self.repository.complete_report(
+            self.repository.reports.complete_report(
                 report_id,
                 analysis=analysis,
                 model_status="model",
@@ -307,7 +309,7 @@ class AlarmMonitorService:
                 ALARM_REPORT_RATE_LIMITED if status == 429
                 else alarm_report_error_message(str(exc)) or ALARM_REPORT_FAILED
             )
-            self.repository.fail_report(report_id, message, lease_owner=owner, lease_now=lease_now())
+            self.repository.reports.fail_report(report_id, message, lease_owner=owner, lease_now=lease_now())
             logger.error(
                 "alarm report generation failed: report_id=%s incident_count=%d upstream_status=%s",
                 report_id, len(incidents), status, exc_info=status != 429,

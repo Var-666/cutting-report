@@ -16,8 +16,8 @@ sys.path.insert(0, str(PROJECT / "backend"))
 from app.config import Settings, settings_for_line
 from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
-from app.database.alarm_source import SqlServerAlarmSource
-from app.database.alarms import AlarmRepository
+from app.modules.alarms.source import SqlServerAlarmSource
+from app.modules.alarms.repository import AlarmRepository
 from app.database.postgres import PostgresDatabase
 from app.database.coordination import CoordinationRepository
 from app.database.postgres_migrations import MIGRATION_LOCK

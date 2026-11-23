@@ -11,10 +11,10 @@ from app.api.runtime import application_state, request_settings
 from app.api.devices import device_state, device_settings
 from app.api.auth import require_admin
 from app.models.contracts import ApiEnvelope
-from app.models.alarm_contracts import (
+from app.modules.alarms.contracts import (
     AlarmStatus, AlarmIncident, AlarmIncidentPage, AlarmReport, AlarmReportPage,
 )
-from app.services.alarm_report_service import alarm_report_error_message
+from app.modules.alarms.reports import alarm_report_error_message
 
 
 router = APIRouter(
@@ -108,7 +108,7 @@ def page_alarm_incidents(
 def list_alarm_reports(
     request: Request, limit: int = Query(50, ge=1, le=200)
 ) -> dict:
-    reports = device_state(request).alarm_repository.list_reports(
+    reports = device_state(request).alarm_repository.reports.list_reports(
         limit, monitor_start_at=device_settings(request).alarm_monitor_start_at
     )
     for report in reports:
@@ -130,7 +130,7 @@ def page_alarm_reports(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ) -> dict:
-    result = device_state(request).alarm_repository.page_reports(
+    result = device_state(request).alarm_repository.reports.page_reports(
         monitor_start_at=device_settings(request).alarm_monitor_start_at,
         page=page,
         page_size=page_size,
@@ -149,7 +149,7 @@ def page_alarm_reports(
 
 
 def _report_path(request: Request, report_id: str, field: str) -> tuple[dict, Path]:
-    report = device_state(request).alarm_repository.get_report(report_id)
+    report = device_state(request).alarm_repository.reports.get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="告警报告不存在")
     relative_path = report.get(field)

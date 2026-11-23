@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.database.automation import AutomationRepository
+from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.metadata import MetadataRepository

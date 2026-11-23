@@ -22,9 +22,9 @@ from app.modules.cutting.options_routes import router as options_router
 from app.api.reports import router as reports_router
 from tests.line_fixtures import CUTTING_SCOPES, cutting_settings, line_settings, configuration
 from app.device_config import load_line_catalog
-from app.database.alarms import AlarmRepository
-from app.database.alarm_source import SqlServerAlarmSource
-from app.database.automation import AutomationRepository
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.alarms.source import SqlServerAlarmSource
+from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
 from app.database.metadata import MetadataRepository
@@ -33,7 +33,7 @@ from app.database.users import UserRepository
 from app.modules.cutting.workshop_errors import ConfirmationNotFoundError
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import LeadershipPeriodRecord, WorkshopRecord
-from app.services.automation_service import AutomationService
+from app.modules.automation.schedules import AutomationService
 from app.services.device_runtime import build_device_runtime
 from app.services.custom_report_service import CustomReportService
 from app.services.pipeline import ReportPipeline
@@ -160,22 +160,22 @@ def test_alarm_cursors_leases_recovery_and_page_totals_are_device_scoped(databas
         repo.configure_monitoring_window('2026-10-12 00:00:00', lease_owner=owner, lease_now=NOW)
         repo.ingest([alarm_event(key, repo.machine_no), alarm_event(999, 'Other')], now=NOW,
                     cursor=key, debounce_minutes=10, lease_owner=owner, lease_now=NOW)
-        incident = repo.list_unreported_incidents()[0]
-        repo.reserve_report(proposed_report_id=owner, emission_key=owner, machine_no=repo.machine_no,
+        incident = repo.reports.list_unreported_incidents()[0]
+        repo.reports.reserve_report(proposed_report_id=owner, emission_key=owner, machine_no=repo.machine_no,
                             incident_ids=[incident['incident_id']], now=STAMP, lease_owner=owner, lease_now=NOW)
     assert one.get_cursor() == 100 and two.get_cursor() == 200
     assert one.list_open_source_ids() == [100] and two.list_open_source_ids() == [200]
-    assert two.get_report('owner-1') is None
-    assert len(two.list_reports()) == two.page_reports(monitor_start_at=DAY, page=1, page_size=10)['total'] == 1
+    assert two.reports.get_report('owner-1') is None
+    assert len(two.reports.list_reports()) == two.reports.page_reports(monitor_start_at=DAY, page=1, page_size=10)['total'] == 1
     page = two.page_incidents(monitor_start_at=DAY, status=None, severity=None, page=1, page_size=10)
     assert page['all_total'] == page['open_count'] == page['severity_counts']['high'] == 1
     assert page['items'][0]['machine_no'] == 'Cutter02'
-    assert two.recover_interrupted_reports('owner-2', NOW) == 0
-    assert one.get_report('owner-1')['status'] == 'generating'
+    assert two.reports.recover_interrupted_reports('owner-2', NOW) == 0
+    assert one.reports.get_report('owner-1')['status'] == 'generating'
     one.release_lease('owner-1')
     assert one.try_acquire_lease('recovery', NOW)
-    assert one.recover_interrupted_reports('recovery', NOW) == 1
-    assert two.get_report('owner-2')['status'] == 'generating'
+    assert one.reports.recover_interrupted_reports('recovery', NOW) == 1
+    assert two.reports.get_report('owner-2')['status'] == 'generating'
 
 
 def test_alarm_source_always_filters_cutter02_and_its_confirmed_start_time():
@@ -262,7 +262,7 @@ def test_schedule_run_and_queue_keep_fixed_device_even_after_schedule_edit(datab
 @pytest.mark.parametrize('default_device_id', ['Cutter01', 'Cutter02'])
 @pytest.mark.parametrize('device_id', ['Cutter01', 'Cutter02'])
 def test_device_api_validates_selection_and_scopes_history_and_exports(database, tmp_path, default_device_id, device_id):
-    from app.api import alarms as alarms_api
+    from app.modules.alarms import routes as alarms_api
     db, admin = database
     cfg = configuration(tmp_path)
     app = embedded_app(cfg)
@@ -373,7 +373,8 @@ def test_global_repositories_cannot_implicitly_create_device_data(database):
 
 
 def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
-    from app.api import alarms, analysis, conditions, database as database_api, designer
+    from app.modules.alarms import routes as alarms
+    from app.api import analysis, conditions, database as database_api, designer
     from app.modules.energy import routes as energy
     from app.modules.cutting import equipment_routes as equipment, leadership_routes as leadership, workshop_routes as workshop
     db, admin = database

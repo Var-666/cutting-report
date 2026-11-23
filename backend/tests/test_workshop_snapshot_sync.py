@@ -330,10 +330,10 @@ def test_http_generation_and_task_list_accept_changed_production_data(state_data
 
 def test_automation_preparation_syncs_existing_snapshot(state_database, tmp_path):
     from tests.line_fixtures import cutting_settings
-    from app.database.automation import AutomationRepository
+    from app.modules.automation.repository import AutomationRepository
     from app.database.metadata import MetadataRepository
     from app.models.domain import QueryBundle
-    from app.services.automation_service import AutomationService
+    from app.modules.automation.schedules import AutomationService
 
     workshop = setup(state_database, tmp_path)
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)

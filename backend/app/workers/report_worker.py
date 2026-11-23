@@ -14,7 +14,7 @@ from app.config import Settings
 from app.database.metadata import MetadataRepository
 from app.database.postgres import ExecutionLeaseLost
 from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
-from app.services.automation_service import AutomationService
+from app.modules.automation.schedules import AutomationService
 from app.services.llm_service import background_llm_work
 
 

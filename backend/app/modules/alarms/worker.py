@@ -7,11 +7,12 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.services.alarm_monitor_service import AlarmMonitorService
+from app.modules.alarms.monitoring import AlarmMonitorService
 from app.services.llm_service import background_llm_work
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.workers.alarm_worker')
 
 
 class AlarmWorker:

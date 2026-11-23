@@ -103,7 +103,7 @@ def _hold_pdf(root, output, release):
 
 
 def _configuration_observer(root, output, changed):
-    from app.services.automation_runtime import AutomationRuntime
+    from app.modules.automation.runtime import AutomationRuntime
     runtime = AutomationRuntime(configuration(root))
     old, revision = runtime.snapshot()
     output.put((old.smtp_host, revision))

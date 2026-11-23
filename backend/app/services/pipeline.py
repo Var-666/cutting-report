@@ -11,7 +11,7 @@ from psycopg import Error as PostgresError
 from app.core.operations_logging import event
 from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
-from app.database.automation import AutomationRepository
+from app.modules.automation.repository import AutomationRepository
 from app.modules.energy.repository import EnergyReportRepository
 from app.database.metadata import MetadataRepository
 from app.database.definitions import DefinitionRepository

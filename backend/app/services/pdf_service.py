@@ -20,7 +20,7 @@ from app.core.request_cancellation import (
 from pathlib import Path
 from app.core.process_lock import FileLock
 from app.core.operations_logging import event
-from app.services.email_report import EmailReport, render_email_report
+from app.modules.automation.email_report import EmailReport, render_email_report
 
 
 class PdfRenderError(RuntimeError):

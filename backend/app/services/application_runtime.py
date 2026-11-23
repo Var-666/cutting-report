@@ -15,7 +15,7 @@ from app.database.metadata import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.modules.cutting.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.report_snapshots import ReportSnapshotRepository, fingerprint
-from app.database.automation import AutomationRepository
+from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
@@ -30,11 +30,11 @@ from app.services.sso_service import SsoService
 from app.database.postgres import PostgresDatabase
 from app.services.retention_service import RetentionService
 from app.services.worker_auth_service import WorkerAuthService
-from app.services.automation_service import AutomationService
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.schedules import AutomationService
+from app.modules.automation.runtime import AutomationRuntime
 from app.services.configuration_diagnostics import ConfigurationDiagnostics
 from app.modules.cutting.dispatch import CuttingDispatchService
-from app.services.email_service import EmailService
+from app.modules.automation.email import EmailService
 from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
 from app.services.magic_box_service import MagicBoxConfigProvider

@@ -15,7 +15,7 @@ from app.services.report_analysis.workshop import build_context as build_worksho
 from app.services.report_analysis_service import ReportAnalysisService
 from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
 from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
-from app.workers.alarm_worker import AlarmWorker
+from app.modules.alarms.worker import AlarmWorker
 from app.workers.parallel_analysis import ParallelAnalysisTasks
 from app.services.llm_service import _LlmCapacity, llm_capacity
 

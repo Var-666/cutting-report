@@ -10,14 +10,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.api.runtime import application_state, request_automation_settings, request_settings, runtime_state
 from app.api.auth import require_admin
-from app.services.automation_configuration import AutomationConfigurationRequest, automation_configuration_data
+from app.modules.automation.configuration import AutomationConfigurationRequest, automation_configuration_data
 from app.services.runtime_settings_store import RuntimeSettingsSaveError
 from app.models.contracts import ApiEnvelope, Items, Page
-from app.models.automation_contracts import (AutomationConfiguration, AutomationStatus, AutomationSchedule, ScheduledRun, EmailDelivery, EmailResolution, Deleted, Queued, Resolved)
+from app.modules.automation.contracts import (AutomationConfiguration, AutomationStatus, AutomationSchedule, ScheduledRun, EmailDelivery, EmailResolution, Deleted, Queued, Resolved)
 from app.models.configuration_contracts import ConfigurationSaved
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.automation')
 router = APIRouter(
     prefix="/api/v1/automation",
     tags=["report-automation"],
@@ -254,7 +255,7 @@ def list_deliveries(
     page_size: int = Query(default=20, ge=1, le=100),
     search: str = Query(default="", max_length=200),
 ) -> dict:
-    items, total = application_state(request).automation.list_deliveries(
+    items, total = application_state(request).automation.deliveries.list_deliveries(
         page=page, page_size=page_size, search=search.strip()
     )
     return _envelope(
@@ -266,9 +267,9 @@ def list_deliveries(
 @router.post("/deliveries/{delivery_id}/retry", status_code=202, response_model=None, responses={202: {"model": ApiEnvelope[Queued]}})
 def retry_delivery(delivery_id: str, request: Request) -> dict:
     now = _now(request).isoformat(timespec="seconds")
-    if application_state(request).automation.delivery_state(delivery_id) is None:
+    if application_state(request).automation.deliveries.delivery_state(delivery_id) is None:
         raise HTTPException(status_code=404, detail="邮件发送记录不存在")
-    if not application_state(request).automation.retry_delivery(delivery_id, now=now):
+    if not application_state(request).automation.deliveries.retry_delivery(delivery_id, now=now):
         raise HTTPException(status_code=409, detail="仅明确失败的邮件可重试；发送中、已发送或结果待核对的邮件不可重发")
     return _envelope(request, {"queued": True})
 
@@ -277,7 +278,7 @@ def retry_delivery(delivery_id: str, request: Request) -> dict:
 def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, request: Request,
                      user: dict = Depends(require_admin)) -> dict:
     try:
-        changed = application_state(request).automation.resolve_unknown_delivery(
+        changed = application_state(request).automation.deliveries.resolve_unknown_delivery(
             delivery_id, message_id=payload.message_id,
             outcomes=[item.model_dump() for item in payload.outcomes],
             evidence_note=payload.evidence_note, user=user,
@@ -294,4 +295,4 @@ def resolve_delivery(delivery_id: str, payload: DeliveryResolutionRequest, reque
 
 @router.get("/deliveries/{delivery_id}/resolutions", response_model=None, responses={200: {"model": ApiEnvelope[Items[EmailResolution]]}})
 def delivery_resolutions(delivery_id: str, request: Request) -> dict:
-    return _envelope(request, {"items": application_state(request).automation.delivery_resolutions(delivery_id)})
+    return _envelope(request, {"items": application_state(request).automation.deliveries.delivery_resolutions(delivery_id)})

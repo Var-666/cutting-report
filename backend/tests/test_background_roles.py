@@ -117,10 +117,10 @@ def test_role_fencing_rolls_back_expired_commits_and_rejects_foreign_recovery(po
     try:
         with execution_scope(database,'worker:test-consumer' if role=='worker' else role,new):
             if role=='automation':
-                runtime.automation.recover_interrupted_deliveries()
+                runtime.automation.deliveries.recover_interrupted_deliveries()
                 with pytest.raises(ExecutionLeaseLost):runtime.metadata.recover_interrupted_jobs()
             else:
-                with pytest.raises(ExecutionLeaseLost):runtime.automation.recover_interrupted_deliveries()
+                with pytest.raises(ExecutionLeaseLost):runtime.automation.deliveries.recover_interrupted_deliveries()
     finally:runtime.database_runtime.close();runtime.database.close()
 
 
@@ -187,8 +187,8 @@ def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgr
         monkeypatch.setattr(automation.runtime.email_service,'send',lambda *a,**kw:sends.append(1) or 'message-id')
         automation.automation_runtime.apply(smtp_enabled=True)
         with automation.scope():
-            assert automation.automation_service.process_next_email(NOW)
-            assert not automation.automation_service.process_next_email(NOW)
+            assert automation.automation_service.delivery.process_next_email(NOW)
+            assert not automation.automation_service.delivery.process_next_email(NOW)
         assert sends==[1] and auto.get_run(run['run_id'])['status']=='sent'
         with auto.connect() as connection:assert connection.execute('SELECT count(*) FROM email_deliveries').fetchone()['count']==1
     finally:consumer.stop();automation.stop()

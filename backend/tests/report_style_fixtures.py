@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from app.models.domain import to_primitive
 from app.models.designer import TemplateConfig
 from app.modules.welding.models import WeldingQuery
-from app.services.alarm_report_service import AlarmReportService
+from app.modules.alarms.reports import AlarmReportService
 from app.services.chart_service import ChartService
 from app.services.custom_report_service import CustomReportService
 from app.modules.cutting.leadership import LeadershipReportService

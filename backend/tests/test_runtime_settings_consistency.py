@@ -9,9 +9,10 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api import automation, database
+from app.modules.automation import routes as automation
+from app.api import database
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.runtime import AutomationRuntime
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from tests.line_fixtures import configuration, line_settings, source_client

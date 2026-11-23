@@ -15,7 +15,7 @@ from app.services.database_configuration import (
     DatabaseConfigurationRequest, WeldingConnectionRequest,
 )
 from app.core.process_lock import settings_file_lock
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.runtime import AutomationRuntime
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
 from app.models.configuration_contracts import LlmConfigurationRequest
 from app.models.configuration_contracts import ReportCacheConfiguration

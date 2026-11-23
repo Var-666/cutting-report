@@ -2,9 +2,9 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from app.database.alarms import AlarmRepository
+from app.modules.alarms.repository import AlarmRepository
 from app.database.retention import RetentionRepository
-from app.services.alarm_monitor_service import AlarmMonitorService
+from app.modules.alarms.monitoring import AlarmMonitorService
 from test_alarm_monitor import alarm
 
 
@@ -45,7 +45,7 @@ def test_expired_open_alarm_updates_then_stays_deleted_after_history_recheck(sta
     assert result["alarm_incidents"] == result["alarm_reports"] == 1
     assert service.run_once(now)["report_status"] == "idle"
     assert repository.list_incidents(None) == []
-    assert repository.list_reports() == []
+    assert repository.reports.list_reports() == []
     assert repository.get_cursor() == 1, "discarded history still advances the scan boundary"
 
 
