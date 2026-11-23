@@ -13,9 +13,9 @@ from app.config import Settings
 from app.models.domain import EquipmentRecord, ReportFilter
 from app.modules.energy.periods import EnergyPeriodService, restore_task_energy_records
 from app.modules.cutting.service import QueryService
-from app.services.llm_service import background_llm_work
+from app.modules.reports.analysis.llm import background_llm_work
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_analysis_service import (
+from app.modules.reports.analysis.service import (
     ReportAnalysisService,
     equipment_analysis_source_version,
 )
@@ -23,7 +23,8 @@ from app.workers.parallel_analysis import ParallelAnalysisTasks
 from app.workers.bounded_executor import ExecutionQueueFull
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.workers.current_report_refresh_worker')
 
 
 def _year_ago(value: date) -> date:

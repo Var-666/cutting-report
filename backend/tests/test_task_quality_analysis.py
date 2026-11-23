@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.domain import WorkshopRecord, EquipmentRecord, SummaryBaseRecord, LeadershipPeriodRecord, LeadershipReportResult
-from app.services.report_analysis import workshop, equipment, leadership
-from app.services.report_analysis.brief import model_context
-from app.services.report_analysis.common import normalize_analysis_context
-from app.services.report_analysis.brief_validation import validate_brief, validate_welding_quantities
-from app.services.report_analysis_service import ReportAnalysisService
+from app.modules.reports.analysis import workshop, equipment, leadership
+from app.modules.reports.analysis.brief import model_context
+from app.modules.reports.analysis.common import normalize_analysis_context
+from app.modules.reports.analysis.brief_validation import validate_brief, validate_welding_quantities
+from app.modules.reports.analysis.service import ReportAnalysisService
 from app.modules.cutting.statistics import StatisticsService
-from app.services.report_service import ReportService
-from app.services.llm_service import LlmService
+from app.modules.reports.service import ReportService
+from app.modules.reports.analysis.llm import LlmService
 from tests.line_fixtures import cutting_settings
 
 DAY = date(2026, 11, 18)
@@ -73,7 +73,7 @@ def test_missing_anomaly_analysis_triggers_one_model_correction(monkeypatch, tmp
         calls.append(json.loads(json.dumps(kwargs['payload'])))
         body = output() | {'findings': []} if len(calls) == 1 else output()
         return {'choices': [{'message': {'content': json.dumps(body, ensure_ascii=False)}}]}
-    monkeypatch.setattr('app.services.llm_service.request_llm_json', request)
+    monkeypatch.setattr('app.modules.reports.analysis.llm.request_llm_json', request)
     service = LlmService(cutting_settings(project_root=tmp_path, llm_enabled=True, llm_api_key='test-key'), None)
     result = service.analyze_context('workshop', contexts('workshop'))
     assert len(calls) == 2 and '必须分析' in calls[1]['messages'][-1]['content']

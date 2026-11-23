@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database.pdm_statistics import PdmStatisticsRepository
-from app.database.report_snapshots import ReportKey, fingerprint
-from app.services.report_snapshots import ReportData, ReportSnapshotService
-from app.services.report_cache_policy import report_refresh_seconds
+from app.modules.reports.snapshot_repository import ReportKey, fingerprint
+from app.modules.reports.snapshots import ReportData, ReportSnapshotService
+from app.modules.reports.cache_policy import report_refresh_seconds
 from app.models.pdm_statistics import (
     PDM_TYPES, PdmBranchOptions, PdmCounts, PdmOptionsQuery, PdmOption,
     PdmReportSummaries, PdmOverviewReport, PdmStatisticsQuery, PdmStatisticsReport, PdmSummaryRow, PdmSummaryTable,

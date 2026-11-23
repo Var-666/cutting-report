@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.welding.models import WeldingQuery
-from app.database.mysql import MySqlClient, MySqlSession, MySqlUnavailable as WeldingUnavailable
+from app.database.mysql import MySqlClient, MySqlSession
 
 TABLES = ('weld_info_table', 'weld_part_info_table', 'welding_seam_info_table')
 

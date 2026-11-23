@@ -6,8 +6,8 @@ from calendar import monthrange
 from datetime import timedelta
 
 from app.models.domain import LeadershipReportResult, to_primitive
-from app.services.report_analysis.brief import add_candidates
-from app.services.report_analysis.common import (
+from app.modules.reports.analysis.brief import add_candidates
+from app.modules.reports.analysis.common import (
     _change,
     _change_label,
     _duration,

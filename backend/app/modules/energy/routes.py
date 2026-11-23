@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.workloads import query_requests
 from app.api.devices import device_state
-from app.api.report_reads import statistics_page
+from app.modules.cutting.report_reads import statistics_page
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope
 from app.modules.energy.contracts import EnergyDayReport, TaskEnergyReport, EnergyMonthReport, EnergyPeriodReport, EnergyRangeReport
-from app.services.report_analysis_service import (
+from app.modules.reports.analysis.service import (
     analysis_table_source_version,
     equipment_analysis_source_version,
 )

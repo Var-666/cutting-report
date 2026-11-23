@@ -17,7 +17,8 @@ from app.device_config import load_line_catalog
 from app.database.mysql import MySqlClient
 from app.database.source_registry import DatabaseSourceRegistry
 from app.config import settings_for_line
-from app.modules.welding.repository import WeldingRepository, WeldingUnavailable, TABLES, valid_serial, valid_time
+from app.database.mysql import MySqlUnavailable
+from app.modules.welding.repository import WeldingRepository, TABLES, valid_serial, valid_time
 from app.models.domain import to_primitive
 from app.modules.welding.models import WeldingQuery
 from app.modules.welding.service import WeldingService
@@ -88,7 +89,7 @@ def main() -> int:
                                      '不输出账号、授权原文、密码或连接地址；不写源库。']
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0
-        except WeldingUnavailable as exc:
+        except MySqlUnavailable as exc:
             print(str(exc), file=sys.stderr)
             return 2
 

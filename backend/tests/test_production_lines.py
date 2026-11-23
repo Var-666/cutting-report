@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 from app.api.auth import require_admin
 from app.modules.welding.routes import service
 from app.device_config import load_line_catalog
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
-from app.services.production_lines import registered_lines, supports_path
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
+from app.runtime.production_lines import registered_lines, supports_path
 from tests.line_fixtures import configuration
 
 

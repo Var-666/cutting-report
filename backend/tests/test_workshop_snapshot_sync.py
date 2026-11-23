@@ -331,7 +331,7 @@ def test_http_generation_and_task_list_accept_changed_production_data(state_data
 def test_automation_preparation_syncs_existing_snapshot(state_database, tmp_path):
     from tests.line_fixtures import cutting_settings
     from app.modules.automation.repository import AutomationRepository
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     from app.models.domain import QueryBundle
     from app.modules.automation.schedules import AutomationService
 

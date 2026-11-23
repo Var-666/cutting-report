@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from app.core.operations_logging import data_quality
 from app.models.domain import to_primitive
 from app.modules.energy.client import EnergyApiClient, EnergyApiError, EnergyReadingSource
-from app.services.report_cache_policy import report_ttl
+from app.modules.reports.cache_policy import report_ttl
 from app.modules.energy.tasks import (
     STATUS_TEXT, observe_task_energy, overlapping_energy_tasks, task_energy_note, task_intervals, task_meter_consumption,
 )

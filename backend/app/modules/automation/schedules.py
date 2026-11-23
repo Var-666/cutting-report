@@ -11,7 +11,7 @@ from app.core.operations_logging import event
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
 from app.modules.automation.repository import AutomationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
 from app.models.domain import ReportFilter
 from app.modules.automation.delivery import DeliveryService
@@ -19,9 +19,9 @@ from app.modules.automation.email import EmailService
 from app.modules.automation.runtime import AutomationRuntime
 
 if TYPE_CHECKING:
-    from app.services.database_runtime import DatabaseRuntime
-    from app.services.device_runtime import DeviceRuntime
-    from app.services.production_lines import ProductionLineRuntime
+    from app.runtime.database import DatabaseRuntime
+    from app.modules.cutting.runtime import DeviceRuntime
+    from app.runtime.production_lines import ProductionLineRuntime
 
 
 # Persisted operations incident fingerprints include the logger name.

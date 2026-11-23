@@ -20,7 +20,7 @@ from app.database.users import UserRepository
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
 from app.modules.alarms.analysis import AlarmAnalysisService
-from app.services.llm_service import AnalysisOutputValidationError
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError
 from tests.test_alarm_monitor import alarm, incident
 from tests.dispatch_fixtures import RecordingMagicClient, push_service as _push_service
 

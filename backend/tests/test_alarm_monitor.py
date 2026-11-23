@@ -244,7 +244,7 @@ def test_alarm_analysis_keeps_rule_fields_deterministic_and_normalizes_limitatio
 
     monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     monkeypatch.setattr(
-        "app.services.llm_service.record_llm_call",
+        "app.modules.reports.analysis.llm.record_llm_call",
         lambda *_args, **_kwargs: None,
     )
 
@@ -312,7 +312,7 @@ def test_alarm_analysis_adds_rule_fields_when_model_omits_them(state_database, m
 
     monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     monkeypatch.setattr(
-        "app.services.llm_service.record_llm_call", lambda *_args, **_kwargs: None
+        "app.modules.reports.analysis.llm.record_llm_call", lambda *_args, **_kwargs: None
     )
 
     result = AlarmAnalysisService(

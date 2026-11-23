@@ -4,12 +4,12 @@ from types import SimpleNamespace
 from dataclasses import replace
 import pytest
 
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.reports import CuttingReportProvider
 from app.modules.reports.provider import report_provider, report_providers
-from app.services.report_snapshots import ReportSnapshotService
-from app.database.report_snapshots import ReportKey, ReportSnapshotRepository
+from app.modules.reports.snapshots import ReportSnapshotService
+from app.modules.reports.snapshot_repository import ReportKey, ReportSnapshotRepository
 from app.modules.energy.client import EnergyApiError
 from app.modules.cutting.range_reports import RangeReportService
 from app.worker import WorkerProcess

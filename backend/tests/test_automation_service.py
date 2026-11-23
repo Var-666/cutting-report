@@ -2,7 +2,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from app.modules.automation.repository import AutomationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.users import UserRepository
 from app.modules.automation.schedules import next_run_at, report_date_for
 

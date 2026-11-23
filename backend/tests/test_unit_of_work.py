@@ -7,7 +7,7 @@ import pytest
 from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.dispatch_repository import DispatchRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
 from app.database.users import UserRepository
 

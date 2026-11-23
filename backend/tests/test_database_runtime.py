@@ -14,8 +14,8 @@ from app.api import database
 from app.api.runtime import CurrentSettings, application_state, request_settings, runtime_state
 from app.models.configuration_contracts import ReportCacheConfiguration
 from app.models.database_sources import DatabaseSourceRequest
-from app.services.application_runtime import ApplicationRuntime, build_runtime
-from app.services.database_runtime import DatabaseServices, database_context
+from app.runtime.application import ApplicationRuntime, build_runtime
+from app.runtime.database import DatabaseServices, database_context
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env
 from tests.line_fixtures import configuration
 
@@ -66,8 +66,8 @@ def test_report_cache_save_hotloads_all_lines_and_preserves_inflight_snapshot(en
         'current_seconds': 73, 'history_seconds': 119, 'query_seconds': 0, 'refresh_seconds': 37}
 
 
-@pytest.mark.parametrize('failed_write, status', [('app.services.database_runtime.write_runtime_env', 500),
-    ('app.services.database_runtime.CacheRevision.publish', 503)])
+@pytest.mark.parametrize('failed_write, status', [('app.runtime.database.write_runtime_env', 500),
+    ('app.runtime.database.CacheRevision.publish', 503)])
 def test_report_cache_write_failure_keeps_file_and_published_services(environment, monkeypatch, failed_write, status):
     from app.models.configuration_contracts import ReportCacheConfiguration
     cfg, runtime = environment
@@ -276,7 +276,7 @@ def test_failed_candidate_or_disk_write_keeps_published_graph_and_file(environme
             database.save_database_configuration(payload(cfg), request(state))
         assert error.value.status_code == 503 and 'private-details' not in error.value.detail
     with monkeypatch.context() as patch:
-        patch.setattr('app.services.database_runtime.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
+        patch.setattr('app.runtime.database.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
         with pytest.raises(HTTPException) as error:
             database.save_database_configuration(payload(cfg), request(state))
         assert error.value.status_code == 500

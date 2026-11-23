@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.services.report_cache_policy import report_ttl, report_refresh_seconds
+from app.modules.reports.cache_policy import report_ttl, report_refresh_seconds
 from tests.line_fixtures import configuration, line_settings
 
 

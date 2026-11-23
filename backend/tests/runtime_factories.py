@@ -4,9 +4,9 @@ from typing import NoReturn
 
 from fastapi import FastAPI
 
-from app.services.application_runtime import ApplicationRuntime
-from app.services.database_runtime import DatabaseServices
-from app.services.device_runtime import DeviceRuntime
+from app.runtime.application import ApplicationRuntime
+from app.runtime.database import DatabaseServices
+from app.modules.cutting.runtime import DeviceRuntime
 
 
 class _MissingDependency:

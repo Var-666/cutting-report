@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta
 
 from tests.energy_period_fixtures import DAY, START, samples, service
-from app.services.report_cache_policy import report_ttl
+from app.modules.reports.cache_policy import report_ttl
 
 
 def test_saved_partial_day_is_completed_after_snapshot_ttl(tmp_path, state_database):

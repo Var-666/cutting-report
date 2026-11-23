@@ -11,11 +11,11 @@ from collections.abc import Callable
 from app.core.operations_logging import event, operation_context
 from app.core.sql_capacity import sql_identity
 from app.config import Settings
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.postgres import ExecutionLeaseLost
-from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
+from app.modules.cutting.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
 from app.modules.automation.schedules import AutomationService
-from app.services.llm_service import background_llm_work
+from app.modules.reports.analysis.llm import background_llm_work
 
 
 logger = logging.getLogger(__name__)

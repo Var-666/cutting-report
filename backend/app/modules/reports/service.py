@@ -11,7 +11,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
 from app.database.postgres import execution_owner
-from app.services.analysis_display import analysis_cover, analysis_metrics, analysis_reference_label
+from app.modules.reports.analysis.display import analysis_cover, analysis_metrics, analysis_reference_label
 
 
 class ReportRenderError(RuntimeError):
@@ -84,7 +84,7 @@ def format_chinese_datetime(value: Any) -> str:
 class ReportService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        template_dir = Path(__file__).resolve().parents[1] / "templates"
+        template_dir = Path(__file__).resolve().parents[2] / "templates"
         self.environment = Environment(
             loader=FileSystemLoader(template_dir),
             autoescape=select_autoescape(["html", "xml", "j2"]),

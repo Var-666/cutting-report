@@ -4,8 +4,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.models.domain import WorkshopRecord
-from app.services.report_analysis.brief import add_candidates
-from app.services.report_analysis.common import (
+from app.modules.reports.analysis.brief import add_candidates
+from app.modules.reports.analysis.common import (
     _change,
     _duration,
     _fact,

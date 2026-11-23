@@ -23,7 +23,7 @@ from app.database.users import UserRepository
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.database_sources import DatabaseSourceRequest
 from app.models.domain import ReportFilter, WorkshopRecord
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.modules.cutting.service import QueryService
 from app.services.ship_name_service import ShipNameService
 from app.modules.cutting.workshop import WorkshopService
@@ -232,10 +232,10 @@ def test_bm_runtime_registration_hot_reload_protection_and_old_request(postgres_
 
 
 def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_database, tmp_path, monkeypatch):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     from app.models.domain import AnalysisResult
     from app.models.workshop_requests import ConfirmTaskRequest
-    from app.services.pipeline import ReportPipeline
+    from app.modules.cutting.pipeline import ReportPipeline
     vendor = tmp_path/'vendor'
     vendor.mkdir()
     (vendor/'echarts.min.js').write_text('window.echarts={init(){return {setOption(){},resize(){}}}}')
@@ -287,7 +287,7 @@ def test_snapshot_page_and_html_export_share_bm_names_and_filtered_totals(state_
     ('非船','非船','非船',('非船','非船','非船')),
 ])
 def test_report_task_fields_show_red_unknown_only_for_missing_values(project,ship,segment,expected):
-    from app.services.report_service import ReportService
+    from app.modules.reports.service import ReportService
     from app.models.domain import to_primitive
 
     row = replace(record(),project_code=project,ship_no=ship,segment_name=segment)

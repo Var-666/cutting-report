@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.modules.alarms.monitoring import AlarmMonitorService
-from app.services.llm_service import background_llm_work
+from app.modules.reports.analysis.llm import background_llm_work
 
 
 # Persisted operations incident fingerprints include the logger name.

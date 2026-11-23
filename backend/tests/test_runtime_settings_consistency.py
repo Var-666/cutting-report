@@ -68,7 +68,7 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
 
 
 def test_blank_database_password_preserves_latest_saved_value_before_restart(postgres_state, tmp_path, monkeypatch):
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     from app.models.database_sources import DatabaseSourceRequest
     configured = configuration(tmp_path)
     state = build_runtime(state_settings(configured,postgres_state), role='web')

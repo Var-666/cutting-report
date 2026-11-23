@@ -17,7 +17,7 @@ from app.models.designer import (
     QueryTaskUpsert,
     TemplateUpsert,
 )
-from app.services.custom_report_service import CustomReportService
+from app.modules.reports.custom import CustomReportService
 from app.services.sql_workbench_service import SqlWorkbenchValidationError
 
 

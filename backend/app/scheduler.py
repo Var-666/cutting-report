@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
 from app.core.operations_logging import configured_logging, event
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
 from app.modules.reports.provider import report_providers
 from app.services.worker_status import role_health
 

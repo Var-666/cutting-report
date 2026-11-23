@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 from copy import copy
-from dataclasses import dataclass, replace
-from typing import Literal, cast
+from dataclasses import dataclass
+from functools import partial
+from typing import Literal
 import logging
 
 from app.core.operations_logging import event
 
-from app.config import Settings, settings_for_line
-from app.device_config import ProductionLineCatalog, ProductionLineInstance, load_line_catalog
-from app.services.production_lines import ProductionLineRuntime
-from app.services.device_runtime import DeviceRuntime, build_device_runtime
-from app.database.metadata import MetadataRepository
+from app.config import Settings
+from app.device_config import ProductionLineCatalog, load_line_catalog
+from app.runtime.production_lines import ProductionLineRuntime
+from app.modules.cutting.runtime import build_cutting_line
+from app.modules.reports.repository import MetadataRepository
 from app.database.llm_usage import LlmUsageRepository
 from app.modules.cutting.leadership_snapshots import LeadershipSnapshotRepository
-from app.database.report_snapshots import ReportSnapshotRepository, fingerprint
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository
 from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.dispatch_repository import DispatchRepository
@@ -38,7 +39,7 @@ from app.modules.automation.email import EmailService
 from app.services.file_source import build_file_source
 from app.services.file_download_service import FileDownloadService
 from app.services.magic_box_service import MagicBoxConfigProvider
-from app.services.pdf_service import PdfService
+from app.modules.reports.pdf import PdfService
 from app.workers.retention_worker import RetentionWorker
 from app.workers.download_cleanup_worker import DownloadCleanupWorker
 
@@ -46,13 +47,11 @@ from app.database.coordination import CoordinationRepository
 from app.core.sql_capacity import SqlCapacity
 from app.services.worker_status import WorkerStatusReader
 from app.services.operations_service import OperationsService
-from app.services.database_runtime import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
-from app.modules.welding.repository import WeldingRepository
-from app.database.mysql import MySqlClient
+from app.runtime.database import DatabaseRuntime, DatabaseServices, source_bindings, validate_sources
 from app.database.sqlserver import SqlServerClient
 from app.database.hr import HrRepository
 from app.database.magic_box import MagicBoxConfigRepository
-from app.modules.welding.service import WeldingService
+from app.modules.welding.runtime import build_welding_line
 from app.database.source_registry import DatabaseSourceRegistry, SourceNotFound
 from app.database.bm_projects import BmProjectRepository
 from app.services.ship_name_service import ShipNameService
@@ -134,28 +133,13 @@ def _build_runtime(settings: Settings, database: PostgresDatabase, *, role: Lite
     pdf_service = PdfService(operation_timeout_seconds=settings.pdf_render_timeout_seconds,
                              coordination_path=settings.data_dir / ".coordination" / "pdf-render.lock")
 
-    def cutting(configuration: Settings, line: ProductionLineInstance, sources: DatabaseSourceRegistry, ship_names: ShipNameService | None, previous: ProductionLineRuntime | None) -> ProductionLineRuntime:
-        cfg = settings_for_line(configuration, line, sources.fingerprint(line.source_key))
-        cfg = replace(cfg, alarm_source_name=f'{line.id}:{sources.connection_identity(line.source_key)}')
-        client = sources.client(line.source_key) if cfg.effective_data_source_mode == "sqlserver" else None
-        service = build_device_runtime(cfg, database, definitions, leadership_snapshots, pdf_service,
-                                    client=cast(SqlServerClient, client), task_queue=coordination, ship_names=ship_names,
-                                    statistics_snapshots=report_snapshots,
-                                    statistics_source=fingerprint((sources.fingerprint(line.source_key),
-                                        sources.fingerprint('bm') if any(source.id == 'bm' for source in sources.configs()) else None)))
-        if previous:
-            service.reuse_pending(previous.cutting())
-        return ProductionLineRuntime(line, service, background=service, pipeline=service.pipeline)
+    cutting = partial(build_cutting_line, database=database, definitions=definitions,
+                      leadership_snapshots=leadership_snapshots, pdf_service=pdf_service,
+                      report_snapshots=report_snapshots, coordination=coordination)
+    welding = partial(build_welding_line, database=database, report_snapshots=report_snapshots,
+                      coordination=coordination)
 
-    def welding(configuration: Settings, line: ProductionLineInstance, sources: DatabaseSourceRegistry, ship_names: ShipNameService | None, previous: ProductionLineRuntime | None) -> ProductionLineRuntime:
-        cfg = settings_for_line(configuration, line, sources.fingerprint(line.source_key))
-        analyses = MetadataRepository(database, device_id=line.id,
-            analysis_scope=f'welding:{line.id}:{cfg.source_fingerprint}:{fingerprint((cfg.weld_db_timezone, line.device_nos))}')
-        service = WeldingService(cfg, WeldingRepository(cast(MySqlClient, sources.client(line.source_key)), device_nos=line.device_nos),
-                              snapshots=report_snapshots, coordination=coordination, analyses=analyses)
-        return ProductionLineRuntime(line, service)
-
-    from app.services.report_cache_policy import REPORT_CACHE_FIELDS
+    from app.modules.reports.cache_policy import REPORT_CACHE_FIELDS
     cache_fields = tuple(REPORT_CACHE_FIELDS.values())
     builders = {"cutting": (cutting, ("data_source_mode", "llm_model", *cache_fields), ("bm",)),
                 "welding": (welding, ("llm_model", *cache_fields), ())}

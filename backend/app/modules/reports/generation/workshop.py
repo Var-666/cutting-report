@@ -16,13 +16,13 @@ from app.models.domain import (
     to_primitive,
 )
 from app.models.report_contracts import WorkshopAnalysisScope
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.cutting.equipment import summarize_equipment
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService, filter_workshop_records, previous_equal_range
-from app.services.report_analysis_service import ReportAnalysisService
-from app.services.report_closing_comparison import Totals, business_day_window
-from app.services.report_generation.common import (
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.closing_comparison import Totals, business_day_window
+from app.modules.reports.generation.common import (
     report_analysis_payload,
     PreparedReport,
     _chart_type,
@@ -34,7 +34,7 @@ from app.services.report_generation.common import (
     report_meta,
     report_reference_at,
 )
-from app.services.report_generation.equipment import analyze_legacy_daily
+from app.modules.reports.generation.equipment import analyze_legacy_daily
 from app.modules.cutting.statistics import StatisticsService, build_worker_work_summaries
 from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
 

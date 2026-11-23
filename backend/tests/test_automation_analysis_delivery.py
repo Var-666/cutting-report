@@ -7,10 +7,10 @@ import pytest
 
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import execution_scope
-from app.services.pipeline import ReportPipeline
-from app.services.pipeline import ReportAnalysisPendingError
+from app.modules.cutting.pipeline import ReportPipeline
+from app.modules.cutting.pipeline import ReportAnalysisPendingError
 from app.modules.cutting.service import QueryService
-from app.services.llm_service import LlmRequestTimeout
+from app.modules.reports.analysis.llm import LlmRequestTimeout
 from app.workers.report_worker import ReportWorker
 from tests.analysis_fakes import model_analysis
 from tests.automation_fixtures import complete_report, NOW, STAMP
@@ -153,7 +153,7 @@ def test_parallel_delivery_consumers_create_only_one_replacement(workflow):
 
 
 def test_rebuild_transaction_failure_preserves_original_links_and_retries_without_smtp(workflow, monkeypatch):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     repository, metadata, service, run, old_id = legacy_delivery(workflow)
     monkeypatch.setattr(MetadataRepository, 'create_job', Mock(side_effect=RuntimeError('temporary database failure')))
     assert service.delivery.process_next_email(NOW)

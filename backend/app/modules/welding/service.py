@@ -10,7 +10,7 @@ from copy import deepcopy
 from collections import OrderedDict
 from threading import Lock
 from time import monotonic, time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -20,21 +20,22 @@ from psycopg import Error as PostgresError
 
 from app.config import Settings
 from app.core.operations_logging import data_quality, event
-from app.services.query_cache import QueryCache
-from app.database.report_snapshots import ReportKey, fingerprint
-from app.services.report_snapshots import ReportData, ReportSnapshotService
+from app.modules.reports.query_cache import QueryCache
+from app.modules.reports.snapshot_repository import ReportKey, fingerprint
+from app.modules.reports.snapshots import ReportData, ReportSnapshotService
 from app.database.mysql import MySqlSession
-from app.modules.welding.repository import CLOSING_JOB_METRICS, WeldingRepository, WeldingUnavailable, aggregate_sort_key
-from app.database.metadata import MetadataRepository
+from app.database.mysql import MySqlUnavailable
+from app.modules.welding.repository import CLOSING_JOB_METRICS, WeldingRepository, aggregate_sort_key
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import to_primitive
 from app.modules.welding.models import ReportType, WeldingQuery, WELD_TYPES
-from app.services.llm_prompts import PROMPT_VERSION
-from app.services.llm_service import (
+from app.modules.reports.analysis.prompts import PROMPT_VERSION
+from app.modules.reports.analysis.llm import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmService, analysis_error_message,
 )
-from app.services.analysis_execution import analysis_operation, current_analysis_id, observe_analysis_quality
-from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
-from app.services.report_closing_comparison import Totals, Window, closing_comparison, sum_closing_totals
+from app.modules.reports.analysis.execution import analysis_operation, current_analysis_id, observe_analysis_quality
+from app.modules.reports.analysis.execution import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.modules.reports.closing_comparison import Totals, Window, closing_comparison, sum_closing_totals
 from app.core.request_cancellation import SqlRequestCancelled
 
 
@@ -135,7 +136,7 @@ class WeldingService:
         self._analyses = OrderedDict()
         self._analysis_lock = Lock()
         self._statistics = QueryCache[Any](limit=32)
-        self.snapshot_service = ReportSnapshotService(self.settings, snapshots, coordination, unavailable_errors=(WeldingUnavailable,)) if snapshots else None
+        self.snapshot_service = ReportSnapshotService(self.settings, snapshots, coordination, unavailable_errors=(MySqlUnavailable,)) if snapshots else None
         self.report_provider = self
 
     @staticmethod

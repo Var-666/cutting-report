@@ -5,7 +5,7 @@ import base64
 from functools import lru_cache
 from pathlib import Path
 
-from app.services.report_analysis.common import _change, _duration, _number
+from app.modules.reports.analysis.common import _change, _duration, _number
 
 
 LEADERSHIP_FIELDS = {

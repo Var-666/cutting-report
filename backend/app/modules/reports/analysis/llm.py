@@ -21,17 +21,18 @@ from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.models.domain import AnalysisResult
 from app.models.analysis_brief import BriefInput
-from app.services.llm_prompts import analysis_system_prompt
-from app.services.report_analysis.brief import model_context
-from app.services.report_analysis.brief_validation import validate_brief, validate_welding_quantities
+from app.modules.reports.analysis.prompts import analysis_system_prompt
+from app.modules.reports.analysis.brief import model_context
+from app.modules.reports.analysis.brief_validation import validate_brief, validate_welding_quantities
 from app.services.llm_usage_service import record_llm_call
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, operation_deadline, remaining_seconds
-from app.services.analysis_execution import analysis_observation, analysis_queue_remaining, analysis_stage, current_analysis_id
+from app.modules.reports.analysis.execution import analysis_observation, analysis_queue_remaining, analysis_stage, current_analysis_id
 from app.services.model_coordination import model_slot
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.llm_service')
 
 
 REQUIRED_FIELDS = ("overview", "features", "alerts", "suggestions")

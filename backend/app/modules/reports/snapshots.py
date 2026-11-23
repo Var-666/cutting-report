@@ -10,17 +10,18 @@ from time import monotonic, sleep, time
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
-from app.services.cache_revision import CacheRevision
+from app.modules.reports.snapshot_repository import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
+from app.modules.reports.cache_revision import CacheRevision
 from app.core.process_lock import FileLock
-from app.services.query_cache import QueryCache
-from app.services.report_cache_policy import report_ttl
+from app.modules.reports.query_cache import QueryCache
+from app.modules.reports.cache_policy import report_ttl
 from app.core.operations_logging import data_quality
 from app.core.report_deadline import ensure_time_remaining
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.report_snapshots')
 
 
 class SnapshotRefreshBusy(RuntimeError):

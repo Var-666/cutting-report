@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database.definitions import DefinitionRepository
-from app.services.custom_report_service import CustomReportService
-from app.services.report_generation.common import PreparedReport, _is_range_job, _job_period, report_meta
+from app.modules.reports.custom import CustomReportService
+from app.modules.reports.generation.common import PreparedReport, _is_range_job, _job_period, report_meta
 
 
 def prepare_report(

@@ -371,8 +371,8 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
     from hashlib import sha256
     import json
     from app.models.database_sources import DatabaseSourceRequest
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
+    from app.runtime.application import build_runtime
+    from app.runtime.database import database_context
     from app.services.runtime_settings_store import RuntimeSettingsSaveError
     runtime = build_runtime(state_settings(configuration(tmp_path, real=True),postgres_state), role='web')
     before = database_context(runtime)
@@ -395,7 +395,7 @@ def test_source_quota_save_is_cold_and_preserves_clients_and_existing_data_ident
     assert row['restart_required'] and row['processes']['web']['status'] == 'pending'
     restarted = build_runtime(state_settings(fresh.settings,postgres_state), role='web')
     assert database_context(restarted).database_sources.capacity.source_limit(key) == 1
-    monkeypatch.setattr('app.services.database_runtime.write_runtime_env', lambda *a, **kw: (_ for _ in ()).throw(OSError('test')))
+    monkeypatch.setattr('app.runtime.database.write_runtime_env', lambda *a, **kw: (_ for _ in ()).throw(OSError('test')))
     new = DatabaseSourceRequest.model_validate({**config.model_dump(), 'id': 'not-published', 'sql_max_concurrent': 1})
     with pytest.raises(RuntimeSettingsSaveError): runtime.database_runtime.save_source(new, create=True)
     assert fresh.database_sources.capacity.source_limit('not-published') == 6
@@ -408,8 +408,8 @@ def test_http_reports_busy_sql_with_instance_identity_and_exposes_only_process_s
     from tests.web_fixtures import configure_web
     from app.api.auth import require_admin
     from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
+    from app.runtime.application import build_runtime
+    from app.runtime.database import database_context
     cfg = configuration(tmp_path, real=True, sql_queue_timeout_seconds=.05)
     configs = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     configs[0] = configs[0].model_copy(update={'sql_max_concurrent': 1})
@@ -476,8 +476,8 @@ def test_shared_hr_pdm_and_dispatch_queries_never_borrow_a_selected_line_identit
 def test_worker_and_automation_share_web_quota_and_retry_without_losing_task(postgres_state, tmp_path, monkeypatch):
     from datetime import datetime
     from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
+    from app.runtime.application import build_runtime
+    from app.runtime.database import database_context
     from app.models.domain import QueryBundle
     from app.worker import WorkerProcess
     cfg = configuration(tmp_path, real=True, sql_queue_timeout_seconds=.05)

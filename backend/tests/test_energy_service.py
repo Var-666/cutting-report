@@ -436,12 +436,12 @@ def test_task_energy_logs_which_electric_meter_lacks_samples_without_fabricating
 
 def test_unified_device_page_export_and_analysis_share_meter_values(state_database, tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from app.api.analysis import AnalysisRequest, analyze_report
+    from app.modules.cutting.analysis_routes import AnalysisRequest, analyze_report
     from app.modules.energy.routes import get_task_energy_day
-    from app.database.metadata import MetadataRepository
-    from app.services.pipeline import ReportPipeline
+    from app.modules.reports.repository import MetadataRepository
+    from app.modules.cutting.pipeline import ReportPipeline
     from app.modules.cutting.service import EquipmentQueryResult
-    from app.services.report_analysis_service import (
+    from app.modules.reports.analysis.service import (
         analysis_table_source_version,
         combined_analysis_source_version,
     )
@@ -558,10 +558,10 @@ def test_unified_device_page_export_and_analysis_share_meter_values(state_databa
 
 
 def test_same_day_range_reuses_task_meter_scope_and_interpolation(state_database, tmp_path, monkeypatch):
-    from app.database.metadata import MetadataRepository
-    from app.services.pipeline import ReportPipeline
+    from app.modules.reports.repository import MetadataRepository
+    from app.modules.cutting.pipeline import ReportPipeline
     from app.modules.cutting.service import EquipmentQueryResult
-    from app.services.report_analysis_service import equipment_analysis_source_version
+    from app.modules.reports.analysis.service import equipment_analysis_source_version
 
     cfg = replace(configured(
         energy_equipment_ids=(),
@@ -601,8 +601,8 @@ def test_same_day_range_reuses_task_meter_scope_and_interpolation(state_database
 
 
 def test_analysis_does_not_report_missing_energy_as_zero(state_database, tmp_path):
-    from app.database.metadata import MetadataRepository
-    from app.services.report_analysis_service import ReportAnalysisService
+    from app.modules.reports.repository import MetadataRepository
+    from app.modules.reports.analysis.service import ReportAnalysisService
     cfg = configured(project_root=tmp_path, llm_enabled=True)
     cfg.ensure_runtime_dirs()
     metadata = MetadataRepository(state_database, device_id='Cutter01')

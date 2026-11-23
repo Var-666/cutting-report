@@ -7,9 +7,9 @@ from tempfile import TemporaryDirectory
 
 from app.config import Settings
 from app.modules.welding.models import ReportType, WeldingQuery
-from app.services.pdf_service import PdfService
-from app.services.report_generation.common import report_analysis_payload
-from app.services.report_service import ReportService
+from app.modules.reports.pdf import PdfService
+from app.modules.reports.generation.common import report_analysis_payload
+from app.modules.reports.service import ReportService
 from app.modules.welding.service import WeldingService
 
 

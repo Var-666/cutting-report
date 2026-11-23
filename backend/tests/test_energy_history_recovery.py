@@ -138,7 +138,7 @@ def test_completion_write_retry_does_not_repeat_external_query(tmp_path, state_d
         worker._process(worker._claim())
     assert worker._pending_finish is not None
     monkeypatch.setattr(worker.repository, "reschedule_history_month", original)
-    worker._flush_pending_finish()
+    worker.flush_pending_finish()
     assert worker._pending_finish is None
     assert calls == [date(2026, 8, 1)]
     assert worker._claim() is None
@@ -161,9 +161,9 @@ def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, state_dat
 
     monkeypatch.setattr(worker.repository, 'reschedule_history_month', finish)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        old = pool.submit(worker._flush_pending_finish)
+        old = pool.submit(worker.flush_pending_finish)
         assert entered.wait(1)
-        new = pool.submit(replacement._flush_pending_finish)
+        new = pool.submit(replacement.flush_pending_finish)
         release.set()
         old.result(timeout=2)
         new.result(timeout=2)

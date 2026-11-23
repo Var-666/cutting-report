@@ -9,13 +9,14 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.modules.cutting.leadership import LeadershipReportService, _previous_month
-from app.services.report_analysis_service import ReportAnalysisService
-from app.services.llm_service import background_llm_work
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.analysis.llm import background_llm_work
 from app.workers.parallel_analysis import ParallelAnalysisTasks
 from app.workers.bounded_executor import ExecutionQueueFull
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.workers.leadership_refresh_worker')
 
 
 class LeadershipRefreshWorker:

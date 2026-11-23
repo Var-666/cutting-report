@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
 from app.core.operations_logging import configured_logging, event
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.services.worker_status import role_health
 
 logger = logging.getLogger(__name__)

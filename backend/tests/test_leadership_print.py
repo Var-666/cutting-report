@@ -4,11 +4,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from app.models.domain import to_primitive
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.cutting.leadership import LeadershipReportService
-from app.services.pdf_service import PdfService
-from app.services.report_analysis.leadership import build_context
-from app.services.report_service import ReportService
+from app.modules.reports.pdf import PdfService
+from app.modules.reports.analysis.leadership import build_context
+from app.modules.reports.service import ReportService
 from tests.line_fixtures import cutting_settings
 
 

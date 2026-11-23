@@ -9,15 +9,15 @@ import httpx
 
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
-from app.database.metadata import MetadataRepository
-from app.services.report_analysis.brief import period_scope
-from app.services.report_analysis.workshop import build_context as build_workshop_context
-from app.services.report_analysis_service import ReportAnalysisService
-from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
-from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
+from app.modules.reports.repository import MetadataRepository
+from app.modules.reports.analysis.brief import period_scope
+from app.modules.reports.analysis.workshop import build_context as build_workshop_context
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.cutting.current_refresh import CurrentReportRefreshWorker
+from app.modules.cutting.leadership_refresh import LeadershipRefreshWorker
 from app.modules.alarms.worker import AlarmWorker
 from app.workers.parallel_analysis import ParallelAnalysisTasks
-from app.services.llm_service import _LlmCapacity, llm_capacity
+from app.modules.reports.analysis.llm import _LlmCapacity, llm_capacity
 
 
 TODAY = date(2026, 9, 28)
@@ -26,7 +26,7 @@ TODAY = date(2026, 9, 28)
 @pytest.mark.parametrize("limit", [4, 10])
 def test_periodic_analysis_can_use_shared_capacity_beyond_background_quota_and_releases_it(state_database, tmp_path, monkeypatch, limit):
     capacity = _LlmCapacity()
-    monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
+    monkeypatch.setattr("app.modules.reports.analysis.llm._LLM_CAPACITY", capacity)
     settings = SimpleNamespace(data_dir=tmp_path, llm_max_concurrent=limit, llm_queue_timeout_seconds=2)
     entered, release = Event(), Event()
     lock = Lock()
@@ -84,7 +84,7 @@ def test_unchanged_overlapping_periodic_rounds_each_send_http_and_record_usage(s
         })
 
     original_client = httpx.Client
-    monkeypatch.setattr("app.services.llm_service.httpx.Client",
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client",
         lambda **kwargs: original_client(transport=httpx.MockTransport(transport), **kwargs))
 
     def analyze(*args, force=False, **kwargs):
@@ -139,7 +139,7 @@ def test_refresh_schedule_starts_new_round_at_300_seconds(kind, monkeypatch):
     rounds = []
     if kind == "current":
         worker = CurrentReportRefreshWorker(settings, None, None, None, None)
-        monkeypatch.setattr("app.workers.current_report_refresh_worker.monotonic", lambda: tick[0])
+        monkeypatch.setattr("app.modules.cutting.current_refresh.monotonic", lambda: tick[0])
         def run_once(today):
             rounds.append(tick[0])
             tick[0] += 7  # Data preparation time must not extend the five-minute interval.
@@ -152,7 +152,7 @@ def test_refresh_schedule_starts_new_round_at_300_seconds(kind, monkeypatch):
         worker = LeadershipRefreshWorker(settings, None)
         worker._now = lambda: datetime.combine(TODAY, datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
         worker._last_reconcile_date = TODAY
-        monkeypatch.setattr("app.workers.leadership_refresh_worker.monotonic", lambda: tick[0])
+        monkeypatch.setattr("app.modules.cutting.leadership_refresh.monotonic", lambda: tick[0])
         worker.schedule = lambda *a, **kw: rounds.append(tick[0])
         for tick[0] in (0.0, 299.0, 300.0):
             worker._schedule_periodic_work()
@@ -289,7 +289,7 @@ def test_automatic_report_and_alarm_consumers_use_background_capacity_then_resto
             return super().acquire(settings, background=background)
 
     calls = []
-    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', Capacity())
+    monkeypatch.setattr('app.modules.reports.analysis.llm._LLM_CAPACITY', Capacity())
     settings = SimpleNamespace(data_dir=tmp_path, llm_enabled=True, llm_max_concurrent=4, llm_queue_timeout_seconds=1,
                                timezone='Asia/Shanghai', alarm_monitor_interval_seconds=300)
 

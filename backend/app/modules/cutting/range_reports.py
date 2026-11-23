@@ -29,7 +29,7 @@ from app.modules.energy.periods import (
 )
 from app.modules.cutting.equipment import summarize_equipment
 from app.modules.cutting.service import EquipmentQueryResult, QueryService
-from app.services.report_closing_comparison import ClosingGrouping, Totals, Window, closing_comparison, sum_closing_totals
+from app.modules.reports.closing_comparison import ClosingGrouping, Totals, Window, closing_comparison, sum_closing_totals
 
 
 MAX_REPORT_RANGE_DAYS = 366

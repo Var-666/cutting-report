@@ -20,9 +20,9 @@ from app.modules.cutting.dispatch import (
     DuplicateDispatchError,
 )
 from app.services.magic_box_service import MagicBoxError
-from app.models.contracts import ApiEnvelope
+from app.models.contracts import ApiEnvelope, Items, Page
 from app.modules.cutting.contracts import (
-    Items, Page, CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
+    CuttingStatus, CuttingProject, CatalogResult, CuttingFile,
     MachineResult, CuttingDispatch, BatchCreationResult, DispatchTrend,
     MagicBoxTaskFinishedRequest, MagicBoxCallbackResponse,
 )

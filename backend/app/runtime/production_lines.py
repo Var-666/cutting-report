@@ -10,10 +10,10 @@ from app.config import Settings
 from app.device_config import ProductionLineInstance
 
 if TYPE_CHECKING:
-    from app.services.database_runtime import DatabaseServices
+    from app.runtime.database import DatabaseServices
     from app.modules.reports.provider import ProductionReportProvider
-    from app.services.device_runtime import DeviceRuntime
-    from app.services.pipeline import ReportPipeline
+    from app.modules.cutting.runtime import DeviceRuntime
+    from app.modules.cutting.pipeline import ReportPipeline
     from app.database.coordination import CoordinationRepository
 
 

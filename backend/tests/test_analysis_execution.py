@@ -7,12 +7,12 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.api import analysis as analysis_api
+from app.modules.cutting import analysis_routes as analysis_api
 from app.config import Settings
 from app.models.domain import AnalysisResult, WorkshopRecord
-from app.services import analysis_execution, llm_service
+from app.modules.reports.analysis import execution as analysis_execution, llm as llm_service
 from app.core import report_deadline
-from app.services.analysis_execution import (
+from app.modules.reports.analysis.execution import (
     analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
 )
 
@@ -80,7 +80,7 @@ def test_nested_analysis_preserves_shorter_export_deadline(tmp_path, clock):
 @pytest.mark.parametrize("fails", [False, True])
 def test_timing_log_accounts_for_waits_on_success_and_failure(tmp_path, clock, caplog, fails):
     settings = Settings(project_root=tmp_path, device_id="Cutter01")
-    caplog.set_level(logging.INFO, logger=analysis_execution.__name__)
+    caplog.set_level(logging.INFO, logger="app.services.analysis_execution")
     try:
         with analysis_operation(settings, "leadership", "2026-10", request_id="timing-request"):
             clock.now += 2
@@ -128,7 +128,7 @@ def test_analysis_api_includes_data_preparation_in_deadline_and_reports_timeout(
                                   '模型接口认证失败，请管理员检查密钥和访问权限。',
                                   '模型返回的分析未通过格式或数据校验，请重试。'])
 def test_analysis_api_preserves_failure_reason_and_retry_header(monkeypatch, kind, message):
-    from app.services.report_analysis_service import AnalysisUnavailableError
+    from app.modules.reports.analysis.execution import AnalysisUnavailableError
 
     def fail(*args, **kwargs):
         raise AnalysisUnavailableError(message)

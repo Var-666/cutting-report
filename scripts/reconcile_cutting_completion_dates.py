@@ -19,7 +19,7 @@ from app.database.source_registry import DatabaseSourceRegistry
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.modules.cutting.workshop_errors import DailyReportRecordMismatchError, DailyReportSourceMismatchError
 from app.device_config import load_line_catalog
-from app.services.cache_revision import CacheRevision
+from app.modules.reports.cache_revision import CacheRevision
 
 
 def main(argv=None, *, settings: Settings | None = None):

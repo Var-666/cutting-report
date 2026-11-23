@@ -20,7 +20,7 @@ from app.modules.alarms.analysis import AlarmAnalysisService
 from app.modules.alarms.reports import (
     ALARM_REPORT_FAILED, ALARM_REPORT_RATE_LIMITED, AlarmReportService, alarm_report_error_message,
 )
-from app.services.report_closing_comparison import Totals, Window, closing_comparison, closing_bucket, sum_closing_totals
+from app.modules.reports.closing_comparison import Totals, Window, closing_comparison, closing_bucket, sum_closing_totals
 
 
 # Persisted operations incident fingerprints include the logger name.

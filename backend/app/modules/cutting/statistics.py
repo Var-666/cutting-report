@@ -10,7 +10,7 @@ from app.models.domain import (
     SummaryMetrics,
     WorkshopRecord,
 )
-from app.services.report_analysis.common import task_quality_issues
+from app.modules.reports.analysis.common import task_quality_issues
 
 
 NUMERIC_FIELDS = ("cut_length", "groove_length", "work_time")

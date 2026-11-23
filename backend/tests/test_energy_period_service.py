@@ -519,7 +519,7 @@ def test_unified_tasks_apply_transition_by_actual_task_time(tmp_path, state_data
 
 def test_task_sparse_estimates_survive_api_serialization_restore_summary_and_analysis(tmp_path, state_database):
     from app.modules.energy.contracts import TaskEnergyReport
-    from app.services.report_analysis.equipment import build_context
+    from app.modules.reports.analysis.equipment import build_context
     energy, _ = service(tmp_path, state_database, rows=sparse_november_readings(),
         energy_sampling_change_at="2026-09-04")
     task = record(production_time=datetime(2026, 11, 7, 1, 14, 31),

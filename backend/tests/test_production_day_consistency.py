@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.modules.cutting.workshop_routes import _workshop_trend
+from app.modules.cutting.workshop import _workshop_trend
 from tests.line_fixtures import cutting_settings, source_client
 settings = cutting_settings()
 from app.modules.cutting.confirmations import ConfirmationRepository
@@ -17,7 +17,7 @@ from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord, to_primitive
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_analysis_service import workshop_analysis_source_version
+from app.modules.reports.analysis.service import workshop_analysis_source_version
 
 
 DAY = date(2026, 9, 30)
@@ -127,7 +127,7 @@ def test_equipment_daily_rows_keep_cross_day_task_in_selected_day():
 
 
 def test_workshop_export_retains_completion_day_alongside_actual_start_time():
-    from app.services.report_generation.workshop import _workshop_bundle
+    from app.modules.reports.generation.workshop import _workshop_bundle
     bundle = _workshop_bundle([workshop_record()], END)
     assert bundle.summary_records[0].production_date == DAY
     assert bundle.summary_records[0].production_time == START

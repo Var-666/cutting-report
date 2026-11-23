@@ -15,28 +15,19 @@ import pytest
 import httpx
 
 from tests.line_fixtures import cutting_settings, source_client
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import AnalysisResult, ReportFilter
 from app.modules.cutting.equipment import mock_energy, sort_equipment_records
 from app.modules.cutting.leadership import LeadershipReportService
-from app.services.llm_service import (
+from app.modules.reports.analysis.llm import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
     _LlmCapacity, background_llm_work, llm_capacity,
 )
 from app.modules.cutting.service import QueryService
-from app.services.report_analysis_service import (
-    AnalysisDataVersionMismatch,
-    AnalysisUnavailableError,
-    ReportAnalysisService,
-    _present_analysis,
-    analysis_table_source_version,
-    combined_analysis_source_version,
-    generate_data_version,
-    leadership_analysis_source_version,
-    workshop_analysis_source_version,
-)
+from app.modules.reports.analysis.execution import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.modules.reports.analysis.service import ReportAnalysisService, _present_analysis, analysis_table_source_version, combined_analysis_source_version, generate_data_version, leadership_analysis_source_version, workshop_analysis_source_version
 from tests.analysis_fakes import model_analysis
-from app.services.report_analysis.workshop import build_context as build_workshop_context
+from app.modules.reports.analysis.workshop import build_context as build_workshop_context
 from app.core.report_deadline import ReportOperationTimeout, report_deadline
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
@@ -185,7 +176,7 @@ def test_same_analysis_input_uses_metadata_cache(state_database, tmp_path: Path)
 
 
 def test_task_detail_input_version_excludes_previous_latest_and_cached_analysis(state_database, tmp_path, monkeypatch):
-    from app.services.llm_prompts import PROMPT_VERSION
+    from app.modules.reports.analysis.prompts import PROMPT_VERSION
     settings, service = _services(state_database, tmp_path)
     selected = date(2026, 8, 18)
     records = QueryService(settings, client=source_client(settings)).fetch_workshop_data(
@@ -196,7 +187,7 @@ def test_task_detail_input_version_excludes_previous_latest_and_cached_analysis(
         return model_analysis(kind, context)
     monkeypatch.setattr(service.llm, 'analyze_context', model)
     with monkeypatch.context() as previous:
-        previous.setattr('app.services.report_analysis_service.PROMPT_VERSION', 'report-analysis-v22-full-report-tables')
+        previous.setattr('app.modules.reports.analysis.service.PROMPT_VERSION', 'report-analysis-v22-full-report-tables')
         previous_result = service.analyze_workshop(selected.isoformat(), records, publish_latest=True)
         assert service.latest_default_analysis('workshop', selected) is not None
     assert PROMPT_VERSION != 'report-analysis-v22-full-report-tables'
@@ -322,7 +313,7 @@ def test_delayed_cache_write_cannot_replace_a_newer_completed_analysis(state_dat
             return service._analyze(report_type='workshop', report_date='2026-10-19',
                                     context=build_workshop_context('2026-10-19', []), force=force)
 
-    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.analysis.service.datetime', Clock)
     monkeypatch.setattr(service.llm, 'analyze_context', model)
     monkeypatch.setattr(service.metadata, 'save_analysis', delayed_save)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -350,7 +341,7 @@ def test_force_refresh_replaces_same_version_cache(state_database, tmp_path: Pat
         def now(_timezone):
             return now
 
-    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.analysis.service.datetime', Clock)
 
     first = service.analyze_leadership(report)
     now += timedelta(seconds=1)
@@ -408,7 +399,7 @@ def test_page_promotes_queued_background_analysis_without_duplicate_model(state_
     service.settings = settings
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     capacity = _LlmCapacity()
-    monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
+    monkeypatch.setattr("app.modules.reports.analysis.llm._LLM_CAPACITY", capacity)
     started, admitted, finish = Event(), Event(), Event()
     calls = 0
     caplog.set_level("INFO", logger="app.services.analysis_execution")
@@ -500,7 +491,7 @@ def test_cancelled_page_retracts_priority_without_cancelling_shared_background_w
     service.settings = settings
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
     capacity = _LlmCapacity()
-    monkeypatch.setattr("app.services.llm_service._LLM_CAPACITY", capacity)
+    monkeypatch.setattr("app.modules.reports.analysis.llm._LLM_CAPACITY", capacity)
     started, admitted = Event(), Event()
 
     def model(report_type, context):
@@ -991,7 +982,7 @@ def test_response_header_timeout_is_explained_and_all_report_types_can_recover(s
         return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(content)}}]})
 
     transport = httpx.MockTransport(respond)
-    monkeypatch.setattr('app.services.llm_service.httpx.Client',
+    monkeypatch.setattr('app.modules.reports.analysis.llm.httpx.Client',
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     parameters = dict(report_type=report_type, report_date='2026-10-13',
                       context=build_workshop_context('2026-10-13', []), force=False)
@@ -1042,7 +1033,7 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
             calls += 1
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client", FakeClient)
     report = LeadershipReportService(settings, client=source_client(settings)).fetch(date(2026, 8, 1))
 
     with pytest.raises(AnalysisUnavailableError, match='未通过格式或数据校验'):
@@ -1068,13 +1059,13 @@ def test_model_output_with_fabricated_statistics_is_rejected(state_database, tmp
 ])
 def test_ongoing_period_notice_uses_configured_timezone(state_database, tmp_path, monkeypatch, kind, period, ongoing):
     from datetime import timezone
-    from app.services.report_analysis.brief import period_scope
+    from app.modules.reports.analysis.brief import period_scope
     _, service = _services(state_database, tmp_path)
     class Clock:
         @staticmethod
         def now(zone):
             return datetime(2026, 11, 9, 16, 30, tzinfo=timezone.utc).astimezone(zone)
-    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.analysis.service.datetime', Clock)
     context = build_workshop_context('2026-11-10', [])
     context['scope'] = period_scope(kind, period)
     result = service._analyze(report_type=kind, report_date=period, context=context, force=False)
@@ -1092,7 +1083,7 @@ def test_finishing_period_invalidates_ongoing_notice_without_busting_same_day_ca
         @staticmethod
         def now(zone):
             return now[0].astimezone(zone)
-    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.analysis.service.datetime', Clock)
     context = build_workshop_context('2026-11-10', [])
     def analyze():
         return service._analyze(report_type='workshop', report_date='2026-11-10', context=context, force=False)

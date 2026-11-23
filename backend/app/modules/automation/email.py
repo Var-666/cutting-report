@@ -8,7 +8,7 @@ from time import monotonic
 
 from app.config import Settings
 from app.modules.automation.runtime import AutomationRuntime
-from app.services.pdf_service import PdfService
+from app.modules.reports.pdf import PdfService
 
 
 class EmailConfigurationError(RuntimeError):

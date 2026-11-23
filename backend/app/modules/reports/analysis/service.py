@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import threading
 from contextlib import contextmanager, nullcontext
@@ -14,8 +13,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import Settings
-from app.services.llm_prompts import PROMPT_VERSION
-from app.database.metadata import MetadataRepository
+from app.modules.reports.analysis.prompts import PROMPT_VERSION
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import (
     AnalysisResult,
     EquipmentRecord,
@@ -24,29 +23,30 @@ from app.models.domain import (
     ReportFilter,
     to_primitive,
 )
-from app.services.llm_service import (
+from app.modules.reports.analysis.llm import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError,
     LlmRequestTimeout, LlmService, analysis_error_message, generation_priority, is_background_llm_work,
 )
-from app.services.analysis_execution import (
-    AnalysisDataVersionMismatch, analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
+from app.modules.reports.analysis.execution import (
+    AnalysisDataVersionMismatch, AnalysisUnavailableError, analysis_observation, analysis_operation, analysis_prepared, analysis_queue_remaining, analysis_stage,
     current_analysis_id, observe_analysis_quality,
 )
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, remaining_seconds
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id, sql_request_cancellations
 
-from app.services.report_analysis.common import (
+from app.modules.reports.analysis.common import (
     _plain_language, generate_data_version, normalize_analysis_context,
 )
-from app.services.report_analysis.leadership import build_context as build_leadership_context
-from app.services.report_analysis.workshop import build_context as build_workshop_context
-from app.services.report_analysis.equipment import build_context as build_equipment_context
-from app.services.report_analysis.brief import period_scope
+from app.modules.reports.analysis.leadership import build_context as build_leadership_context
+from app.modules.reports.analysis.workshop import build_context as build_workshop_context
+from app.modules.reports.analysis.equipment import build_context as build_equipment_context
+from app.modules.reports.analysis.brief import period_scope
 from app.modules.cutting.service import QueryService
-from app.services.report_closing_comparison import Window
+from app.modules.reports.closing_comparison import Window
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.report_analysis_service')
 
 
 def _present_analysis(result: AnalysisResult) -> AnalysisResult:
@@ -65,10 +65,6 @@ def _present_analysis(result: AnalysisResult) -> AnalysisResult:
 
 def analysis_period_label(start: date, end: date) -> str:
     return start.isoformat() if start == end else f"{start.isoformat()} 至 {end.isoformat()}"
-
-
-class AnalysisUnavailableError(RuntimeError):
-    """The model did not produce a usable analysis result."""
 
 
 def leadership_analysis_source_version(report: LeadershipReportResult | dict) -> str:

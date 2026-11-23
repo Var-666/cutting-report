@@ -7,7 +7,7 @@ from app.core.request_cancellation import SqlRequestCancelled
 from app.core.report_deadline import ReportOperationTimeout
 from app.database.sqlserver import sqlserver_driver_errors
 from app.database.bm_projects import BmProjectRepository
-from app.services.query_cache import QueryCache
+from app.modules.reports.query_cache import QueryCache
 
 logger = logging.getLogger(__name__)
 T = TypeVar('T')

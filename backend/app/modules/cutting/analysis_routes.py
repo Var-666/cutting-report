@@ -19,19 +19,16 @@ from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import ReportAnalysis, AnalysisVersion, WorkshopAnalysisScope
 from app.modules.energy.periods import restore_task_energy_records
 from app.modules.cutting.range_reports import filter_workshop_records, previous_equal_range, validate_report_range
-from app.services.report_analysis_service import (
-    AnalysisDataVersionMismatch,
-    AnalysisUnavailableError,
-    analysis_period_label as _period_label,
-    equipment_analysis_source_version,
-)
+from app.modules.reports.analysis.execution import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.modules.reports.analysis.service import analysis_period_label as _period_label, equipment_analysis_source_version
 from app.core.request_cancellation import SqlRequestCancelled
-from app.services.analysis_execution import analysis_operation
-from app.services.llm_service import analysis_error_message
+from app.modules.reports.analysis.execution import analysis_operation
+from app.modules.reports.analysis.llm import analysis_error_message
 from app.core.report_deadline import ReportOperationTimeout
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.analysis')
 ANALYSIS_DATA_VERSION_PATTERN = r"^[0-9a-f]{64}\.[0-9a-f]{64}$"
 router = APIRouter(
     prefix="/api/v1/analysis",

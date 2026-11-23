@@ -63,12 +63,14 @@ def contract_http(tmp_path, postgres_state):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
     from app.modules.automation import routes as automation
-    from app.api import configuration, database, reports, analysis
+    from app.api import configuration, database
+    from app.modules.reports import routes as reports
+    from app.modules.cutting import analysis_routes as analysis
     from app.modules.cutting import leadership_routes as leadership, equipment_routes as equipment
     from app.modules.energy import routes as energy
     from app.api.auth import require_admin
     from tests.line_fixtures import configuration as line_configuration
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
 
     from tests.postgres_fixtures import state_settings
     runtime = build_runtime(state_settings(line_configuration(tmp_path), postgres_state), role='web')
@@ -148,7 +150,7 @@ def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contr
     ]:
         response = client.get(f'/api/v1/{path}', params={**params, **query})
         assert response.status_code == 503 and response.headers['X-Report-Error'] == 'snapshot_refresh_busy'
-        from app.services.database_runtime import database_context
+        from app.runtime.database import database_context
         from app.modules.reports.provider import report_provider
         runtime = client.app.state.runtime
         owner = runtime.coordination.acquire('worker:contract', ttl=30)

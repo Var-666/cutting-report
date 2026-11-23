@@ -13,10 +13,10 @@ import pytest
 from app.config import Settings
 from app.modules.automation.runtime import AutomationRuntime
 from app.modules.automation.delivery import DeliveryService
-from app.modules.automation.email_report import EmailReport
+from app.modules.reports.generation.email import EmailReport
 from app.modules.automation.email import EmailService, EmailDeliveryFailure
-from app.services.pdf_service import PdfService, PdfRenderError
-from app.services.report_service import ReportService
+from app.modules.reports.pdf import PdfService, PdfRenderError
+from app.modules.reports.service import ReportService
 
 
 settings = Settings()

@@ -12,11 +12,11 @@ import pytest
 from app.config import Settings
 from app.core import report_deadline
 from app.database.llm_usage import LlmUsageRepository
-from app.services import analysis_execution, llm_service
+from app.modules.reports.analysis import execution as analysis_execution, llm as llm_service
 from app.modules.alarms.analysis import AlarmAnalysisService
-from app.services.analysis_execution import analysis_operation
-from app.services.llm_service import AnalysisOutputValidationError, LlmService, _LlmCapacity
-from app.services.report_analysis.workshop import build_context
+from app.modules.reports.analysis.execution import analysis_operation
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError, LlmService, _LlmCapacity
+from app.modules.reports.analysis.workshop import build_context
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
@@ -100,7 +100,7 @@ def test_throttled_calls_recover_with_honest_usage_and_no_capacity_held_during_b
         rows = connection.execute('SELECT status, scene FROM llm_usage_calls ORDER BY id').fetchall()
     assert [row['status'] for row in rows] == ['failed', 'failed', 'responded']
     assert {row['scene'] for row in rows} == {'workshop' if scenario == 'report' else 'alarm'}
-    logs = [record.getMessage() for record in caplog.records if record.name == llm_service.__name__]
+    logs = [record.getMessage() for record in caplog.records if record.name == "app.services.llm_service"]
     assert len([line for line in logs if line.startswith('model HTTP attempt:')]) == 3
     assert any('attempts=3 outcome=success' in line for line in logs)
     assert 'upstream_request_id=provider-429' in caplog.text
@@ -166,7 +166,7 @@ def test_validation_feedback_recovers_once_with_grounded_values_and_honest_usage
     from dataclasses import replace
     from decimal import Decimal
     from app.models.domain import WorkshopRecord
-    from app.services.report_analysis.common import normalize_analysis_context
+    from app.modules.reports.analysis.common import normalize_analysis_context
     row = WorkshopRecord('task', 'P', None, None, 'program', Decimal('1712.1'), Decimal('185.6'), Decimal('31807'))
     context = normalize_analysis_context(build_context('2026-08-18', [row]))[0]
     content = dict(headline='生产记录', summary='核对实际生产记录。', key_metric_ids=[],
@@ -276,7 +276,7 @@ def test_retry_uses_remaining_round_budget_and_logs_final_analysis_result(state_
     assert 'model_ms=5000' in message
     assert 'total_ms=7000' in message
     ids = {part.split('=', 1)[1] for record in caplog.records
-           if record.name in (llm_service.__name__, analysis_execution.__name__)
+           if record.name in ("app.services.llm_service", "app.services.analysis_execution")
            for part in record.getMessage().split() if part.startswith('analysis_id=')}
     assert len(ids) == 1, 'attempts and final analysis outcome must be traceable to the same round'
 

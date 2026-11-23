@@ -20,7 +20,7 @@ from app.core.request_cancellation import (
 from pathlib import Path
 from app.core.process_lock import FileLock
 from app.core.operations_logging import event
-from app.modules.automation.email_report import EmailReport, render_email_report
+from app.modules.reports.generation.email import EmailReport, render_email_report
 
 
 class PdfRenderError(RuntimeError):
@@ -60,7 +60,7 @@ def _render_pdf_child(html_path: str, temporary_path: str, email: bool = False) 
         try:
             os.setsid()
         except OSError:
-            logging.getLogger(__name__).debug("could not create PDF renderer process group", exc_info=True)
+            logging.getLogger('app.services.pdf_service').debug("could not create PDF renderer process group", exc_info=True)
     output = Path(temporary_path)
     parent = mp.parent_process()
     rendered = threading.Event()
@@ -200,7 +200,7 @@ class PdfService:
         except SqlRequestCancelled:
             raise
         except Exception as exc:
-            event(logging.getLogger(__name__), logging.ERROR, 'PDF 渲染失败', error_code='PDF_RENDER_FAILED',
+            event(logging.getLogger('app.services.pdf_service'), logging.ERROR, 'PDF 渲染失败', error_code='PDF_RENDER_FAILED',
                   related_kind='reports', stage='rendering', incident=True, exc_info=True)
             if isinstance(exc, PdfRenderError):
                 raise

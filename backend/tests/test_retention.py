@@ -11,7 +11,7 @@ from app.modules.alarms.repository import AlarmRepository
 from app.modules.automation.repository import AutomationRepository
 from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.retention import RetentionRepository
 from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository

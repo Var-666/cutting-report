@@ -6,13 +6,13 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.models.domain import AnalysisResult, EquipmentRecord, ReportFilter, to_primitive
-from app.services.chart_service import ChartService
+from app.models.domain import AnalysisResult, EquipmentRecord, ReportFilter
+from app.modules.reports.charts import ChartService
 from app.modules.energy.periods import EnergyPeriodService, restore_task_energy_records
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService, previous_equal_range
-from app.services.report_analysis_service import ReportAnalysisService
-from app.services.report_generation.common import (
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.generation.common import (
     report_analysis_payload,
     PreparedReport,
     _chart_type,

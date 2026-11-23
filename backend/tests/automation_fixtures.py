@@ -8,7 +8,7 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, as_line_services
 from app.modules.automation.repository import AutomationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.users import UserRepository
 from app.modules.automation.schedules import AutomationService
 

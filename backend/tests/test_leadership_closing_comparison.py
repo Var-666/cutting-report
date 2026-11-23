@@ -7,16 +7,16 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.models.domain import AnalysisResult
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.energy.periods import EnergyPeriodService
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_closing_comparison import closing_comparison
-from app.services.report_generation.leadership import prepare_report
-from app.services.report_generation.equipment import prepare_report as prepare_equipment
-from app.services.report_generation.workshop import prepare_report as prepare_workshop
-from app.services.report_service import ReportService
+from app.modules.reports.closing_comparison import closing_comparison
+from app.modules.reports.generation.leadership import prepare_report
+from app.modules.reports.generation.equipment import prepare_report as prepare_equipment
+from app.modules.reports.generation.workshop import prepare_report as prepare_workshop
+from app.modules.reports.service import ReportService
 from app.modules.cutting.statistics import StatisticsService
 from tests.line_fixtures import cutting_settings
 

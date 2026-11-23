@@ -30,7 +30,7 @@ from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope, Items
 from app.models.configuration_contracts import ReportCacheConfiguration
-from app.services.report_cache_policy import REPORT_CACHE_FIELDS
+from app.modules.reports.cache_policy import REPORT_CACHE_FIELDS
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError

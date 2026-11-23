@@ -11,7 +11,7 @@ from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
 from app.api.devices import device_state, device_settings
 from app.api.runtime import request_settings
-from app.api.report_reads import statistics_page
+from app.modules.cutting.report_reads import statistics_page
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive

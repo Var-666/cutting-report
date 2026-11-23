@@ -18,9 +18,9 @@ from app.database.source_registry import DatabaseSourceRegistry, SourceConflict
 from app.device_config import ProductionLineCatalog, load_line_catalog
 from app.models.database_sources import DatabaseSourceRequest
 from app.modules.welding.models import WeldingQuery
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
-from app.services.production_lines import supports_path, registered_lines
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
+from app.runtime.production_lines import supports_path, registered_lines
 from app.services.runtime_settings_store import RuntimeSettingsSaveError, read_runtime_env, write_runtime_env
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
@@ -103,7 +103,7 @@ def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(postgres_st
             action()
         assert runtime.database_runtime.current_context is current
         assert cfg.runtime_settings_env_path.read_bytes() == before
-    monkeypatch.setattr('app.services.database_runtime.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr('app.runtime.database.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
     payload = DatabaseSourceRequest.model_validate({**current.database_sources.get('cutting-production').model_dump(), 'host': 'new.test'})
     with pytest.raises(RuntimeSettingsSaveError):
         runtime.database_runtime.save_source(payload)
@@ -188,7 +188,7 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
 def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(postgres_state, tmp_path):
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
-    from app.api.reports import router
+    from app.modules.reports.routes import router
     cfg = configuration(tmp_path)
     runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     original = database_context(runtime)
@@ -256,7 +256,7 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(postgres_s
 
 
 def test_completion_date_upgrade_isolates_old_analysis_in_the_bound_source(state_database, postgres_state, tmp_path):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     cfg = configuration(tmp_path)
     from app.database.source_registry import DatabaseSourceRegistry
     scope = 'Cutter01:' + DatabaseSourceRegistry.from_json(cfg.database_sources_json).fingerprint('cutting-production')

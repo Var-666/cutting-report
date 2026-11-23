@@ -23,9 +23,9 @@ from app.core.operations_logging import event, operation_context
 from app.models.api import ReportCreateRequest
 from app.models.contracts import ApiEnvelope, Page
 from app.models.report_contracts import ReportAccepted, ReportJob
-from app.services.pdf_service import PdfRenderError
-from app.services.report_service import archived_report_path
-from app.services.custom_report_service import PARAMETER_PATTERN
+from app.modules.reports.pdf import PdfRenderError
+from app.modules.reports.service import archived_report_path
+from app.modules.reports.custom import PARAMETER_PATTERN
 
 
 router = APIRouter(
@@ -34,7 +34,8 @@ router = APIRouter(
     dependencies=[Depends(require_admin)],
 )
 view_router = APIRouter(tags=["reports"], dependencies=[Depends(require_admin)])
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.reports')
 
 
 def _request_id(request: Request) -> str:

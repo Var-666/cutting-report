@@ -1,5 +1,5 @@
 from tests.runtime_factories import make_database_services
-from app.services.production_lines import ProductionLineRuntime
+from app.runtime.production_lines import ProductionLineRuntime
 from tests.runtime_factories import make_device_runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -25,7 +25,7 @@ from app.database.operations import OperationsRepository
 from app.database.database_monitors import DatabaseMonitorRepository
 from app.models.database_monitor import DatabaseMonitorInput
 from app.models.operations import IncidentFilters, LogFilters
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.services.magic_box_service import MagicBoxError
 from app.services.operations_log_query import OperationsLogQuery
 from app.services.operations_service import BUSINESS_ERROR_CODES
@@ -352,9 +352,9 @@ def test_snapshot_task_logs_identify_the_report_and_device(tmp_path):
 def test_analysis_logs_keep_a_safe_cause_after_http_mapping(tmp_path, model_enabled, expected):
     from fastapi import HTTPException
     from app.config import Settings
-    from app.services.analysis_execution import analysis_operation
-    from app.services.llm_service import LlmRequestTimeout
-    from app.services.report_analysis_service import AnalysisUnavailableError
+    from app.modules.reports.analysis.execution import analysis_operation
+    from app.modules.reports.analysis.llm import LlmRequestTimeout
+    from app.modules.reports.analysis.execution import AnalysisUnavailableError
 
     settings = Settings(project_root=tmp_path, device_id='cut-a', llm_enabled=model_enabled)
     cause = AnalysisUnavailableError('private upstream detail')

@@ -20,12 +20,23 @@ FastAPI API → Service → Repository / 外部客户端
 
 ### 职责与依赖
 
-- `api/`负责HTTP输入、角色权限、请求容量和状态映射；业务规则放`services/`，SQL及原子约束放`database/`。默认调用方向为`api/workers → services → database`。
+核心业务按领域组织在 `backend/app/modules/` 下。
+
+| 模块 | 主要职责 |
+| --- | --- |
+| `cutting` | 切割查询和 SQL，领导、车间及设备统计，确认、派发、报表 Provider 与刷新 |
+| `welding` | MySQL 只读仓储，焊接统计、明细、快照访问、分析与导出 |
+| `energy` | 能管接口、仪表算法、任务能耗、日/月/区间统计和历史同步 |
+| `alarms` | 告警源、监测、事件归并、分析及报告生成与持久化 |
+| `automation` | 配置热加载、计划认领与执行、SMTP 投递与结果核对 |
+| `reports` | Provider 契约、快照和缓存、AI 分析、报告归档及 HTML/PDF 渲染 |
+
+- 领域路由负责 HTTP 输入、角色权限、请求容量和状态映射。默认调用方向为 `Routes → Service → Repository`，跨领域调用使用公开接口。认证、PDM、配置和运维入口继续使用现有目录。
 - `models/`保存领域与HTTP契约，`core/`保存共享取消注册表、执行期限、进程锁和SQL容量，不放业务字段或服务定位器。
-- `main.py`、各后台入口、`application_runtime.py`和`device_runtime.py`是装配边界；允许连接Service、Repository和Worker。`services/frontend_static.py`仅供Web提供静态资源。
+- `runtime/application.py` 是 Composition Root，切割及焊接的模块内 `runtime.py` 构建各自实例。Web 和后台入口复用同一套装配。`services/frontend_static.py`仅供Web提供静态资源。
 - 取消、期限、进程锁统一从`app.core`导入。条件模型/校验在`models/conditions.py`，字段映射与SQL/Mock编译在`database/condition_fields.py`和`condition_query.py`；`condition_service.py`只提供公开schema。
-- 切割筛选/最近生产日SQL位于`database/queries/`，由`cutting_queries.py`执行；HR与魔盒配置查询分别归`database/hr.py`、`magic_box.py`。焊接SQL和模型等待登记分别归已有焊接、协调仓储，Service保留业务编排。
-- 确认归属、派发唯一性、告警归并/认领、租约和队列状态等原子约束留在同一仓储事务内；不为了分层拆成先检查后写入。
+- 切割报表、筛选和最近生产日 SQL 位于 `modules/cutting/queries/`，由领域仓储执行；HR与魔盒配置查询分别归`database/hr.py`、`magic_box.py`。焊接SQL和模型等待登记分别归已有焊接、协调仓储，Service保留业务编排。
+- 确认归属、派发唯一性、告警归并和游标推进、报告认领和事件关联、邮件投递和计划运行状态更新各自保留同一事务。告警与自动化分别使用专属报告和投递仓储，绑定已有连接时沿用原事务。
 
 ### 兼容边界
 
@@ -33,7 +44,7 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 
 ## Runtime与配置
 
-- `application_runtime.build_runtime(settings, role=...)`装配各角色共享资源，`build_device_runtime`装配切割业务。所有产线实例统一登记在`DatabaseServices.lines`。
+- `runtime.application.build_runtime(settings, role=...)` 装配各角色共享资源，通过 `build_cutting_line` 和 `build_welding_line` 构建产线。所有产线实例统一登记在`DatabaseServices.lines`。
 - Web只挂载`app.state.runtime`。API通过`application_state`获取共享资源，`runtime_state`固定单请求的数据库服务快照，`device_state`校验唯一有效的`device_id`；Worker在新操作边界固定快照。在途操作继续使用原服务引用。
 - `DatabaseRuntime`和`AutomationRuntime`管理不可变配置快照。保存复用进程锁、锁内读改写、空密码保留、候选校验及原子文件发布；失败保留旧快照，不关闭仍被在途请求引用的连接池。
 - 请求期配置只通过 `request_settings` 获取；进程入口构造 `Settings` 并显式注入；禁止模块级 `Settings` 单例。
@@ -82,15 +93,16 @@ Web健康检查区分Web/PG可用性与`background_ready`；后台状态读取�
 
 ## 报表、缓存与智能分析
 
+- 设备报表与任务能耗共用任务区间校验、累计表差值及分表聚合；两条路径分别保留已配置的仪表范围和采样间隔。
 - 页面、HTML/PDF导出与分析共用统计口径、时区和区间。管理员车间/设备报表默认当天，无数据展示空状态，不回退到旧生产日；工人任务日期规则独立保留。
 - 日报同步更新已有任务的生产字段并追加新任务，保留日报/任务身份、确认及审计；不因字段变化拒绝整页。字段修订及旧页面确认保护见[功能参考](功能与接口参考.md#账号与车间确认)。
 - 查询复用有界`QueryCache`，跨进程失效复用`CacheRevision`，持久快照复用`ReportSnapshotService/ReportKey`及原队列。切割领导月报与能耗保留专属快照，焊接聚合和分页快照规则见[缓存与快照](multi-line-report-data.md)。
 - 前端保留当前设备的领导、车间、设备报表，返回时先展示匹配条件的已有数据并静默更新；跨日期/设备不混用，首次无缓存仍需加载。失活取消轮询和在途订阅，重新激活不叠加监听。
-- `services/report_analysis/`按三类切割报表构建权威事实、候选及完整业务关联，模型仅接收带覆盖说明的必要样本和汇总；`common.py`共享规范化和业务版本算法；`ReportAnalysisService`处理源版本、缓存/单飞、期限、模型及持久化。
-- 提示词和版本统一在`services/llm_prompts.py`。`llm_service.py`保留请求、限流、重试、取消/期限、用量和JSON校验；焊接与告警保留独立单位及输出契约。
+- `modules/reports/analysis/` 按三类切割报表构建权威事实、候选及完整业务关联，模型仅接收带覆盖说明的必要样本和汇总；`common.py`共享规范化和业务版本算法；`ReportAnalysisService`处理源版本、缓存/单飞、期限、模型及持久化。
+- 提示词和版本统一在`modules/reports/analysis/prompts.py`。`analysis/llm.py`保留请求、限流、重试、取消/期限、用量和JSON校验；焊接与告警保留独立单位及输出契约。
 - 焊接分析由 `WeldingService` 复用 `MetadataRepository` 的持久成功缓存和009迁移；同范围更新失败保留原分析、时间与事实，页面重开只读缓存，HTML/PDF同样复用。隔离和首次无缓存规则见[焊接集成](welding-integration.md#api)。
 - 切割分析新增可选 `brief`，模型只返回结论、事实ID、候选发现和跟进动作；后端校验引用、数字/日期及变化方向，再绑定原产线/周期内的真实业务对象。完整关联保存在既有分析JSON中，前端预览3项并按页查看全部；任务通过车间区间接口的精确 `task_id` 筛选定位。旧四字段由确定性适配保留，历史JSON无需迁移；焊接四段契约及告警专用契约独立保留。输入、输出和示例见[智能分析依据](功能与接口参考.md#智能分析依据)。
-- `services/report_generation/`按领导、车间、设备和自定义报表准备内容，显式接收协作服务。`ReportPipeline`统一校验设备、取消/超时和分析交付条件，渲染后在一个UnitOfWork保存报告及完成状态。
+- `modules/reports/generation/` 按领导、车间、设备和自定义报表准备内容，显式接收协作服务。`ReportPipeline`统一校验设备、取消/超时和分析交付条件，渲染后在一个UnitOfWork保存报告及完成状态。
 - 生产数据刷新与模型执行分开；默认页先读同设备/来源/周期成功分析，后台按配置更新，失败保留已有结果。新报表及邮件先校验本次分析输入，匹配版本才复用，变化时重新分析，失败后才回退同范围历史成功结果；无成功结果时不发布，切割继续使用009迁移的持久等待及退避。历史分析保留原时间、版本与事实，并通过 `cache_note` 标明旧数据依据；范围隔离及交付规则见[智能分析依据](功能与接口参考.md#智能分析依据)。分析版本冲突及导出现场校验继续生效，不能用旧快照绕过业务校验。
 - 系统设置中的数据库监控按管理员登记的独立 IP/端口检测 TCP 可达性，不登记业务数据源、不获取凭据或调用模型。Scheduler 每60秒提交全局 `database_monitor` 任务，Consumer复用原队列及租约串行执行，每个连接超时5秒；过期轮次丢弃，已检测过的旧轮次不补探测。目标修订号和观察版本保护在途结果；目标、故障与恢复记录由 `database_monitors/database_monitor_incidents` 保存，部署追加008迁移。规则及页面语义见[数据库端口监控](功能与接口参考.md#数据库端口监控)。
 

@@ -8,9 +8,9 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.definitions import DefinitionRepository
-from app.database.metadata import MetadataRepository
-from app.services.custom_report_service import CustomReportService
-from app.services.pipeline import ReportPipeline
+from app.modules.reports.repository import MetadataRepository
+from app.modules.reports.custom import CustomReportService
+from app.modules.cutting.pipeline import ReportPipeline
 
 
 QUERY_PAYLOAD = {

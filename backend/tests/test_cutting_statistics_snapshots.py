@@ -7,10 +7,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.api.report_reads import statistics_page
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
-from app.services.report_snapshots import SnapshotRefreshBusy
+from app.modules.cutting.report_reads import statistics_page
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
+from app.modules.reports.snapshots import SnapshotRefreshBusy
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
 
@@ -91,7 +91,7 @@ def test_workshop_overlays_current_confirmations_without_refreshing_the_source(c
 
 def test_energy_changes_invalidate_overlapping_views_without_touching_other_scopes(configured):
     from datetime import timedelta, timezone
-    from app.database.report_snapshots import ReportSnapshot, fingerprint
+    from app.modules.reports.snapshot_repository import ReportSnapshot, fingerprint
     _, provider = configured
     selected = date(2026, 11, 19)
     now = datetime.now(timezone.utc)
@@ -140,7 +140,7 @@ def test_legacy_periodic_jobs_reuse_the_same_snapshots_as_default_prewarming(con
 
 def test_energy_snapshot_cannot_hide_cross_day_finalization(configured, monkeypatch):
     from datetime import timedelta, timezone
-    from app.database.report_snapshots import ReportSnapshot, fingerprint
+    from app.modules.reports.snapshot_repository import ReportSnapshot, fingerprint
     _, provider = configured
     zone = ZoneInfo(provider.settings.timezone)
     now = datetime.now(zone)
@@ -151,7 +151,7 @@ def test_energy_snapshot_cannot_hide_cross_day_finalization(configured, monkeypa
         @classmethod
         def now(cls, tz=None):
             return (midnight + timedelta(minutes=1)).astimezone(tz or timezone.utc)
-    monkeypatch.setattr('app.services.report_snapshots.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.snapshots.datetime', Clock)
     key = provider._snapshot_key('energy:day', provider._query('energy:day', {'report_date': yesterday}))
     payload = {'is_today': True, 'value': 7}
     provider.snapshot_service.repository.save(ReportSnapshot(key, payload, fingerprint(payload), completed, completed,
@@ -167,7 +167,7 @@ def test_energy_snapshot_cannot_hide_cross_day_finalization(configured, monkeypa
 @pytest.mark.parametrize('kind', ['energy:day', 'energy:tasks', 'energy:range', 'equipment'])
 def test_energy_source_outages_do_not_replace_successful_statistics(configured, monkeypatch, kind):
     from datetime import timedelta, timezone
-    from app.database.report_snapshots import ReportSnapshot, fingerprint
+    from app.modules.reports.snapshot_repository import ReportSnapshot, fingerprint
     from app.modules.energy.tasks import EnergyResult
     runtime, provider = configured
     selected = date(2026, 11, 19)

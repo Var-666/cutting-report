@@ -3,7 +3,6 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from hashlib import sha256
 import logging
 from threading import Lock
 from time import monotonic
@@ -11,10 +10,10 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.core.operations_logging import data_quality
-from app.services.cache_revision import CacheRevision
-from app.services.query_cache import QueryCache
-from app.services.report_cache_policy import report_cache_seconds
-from app.services.report_snapshots import observe_report_snapshot
+from app.modules.reports.cache_revision import CacheRevision
+from app.modules.reports.query_cache import QueryCache
+from app.modules.reports.cache_policy import report_cache_seconds
+from app.modules.reports.snapshots import observe_report_snapshot
 from app.modules.cutting.leadership_snapshots import (
     LeadershipMonthSnapshot,
     LeadershipSnapshotRepository,
@@ -303,7 +302,7 @@ class LeadershipReportService:
         )
 
     def source_identity(self) -> str:
-        from app.database.report_snapshots import fingerprint
+        from app.modules.reports.snapshot_repository import fingerprint
         return fingerprint((self.settings.device_id, self.settings.source_fingerprint,
             self.settings.effective_data_source_mode, self.settings.report_machine_no.casefold(), self.SNAPSHOT_VERSION))
 

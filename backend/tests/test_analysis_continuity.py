@@ -9,13 +9,14 @@ import pytest
 
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.postgres import execution_scope, ExecutionLeaseLost
 from app.database.coordination import CoordinationRepository
-from app.services.analysis_execution import analysis_operation
-from app.services.report_analysis_service import ReportAnalysisService, AnalysisUnavailableError, AnalysisDataVersionMismatch
-from app.services.pipeline import ReportAnalysisPendingError
-from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
+from app.modules.reports.analysis.execution import analysis_operation
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.analysis.execution import AnalysisUnavailableError, AnalysisDataVersionMismatch
+from app.modules.cutting.pipeline import ReportAnalysisPendingError
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError, LlmRequestTimeout
 from app.workers.report_worker import ReportWorker
 from app.models.domain import WorkshopRecord
 from tests.analysis_fakes import model_analysis
@@ -93,7 +94,7 @@ def test_expired_model_deadline_can_return_cache_through_outer_api_operation(ser
     def failed(*_):
         expired[0] = True
         raise ReportOperationTimeout('deadline')
-    monkeypatch.setattr('app.services.analysis_execution.ensure_time_remaining', ensure)
+    monkeypatch.setattr('app.modules.reports.analysis.execution.ensure_time_remaining', ensure)
     monkeypatch.setattr(service.llm, 'analyze_context', failed)
     with analysis_operation(service.settings, 'workshop', '2026-11-12'):
         result = generate(service)

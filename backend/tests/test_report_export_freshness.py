@@ -7,13 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.domain import AnalysisResult, EquipmentRecord, QueryBundle, SummaryBaseRecord
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.energy.periods import EnergyPeriodService
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.service import EquipmentQueryResult, QueryService
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_generation.equipment import prepare_report as equipment_report
-from app.services.report_generation.leadership import prepare_report as leadership_report
+from app.modules.reports.generation.equipment import prepare_report as equipment_report
+from app.modules.reports.generation.leadership import prepare_report as leadership_report
 from tests.line_fixtures import cutting_settings
 
 

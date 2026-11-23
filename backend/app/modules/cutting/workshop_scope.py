@@ -1,7 +1,6 @@
 from __future__ import annotations
 from psycopg import Connection
 
-from typing import Any
 from app.database.postgres import PostgresDatabase, PostgresRepository, lock_key
 
 class WorkshopScopeRepository(PostgresRepository):

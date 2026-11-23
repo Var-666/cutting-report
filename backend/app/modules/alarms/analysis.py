@@ -10,8 +10,8 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.database.postgres import PostgresDatabase
 from app.modules.alarms.contracts import AlarmAnalysis
-from app.services.llm_prompts import ALARM_SYSTEM_PROMPT
-from app.services.llm_service import AnalysisInputTooLarge, AnalysisOutputValidationError, request_llm_json
+from app.modules.reports.analysis.prompts import ALARM_SYSTEM_PROMPT
+from app.modules.reports.analysis.llm import AnalysisInputTooLarge, AnalysisOutputValidationError, request_llm_json
 
 
 def _evidence_ids(value: Any) -> set[str]:

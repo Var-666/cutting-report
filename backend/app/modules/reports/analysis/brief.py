@@ -6,8 +6,8 @@ from collections import Counter
 from datetime import date
 
 from app.models.domain import production_day
-from app.services.report_analysis.common import _fact, _table, _duration, _number, _change_label, task_quality_issues
-from app.services.analysis_display import analysis_reference_label
+from app.modules.reports.analysis.common import _fact, _table, _duration, _number, _change_label, task_quality_issues
+from app.modules.reports.analysis.display import analysis_reference_label
 
 
 def period_scope(kind: str, label: str) -> dict:

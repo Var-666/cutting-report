@@ -6,11 +6,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.services.report_analysis.common import generate_data_version
+from app.modules.reports.analysis.common import generate_data_version
 from app.models.domain import EquipmentRecord, QueryBundle
 from app.modules.cutting.service import QueryService
-from app.services.report_analysis_service import ReportAnalysisService
-from app.services.report_generation.equipment import analyze_legacy_daily
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.generation.equipment import analyze_legacy_daily
 from tests.analysis_fakes import model_analysis
 from test_pipeline_ai_isolation import pipeline_job
 

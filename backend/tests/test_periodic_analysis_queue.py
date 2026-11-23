@@ -5,7 +5,7 @@ from time import time
 import pytest
 
 from app.database.coordination import CoordinationRepository
-from app.services.database_runtime import database_context
+from app.runtime.database import database_context
 from app.worker import WorkerProcess
 
 

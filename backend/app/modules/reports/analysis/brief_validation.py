@@ -8,7 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pydantic import ValidationError
 
 from app.models.analysis_brief import AnalysisBrief, BriefInput
-from app.services.report_analysis.brief import model_context
+from app.modules.reports.analysis.brief import model_context
 
 
 def _numbers(text: str) -> set[Decimal]:

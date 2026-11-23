@@ -24,10 +24,10 @@ from app.database.coordination import CoordinationRepository
 from app.database.unit_of_work import UnitOfWork
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.downloads import DownloadRepository
 from app.modules.energy.repository import EnergyReportRepository
-from app.database.report_snapshots import ReportSnapshotRepository, ReportKey, ReportSnapshot, fingerprint
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository, ReportKey, ReportSnapshot, fingerprint
 from app.database.llm_usage import LlmUsageRepository
 from app.models.conditions import ConditionGroup, ConditionRule
 from tests.line_fixtures import configuration
@@ -313,7 +313,7 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
     from fastapi.testclient import TestClient
     import app.main as web
     import app.api.auth as auth
-    import app.api.reports as reports
+    import app.modules.reports.routes as reports
     database, cfg, _ = state
     (cfg.project_root/'vendor').mkdir()
     shutil.copyfile('vendor/echarts.min.js', cfg.echarts_vendor_path)

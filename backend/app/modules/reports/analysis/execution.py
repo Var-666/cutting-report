@@ -14,11 +14,16 @@ from app.core.report_deadline import ensure_time_remaining, operation_deadline, 
 from app.core.request_cancellation import SqlRequestCancelled, current_request_id
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.analysis_execution')
 
 
 class AnalysisDataVersionMismatch(ValueError):
     """The report shown by the browser is no longer the authoritative version."""
+
+
+class AnalysisUnavailableError(RuntimeError):
+    """The model did not produce a usable analysis result."""
 
 
 def observe_analysis_quality(settings, report_type, start, end, scope, version, *, verified, analysis_id=None):

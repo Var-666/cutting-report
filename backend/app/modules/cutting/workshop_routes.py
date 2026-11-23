@@ -19,9 +19,9 @@ from app.models.workshop_requests import (
     ConfirmTaskRequest, ConfirmSnapshotTaskRequest, ConfirmTasksRequest,
     RevokeTaskRequest, CorrectTaskRequest,
 )
-from app.modules.cutting.workshop import WorkshopService, WorkshopTaskNotFoundError, _workshop_trend
+from app.modules.cutting.workshop import WorkshopService, WorkshopTaskNotFoundError
 from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 
 router = APIRouter(prefix='/api/v1/workshop', tags=['workshop-confirmation'], dependencies=[Depends(require_user), Depends(device_state)])
 

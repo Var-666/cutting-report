@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from pydantic import TypeAdapter
 from app.models.domain import EquipmentRecord, ReportFilter
 from app.modules.cutting.leadership import _previous_month
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from app.config import Settings
+from app.config import Settings, settings_for_line
+from app.device_config import ProductionLineInstance
+from app.database.source_registry import DatabaseSourceRegistry
 from app.database.sqlserver import SqlServerClient
 from app.modules.cutting.repository import CuttingQueryRepository
 from app.modules.alarms.repository import AlarmRepository
 from app.modules.alarms.source import SqlServerAlarmSource
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.leadership_snapshots import LeadershipSnapshotRepository
 from app.database.postgres import PostgresDatabase
@@ -24,22 +26,24 @@ from app.modules.alarms.monitoring import AlarmMonitorService
 from app.modules.alarms.reports import AlarmReportService
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.reports import CuttingReportProvider
-from app.services.pipeline import ReportPipeline
-from app.services.report_analysis_service import ReportAnalysisService
-from app.services.pdf_service import PdfService
+from app.modules.cutting.pipeline import ReportPipeline
+from app.modules.reports.analysis.service import ReportAnalysisService
+from app.modules.reports.pdf import PdfService
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository, fingerprint
+from app.runtime.production_lines import ProductionLineRuntime
 from app.modules.cutting.service import QueryService
 from app.services.ship_name_service import ShipNameService
 from app.modules.energy.tasks import EquipmentEnergyService
 from app.modules.energy.periods import EnergyPeriodService
 from app.modules.cutting.range_reports import RangeReportService
 from app.modules.alarms.worker import AlarmWorker
-from app.workers.current_report_refresh_worker import CurrentReportRefreshWorker
+from app.modules.cutting.current_refresh import CurrentReportRefreshWorker
 from app.modules.energy.history import EnergyHistoryWorker
-from app.workers.leadership_refresh_worker import LeadershipRefreshWorker
+from app.modules.cutting.leadership_refresh import LeadershipRefreshWorker
 
 if TYPE_CHECKING:
     from app.database.coordination import CoordinationRepository
-    from app.services.production_lines import BackgroundSchedule
+    from app.runtime.production_lines import BackgroundSchedule
 
 
 @dataclass
@@ -82,20 +86,17 @@ class DeviceRuntime:
 
 
     def reuse_pending(self, previous: DeviceRuntime) -> None:
-        self.energy_history_worker._completion = previous.energy_history_worker._completion
+        self.energy_history_worker.reuse_pending(previous.energy_history_worker)
 
     def start_background(self) -> None:
         history = self.energy_history_worker
         if history.enabled:
-            self.recover_background()
-            today = history.service.now().date()
-            from app.modules.energy.history import _shift_month
-            history.schedule_range(_shift_month(today.replace(day=1), -11), today)
+            history.prepare()
 
     def recover_background(self) -> None:
         history = self.energy_history_worker
         if history.enabled:
-            history.repository.recover_history_queue(history.source_key, history._now())
+            history.recover()
 
     def schedule_background(self, scheduler: BackgroundSchedule, now: datetime) -> None:
         repository = scheduler.repository
@@ -117,7 +118,7 @@ class DeviceRuntime:
                         key=f"reconcile:{self.settings.device_id}:{now.date()}:{selected}")
         history = self.energy_history_worker
         payload = {'source_fingerprint': self.settings.source_fingerprint}
-        if (history.enabled and history.repository.history_ready(history.source_key, history._now())
+        if (history.ready()
                 and not repository.active("energy_sync", self.settings.device_id, payload)):
             repository.enqueue("energy_sync", self.settings.device_id, payload)
         if self.alarm_worker.enabled:
@@ -125,7 +126,7 @@ class DeviceRuntime:
                                source=self.settings.source_fingerprint)
 
     def flush_background_results(self) -> None:
-        self.energy_history_worker._flush_pending_finish()
+        self.energy_history_worker.flush_pending_finish()
 
     def handle_background(self, kind: str, payload: dict) -> None:
         current = self.current_report_refresh_worker
@@ -151,11 +152,7 @@ class DeviceRuntime:
         elif kind == "alarm":
             self.alarm_monitor_service.run_once(datetime.now(ZoneInfo(self.settings.timezone)))
         elif kind == "energy_sync":
-            history = self.energy_history_worker
-            history._flush_pending_finish()
-            claim = history._claim()
-            if claim:
-                history._process(claim)
+            self.energy_history_worker.run_once()
         else:
             raise ValueError(f"未知后台任务类型: {kind}")
 
@@ -192,3 +189,33 @@ def build_device_runtime(
         alarm_worker=AlarmWorker(settings, monitor, managed=task_queue is not None),
         report_provider=provider,
     )
+
+
+def build_cutting_line(
+    settings: Settings,
+    line: ProductionLineInstance,
+    sources: DatabaseSourceRegistry,
+    ship_names: ShipNameService | None,
+    previous: ProductionLineRuntime | None,
+    *,
+    database: PostgresDatabase,
+    definitions: DefinitionRepository,
+    leadership_snapshots: LeadershipSnapshotRepository,
+    pdf_service: PdfService,
+    report_snapshots: ReportSnapshotRepository,
+    coordination: CoordinationRepository,
+) -> ProductionLineRuntime:
+    cfg = settings_for_line(settings, line, sources.fingerprint(line.source_key))
+    cfg = replace(cfg, alarm_source_name=f'{line.id}:{sources.connection_identity(line.source_key)}')
+    client = sources.client(line.source_key) if cfg.effective_data_source_mode == "sqlserver" else None
+    statistics_source = fingerprint((
+        sources.fingerprint(line.source_key),
+        sources.fingerprint('bm') if any(source.id == 'bm' for source in sources.configs()) else None,
+    ))
+    service = build_device_runtime(cfg, database, definitions, leadership_snapshots, pdf_service,
+                                   client=cast(SqlServerClient, client), task_queue=coordination,
+                                   ship_names=ship_names, statistics_snapshots=report_snapshots,
+                                   statistics_source=statistics_source)
+    if previous:
+        service.reuse_pending(previous.cutting())
+    return ProductionLineRuntime(line, service, background=service, pipeline=service.pipeline)

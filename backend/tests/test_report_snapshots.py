@@ -10,9 +10,9 @@ import pytest
 
 from app.config import Settings
 from app.database.coordination import CoordinationRepository
-from app.database.report_snapshots import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
+from app.modules.reports.snapshot_repository import ReportKey, ReportSnapshot, ReportSnapshotRepository, fingerprint
 from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
-from app.services.report_snapshots import ReportSnapshotService, SnapshotRefreshBusy
+from app.modules.reports.snapshots import ReportSnapshotService, SnapshotRefreshBusy
 
 
 def infrastructure(settings, database):
@@ -33,7 +33,7 @@ def record(report_key=None, **changes):
 
 
 def test_unified_policy_hot_change_rechecks_original_completion_time(tmp_path, postgres_state):
-    from app.services.report_cache_policy import report_ttl
+    from app.modules.reports.cache_policy import report_ttl
     cfg, snapshots, queue = infrastructure(postgres_state[1], postgres_state[0])
     service = ReportSnapshotService(cfg, snapshots, queue)
     today = datetime.now(timezone.utc).date()

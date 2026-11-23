@@ -137,7 +137,7 @@ class DeliveryRepository(PostgresRepository):
             return self._decode_delivery(item)
 
     def rebuild_unanalyzed_delivery(self, delivery: dict, *, now: str) -> None:
-        from app.database.metadata import MetadataRepository
+        from app.modules.reports.repository import MetadataRepository
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM email_deliveries WHERE delivery_id=%s AND status='sending' FOR UPDATE",
                 (delivery['delivery_id'],)).fetchone()

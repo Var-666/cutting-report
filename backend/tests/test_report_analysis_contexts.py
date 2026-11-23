@@ -9,12 +9,12 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import (
     EquipmentRecord, LeadershipPeriodRecord, LeadershipReportResult,
     ProjectDistributionRecord, WorkshopRecord,
 )
-from app.services.report_analysis_service import ReportAnalysisService, generate_data_version
+from app.modules.reports.analysis.service import ReportAnalysisService, generate_data_version
 
 
 def analysis_cases():
@@ -92,7 +92,7 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
         content = dict(headline='本期生产情况', summary='任务记录需结合确认及仪表覆盖理解。', key_metric_ids=[], findings=[], actions=[])
         return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(content)}}]})
     client = httpx.Client
-    monkeypatch.setattr('app.services.llm_service.httpx.Client',
+    monkeypatch.setattr('app.modules.reports.analysis.llm.httpx.Client',
         lambda **kwargs: client(transport=httpx.MockTransport(respond), **kwargs))
     settings = Settings(project_root=tmp_path, device_id='Cutter01', data_source_mode='demo', llm_enabled=True,
                         llm_api_key='test-key', llm_base_url='http://llm.test')
@@ -140,7 +140,7 @@ def test_model_request_links_outlier_tasks_to_details_and_energy_statuses(state_
 
 
 def test_leadership_requires_real_comparison_dates_for_custom_ranges():
-    from app.services.report_analysis.leadership import build_context
+    from app.modules.reports.analysis.leadership import build_context
     report = analysis_cases()['leadership_month'][1][0]
     month = build_context(report, report.monthly_records)
     assert month['scope'] | {} == dict(report_type='leadership', period_start='2026-08-01', period_end='2026-08-31',
@@ -156,8 +156,8 @@ def test_leadership_requires_real_comparison_dates_for_custom_ranges():
 
 
 def test_workshop_links_keep_all_pending_tasks_while_model_input_is_bounded():
-    from app.services.report_analysis.workshop import build_context
-    from app.services.report_analysis.brief import model_context
+    from app.modules.reports.analysis.workshop import build_context
+    from app.modules.reports.analysis.brief import model_context
     original = analysis_cases()['workshop'][1][1][0]
     records = [replace(original, task_id=f'task-{index}', confirmed_by=None, production_date=date(2026, 8, 18)) for index in range(250)]
     context = build_context('2026-08-18 至 2026-08-20', records)
@@ -177,7 +177,7 @@ def test_workshop_links_keep_all_pending_tasks_while_model_input_is_bounded():
 @pytest.mark.parametrize('kind', ['workshop', 'equipment'])
 @pytest.mark.parametrize('missing_top', [False, True])
 def test_missing_project_groups_are_quality_candidates_with_complete_links(kind, missing_top):
-    from app.services.report_analysis import workshop, equipment
+    from app.modules.reports.analysis import workshop, equipment
     original = analysis_cases()['workshop' if kind == 'workshop' else 'equipment_partial'][1][1][0]
     records = [replace(original, task_id=f'project-{index}', ship_no=None,
                        project_code=None if (index < 3) == missing_top else 'P-real') for index in range(4)]
@@ -199,7 +199,7 @@ def test_missing_project_groups_are_quality_candidates_with_complete_links(kind,
 
 
 def test_leadership_project_findings_describe_concentration_and_keep_names_in_references():
-    from app.services.report_analysis.leadership import build_context
+    from app.modules.reports.analysis.leadership import build_context
     original = analysis_cases()['leadership_month'][1][0]
     project = replace(original.project_distribution[0], project_name='PROJECT-PRIVATE-NAME')
     report = replace(original, project_distribution=[project])
@@ -211,7 +211,7 @@ def test_leadership_project_findings_describe_concentration_and_keep_names_in_re
 
 
 def test_leadership_missing_project_evidence_does_not_claim_project_concentration():
-    from app.services.report_analysis.leadership import build_context
+    from app.modules.reports.analysis.leadership import build_context
     report = analysis_cases()['leadership_month'][1][0]
     context = build_context(report, report.monthly_records)
     assert 'C_project_missing' in context['_references'] and 'C_project' not in context['_references']
@@ -219,7 +219,7 @@ def test_leadership_missing_project_evidence_does_not_claim_project_concentratio
 
 
 def test_energy_coverage_estimates_and_unavailable_are_separate_candidates():
-    from app.services.report_analysis.equipment import build_context
+    from app.modules.reports.analysis.equipment import build_context
     original = analysis_cases()['equipment_partial'][1][1][0]
     complete = replace(original, gas_consumption=Decimal('1'), electricity_consumption=Decimal('2'),
         gas_data_status='metered', electricity_data_status='metered')
@@ -235,7 +235,7 @@ def test_energy_coverage_estimates_and_unavailable_are_separate_candidates():
 
 
 def test_long_task_candidates_do_not_lose_associations_beyond_preview_limit():
-    from app.services.report_analysis.workshop import build_context
+    from app.modules.reports.analysis.workshop import build_context
     original = analysis_cases()['workshop'][1][1][0]
     records = [replace(original, task_id=f'task-{i}', work_time=Decimal('60' if i < 100 else '3600')) for i in range(108)]
     context = build_context('2026-08-18', records)
@@ -245,8 +245,8 @@ def test_long_task_candidates_do_not_lose_associations_beyond_preview_limit():
 
 
 def test_task_change_facts_explicitly_name_total_tasks():
-    from app.services.report_analysis.workshop import build_context as workshop_context
-    from app.services.report_analysis.equipment import build_context as equipment_context
+    from app.modules.reports.analysis.workshop import build_context as workshop_context
+    from app.modules.reports.analysis.equipment import build_context as equipment_context
     cases = analysis_cases()
     for kind, builder, key in [('workshop', workshop_context, 'workshop'), ('equipment', equipment_context, 'equipment_partial')]:
         records = cases[key][1][1][:2]
@@ -272,9 +272,9 @@ def test_task_change_facts_explicitly_name_total_tasks():
     (True, '切割时长减少20%。', False),
 ])
 def test_structured_leadership_changes_are_validated_with_direction_and_rounding(positive, summary, valid):
-    from app.services.report_analysis.leadership import build_context
-    from app.services.report_analysis.common import normalize_analysis_context
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.leadership import build_context
+    from app.modules.reports.analysis.common import normalize_analysis_context
+    from app.modules.reports.analysis.brief_validation import validate_brief
     report = analysis_cases()['leadership_month'][1][0]
     previous = replace(report.monthly_records[0], groove_length_m=Decimal('80'), work_time_seconds=5000)
     current = replace(report.current_month_total, groove_length_m=Decimal('100' if positive else '50'),

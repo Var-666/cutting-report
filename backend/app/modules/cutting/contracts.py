@@ -6,7 +6,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from app.models.contracts import Items, Page
+from app.models.contracts import Items
 
 
 class CuttingProject(BaseModel):

@@ -12,17 +12,17 @@ from pydantic import ValidationError
 
 from app.api.auth import require_admin
 from app.api.runtime import application_state, runtime_state
-from app.services.production_lines import resolve_line_service
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
+from app.runtime.production_lines import resolve_line_service
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 from app.api.workloads import query_requests, snapshot_requests, analysis_requests, pdf_requests
 from app.models.domain import to_primitive
 from app.modules.welding.models import WeldingAnalysisRequest, WeldingQuery, ReportType
 from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import ReportAnalysis
 from app.modules.welding.contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport, WeldingPart, WeldingHealth
-from app.modules.welding.repository import WeldingUnavailable
-from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError
-from app.services.pdf_service import PdfRenderError
+from app.database.mysql import MySqlUnavailable
+from app.modules.reports.analysis.execution import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.modules.reports.pdf import PdfRenderError
 from app.core.request_cancellation import SqlRequestCancelled
 from app.modules.welding.export import WeldingExport, csv_bytes, COLUMNS
 from app.modules.welding.service import WeldingService
@@ -67,7 +67,7 @@ def source_errors():
         raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '5', 'X-Report-Error': 'snapshot_refresh_busy', 'X-Welding-Error': 'snapshot_refresh_busy'}) from None
     except SnapshotRefreshRejected as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': 'snapshot_queue_full', 'X-Welding-Error': 'snapshot_queue_full'}) from None
-    except WeldingUnavailable as exc:
+    except MySqlUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'X-Report-Error': exc.category, 'X-Welding-Error': exc.category}) from None
     except AnalysisUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '60'}) from None

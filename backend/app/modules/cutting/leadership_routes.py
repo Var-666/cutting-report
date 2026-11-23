@@ -11,20 +11,20 @@ from pydantic import BaseModel, Field
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.sql_capacity import SqlCapacityError
 from app.api.workloads import query_requests
-from app.api.devices import device_state, device_settings
+from app.api.devices import device_state
 from app.api.runtime import request_settings
 from app.api.auth import require_admin
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import to_primitive
 from app.models.contracts import ApiEnvelope
 from app.models.report_contracts import LeadershipReport
-from app.services.report_analysis_service import (
+from app.modules.reports.analysis.service import (
     analysis_table_source_version,
     leadership_analysis_source_version,
 )
 from app.core.request_cancellation import SqlRequestCancelled
-from app.services.device_runtime import DeviceRuntime
-from app.api.report_reads import statistics_page
+from app.modules.cutting.runtime import DeviceRuntime
+from app.modules.cutting.report_reads import statistics_page
 
 
 # Persisted operations incident fingerprints include the logger name.

@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.models.domain import EquipmentRecord
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.cutting.leadership import LeadershipReportService
 
 

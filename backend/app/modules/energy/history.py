@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.core.operations_logging import event
 from app.modules.energy.periods import EnergyPeriodService
-from app.services.report_cache_policy import report_ttl, report_refresh_seconds
+from app.modules.reports.cache_policy import report_ttl, report_refresh_seconds
 
 
 # Persisted operations incident fingerprints include the logger name.
@@ -57,10 +57,22 @@ class EnergyHistoryWorker:
     def start(self) -> None:
         if not self.enabled:
             return
-        self.repository.recover_history_queue(self.source_key, self._now())
+        self.prepare()
+        self.thread.start()
+
+    def prepare(self) -> None:
+        self.recover()
         today = self.service.now().date()
         self.schedule_range(_shift_month(today.replace(day=1), -11), today)
-        self.thread.start()
+
+    def recover(self) -> None:
+        self.repository.recover_history_queue(self.source_key, self._now())
+
+    def ready(self) -> bool:
+        return self.enabled and self.repository.history_ready(self.source_key, self._now())
+
+    def reuse_pending(self, previous: EnergyHistoryWorker) -> None:
+        self._completion = previous._completion
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -125,9 +137,9 @@ class EnergyHistoryWorker:
             claim, (now + timedelta(seconds=delay)).isoformat(timespec="seconds"),
             completed_at.isoformat(timespec="seconds"), error_code,
         )
-        self._flush_pending_finish()
+        self.flush_pending_finish()
 
-    def _flush_pending_finish(self) -> None:
+    def flush_pending_finish(self) -> None:
         with self._completion['lock']:
             if self._pending_finish is None:
                 return
@@ -136,13 +148,18 @@ class EnergyHistoryWorker:
                 logger.warning("energy history claim no longer owned: %s", claim["report_month"])
             self._pending_finish = None
 
+    def run_once(self) -> bool:
+        self.flush_pending_finish()
+        claim = self._claim()
+        if claim is None:
+            return False
+        self._process(claim)
+        return True
+
     def _run_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
-                self._flush_pending_finish()
-                claim = self._claim()
-                if claim is not None:
-                    self._process(claim)
+                if self.run_once():
                     continue
             except Exception:
                 # Retry completion writes without repeating the external query.

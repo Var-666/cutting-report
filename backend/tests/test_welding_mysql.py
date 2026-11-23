@@ -14,12 +14,13 @@ from dataclasses import replace
 from app.config import Settings
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from tests.line_fixtures import line_settings
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.core.sql_capacity import SqlCapacity
 from app.database.mysql import MySqlClient
 from app.models.database_sources import DatabaseSourceConfig
 from tests.line_fixtures import welding_settings
-from app.modules.welding.repository import WeldingRepository, WeldingUnavailable, job_source, job_aggregate, job_conditions, valid_serial, valid_time
+from app.database.mysql import MySqlUnavailable
+from app.modules.welding.repository import WeldingRepository, job_source, job_aggregate, job_conditions, valid_serial, valid_time
 from app.modules.welding.models import WeldingQuery
 from app.modules.welding.service import WeldingService
 
@@ -324,7 +325,7 @@ def test_real_mysql_timeout_recovers_for_next_request(weld_mysql, caplog):
 
     client = MySqlClient(weld_mysql.repository.client.config.model_copy(update={'query_timeout': 1}), capacity=weld_mysql.repository.client.capacity)
     previous_pool = client._get_pool()
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         with client.snapshot() as session:
             session.fetch('SELECT SLEEP(2) AS wait_result', limit=1)
     assert any(record.exc_info and isinstance(record.exc_info[1], ReadTimeoutError) for record in caplog.records)
@@ -341,7 +342,7 @@ def test_real_mysql_api_exports_and_pdf(postgres_state, weld_mysql, monkeypatch)
     from app.api.auth import require_admin
     from app.modules.welding.routes import router
     from app.api.database import router as database_router
-    from app.services.llm_service import LlmService
+    from app.modules.reports.analysis.llm import LlmService
     from tests.analysis_fakes import model_analysis
 
     cfg = state_settings(replace(weld_mysql.settings, llm_enabled=True), postgres_state)

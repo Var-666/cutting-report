@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterator, Protocol, TypeVar
 
-from app.services.report_snapshots import ReportData
+from app.modules.reports.snapshots import ReportData
 
 if TYPE_CHECKING:
-    from app.services.database_runtime import DatabaseServices
+    from app.runtime.database import DatabaseServices
 
 
 Query = TypeVar('Query', contravariant=True)

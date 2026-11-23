@@ -1,7 +1,7 @@
 import pytest
 
-from app.services.analysis_display import analysis_reference_label
-from app.services.report_service import ReportService
+from app.modules.reports.analysis.display import analysis_reference_label
+from app.modules.reports.service import ReportService
 from tests.line_fixtures import cutting_settings
 
 

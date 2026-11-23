@@ -11,8 +11,8 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.config import Settings
-from app.services.analysis_display import analysis_cover
-from app.services.pdf_service import PdfService
+from app.modules.reports.analysis.display import analysis_cover
+from app.modules.reports.pdf import PdfService
 
 
 ALARM_REPORT_RATE_LIMITED = "模型接口限流"

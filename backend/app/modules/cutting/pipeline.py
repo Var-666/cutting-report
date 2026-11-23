@@ -4,7 +4,6 @@ import logging
 from datetime import datetime
 from collections.abc import Callable
 from functools import partial
-from zoneinfo import ZoneInfo
 
 from psycopg import Error as PostgresError
 
@@ -13,31 +12,33 @@ from app.database.postgres import ExecutionLeaseLost
 from app.config import Settings
 from app.modules.automation.repository import AutomationRepository
 from app.modules.energy.repository import EnergyReportRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.unit_of_work import UnitOfWork
 from app.models.domain import AnalysisResult
-from app.services.chart_service import ChartService
-from app.services.custom_report_service import CustomReportService
+from app.modules.reports.charts import ChartService
+from app.modules.reports.custom import CustomReportService
 from app.modules.energy.tasks import EquipmentEnergyService
 from app.modules.energy.periods import EnergyPeriodService
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_analysis_service import AnalysisDataVersionMismatch, AnalysisUnavailableError, ReportAnalysisService
+from app.modules.reports.analysis.execution import AnalysisDataVersionMismatch, AnalysisUnavailableError
+from app.modules.reports.analysis.service import ReportAnalysisService
 from app.core.report_deadline import ReportOperationTimeout, ensure_time_remaining, report_deadline
 from app.core.request_cancellation import SqlRequestCancelled
-from app.services.report_service import ReportService
+from app.modules.reports.service import ReportService
 from app.modules.cutting.statistics import StatisticsService
-from app.services.report_generation.leadership import prepare_report as prepare_leadership_report
-from app.services.report_generation.workshop import prepare_report as prepare_workshop_report
-from app.services.report_generation.equipment import prepare_report as prepare_equipment_report
-from app.services.report_generation.custom import prepare_report as prepare_custom_report
+from app.modules.reports.generation.leadership import prepare_report as prepare_leadership_report
+from app.modules.reports.generation.workshop import prepare_report as prepare_workshop_report
+from app.modules.reports.generation.equipment import prepare_report as prepare_equipment_report
+from app.modules.reports.generation.custom import prepare_report as prepare_custom_report
 
 
-logger = logging.getLogger(__name__)
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.pipeline')
 
 
 class ReportAnalysisPendingError(RuntimeError):

@@ -12,16 +12,17 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from app.api.analysis import AnalysisRequest, _is_default_view, router
+from app.modules.cutting.analysis_routes import AnalysisRequest, _is_default_view, router
 from app.api.auth import require_admin
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import ReportFilter
 from app.modules.cutting.leadership import LeadershipReportService
-from app.services.llm_service import background_llm_work
+from app.modules.reports.analysis.llm import background_llm_work
 from app.modules.cutting.service import QueryService
-from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService
+from app.modules.reports.analysis.execution import AnalysisUnavailableError
+from app.modules.reports.analysis.service import ReportAnalysisService
 from tests.analysis_fakes import model_analysis
-from app.services.report_analysis.workshop import build_context as build_workshop_context
+from app.modules.reports.analysis.workshop import build_context as build_workshop_context
 from tests.test_report_analysis_service import _services
 
 
@@ -41,7 +42,7 @@ def test_page_reads_previous_success_during_refresh_then_replaces_it_without_cal
         def now(_timezone):
             return clock[0]
 
-    monkeypatch.setattr('app.services.report_analysis_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.reports.analysis.service.datetime', Clock)
     entered, release = Event(), Event()
     calls = []
 

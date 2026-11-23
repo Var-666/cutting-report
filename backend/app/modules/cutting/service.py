@@ -14,9 +14,9 @@ from app.config import Settings
 from app.core.operations_logging import data_quality
 from app.modules.cutting.repository import CuttingQueryRepository
 from app.services.ship_name_service import ShipNameService
-from app.services.cache_revision import CacheRevision
-from app.services.query_cache import QueryCache as _QueryCache
-from app.services.report_closing_comparison import CUTOFF, Totals, business_day_window, closing_bucket
+from app.modules.reports.cache_revision import CacheRevision
+from app.modules.reports.query_cache import QueryCache as _QueryCache
+from app.modules.reports.closing_comparison import CUTOFF, Totals, business_day_window, closing_bucket
 from app.database.sqlserver import SqlServerClient
 from app.models.domain import (
     EquipmentRecord,

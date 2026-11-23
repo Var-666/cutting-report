@@ -8,13 +8,14 @@ import pytest
 
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.models.domain import EquipmentRecord, WorkshopRecord
 from app.modules.cutting.leadership import LeadershipReportService
-from app.services.llm_service import LlmRequestTimeout
-from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
-from app.services.report_generation.common import report_analysis_payload
-from app.services.report_analysis_service import AnalysisUnavailableError, ReportAnalysisService, AnalysisDataVersionMismatch
+from app.modules.reports.analysis.llm import LlmRequestTimeout
+from app.modules.cutting.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
+from app.modules.reports.generation.common import report_analysis_payload
+from app.modules.reports.analysis.execution import AnalysisUnavailableError, AnalysisDataVersionMismatch
+from app.modules.reports.analysis.service import ReportAnalysisService
 from tests.analysis_fakes import model_analysis
 from tests.line_fixtures import cutting_settings
 

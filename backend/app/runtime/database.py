@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 from app.config import LOADED_SOURCES, Settings
 from app.device_config import ProductionLineCatalog, load_line_catalog
-from app.services.production_lines import ProductionLineRuntime
+from app.runtime.production_lines import ProductionLineRuntime
 from app.services.runtime_settings_store import (
     RuntimeSettingsSaveError, read_runtime_env, write_runtime_env, runtime_settings_lock,
 )
@@ -19,14 +19,14 @@ from app.modules.automation.runtime import AutomationRuntime
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
 from app.models.configuration_contracts import LlmConfigurationRequest
 from app.models.configuration_contracts import ReportCacheConfiguration
-from app.services.report_cache_policy import REPORT_CACHE_FIELDS
-from app.services.cache_revision import CacheRevision
+from app.modules.reports.cache_policy import REPORT_CACHE_FIELDS
+from app.modules.reports.cache_revision import CacheRevision
 from app.database.source_registry import (
     DatabaseSourceRegistry, SourceConflict, SourceNotFound, source_configs_json,
 )
 
 if TYPE_CHECKING:
-    from app.services.application_runtime import ApplicationRuntime
+    from app.runtime.application import ApplicationRuntime
     from app.modules.cutting.dispatch import CuttingDispatchService
     from app.services.file_download_service import FileDownloadService
     from app.services.worker_auth_service import WorkerAuthService

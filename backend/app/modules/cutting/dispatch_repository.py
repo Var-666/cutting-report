@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 
 from psycopg import Connection
-from datetime import datetime
 
 from typing import Any, Iterable
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from app.database.postgres import PostgresDatabase, PostgresRepository, lock_key
 

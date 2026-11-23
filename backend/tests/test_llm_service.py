@@ -4,9 +4,9 @@ from dataclasses import replace
 import pytest
 
 from app.config import Settings
-from app.services.llm_service import AnalysisOutputValidationError, LlmService
-from app.services.llm_prompts import analysis_system_prompt
-from app.services.report_analysis.workshop import build_context
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError, LlmService
+from app.modules.reports.analysis.prompts import analysis_system_prompt
+from app.modules.reports.analysis.workshop import build_context
 
 
 def _model_response(monkeypatch, raw_content):
@@ -26,7 +26,7 @@ def _model_response(monkeypatch, raw_content):
         def post(self, _url, **kwargs):
             requests.append(kwargs['json'])
             return FakeResponse()
-    monkeypatch.setattr('app.services.llm_service.httpx.Client', FakeClient)
+    monkeypatch.setattr('app.modules.reports.analysis.llm.httpx.Client', FakeClient)
     return requests
 
 
@@ -72,7 +72,7 @@ def test_cutting_persistently_invalid_output_is_rejected_after_one_correction(st
 
 def test_finding_evidence_and_business_links_are_bound_by_server():
     from app.models.domain import WorkshopRecord
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     record = WorkshopRecord('real-task', 'P1', None, None, 'program', None, None, None)
     context = build_context('2026-08-18', [record])
     output = dict(headline='确认归属待补齐', summary='已有切割记录，人员归属尚未登记。', key_metric_ids=['F004'],
@@ -94,7 +94,7 @@ def test_finding_evidence_and_business_links_are_bound_by_server():
 
 
 def test_fact_placeholders_and_omitted_evidence_are_bound_without_model_arithmetic(duration_context):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = duration_context
     finding = dict(candidate_id='C_production', title='生产记录', detail='切割长度{{F002}}，切割时长{{F003}}。')
     output = draft() | {'headline': '本期任务数{{F001}}', 'summary': '切割时长为{{F003}}。',
@@ -111,7 +111,7 @@ def test_fact_placeholders_and_omitted_evidence_are_bound_without_model_arithmet
 
 @pytest.mark.parametrize('summary', ['引用{{F999}}。', '引用{{F001.value}}。', '引用{{不存在}}。'])
 def test_unknown_or_malformed_fact_placeholders_are_rejected(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='事实|占位符'):
         validate_brief(draft() | {'summary': summary}, build_context('2026-08-18', []))
 
@@ -141,7 +141,7 @@ def test_cutting_prompts_choose_dynamic_findings_and_respect_business_boundaries
 
 def test_brief_rejects_cross_period_cross_line_links_and_reversed_changes():
     from app.models.domain import WorkshopRecord
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     row = WorkshopRecord('real-task', 'P1', None, None, None, None, None, None)
     context = build_context('2026-08-18', [row])
     output = dict(headline='人员归属待补齐', summary='需核对已有切割记录。', key_metric_ids=[],
@@ -165,7 +165,7 @@ def duration_context():
     from datetime import date, datetime
     from decimal import Decimal
     from app.models.domain import WorkshopRecord
-    from app.services.report_analysis.common import normalize_analysis_context
+    from app.modules.reports.analysis.common import normalize_analysis_context
     row = WorkshopRecord('task-A', 'P', None, None, 'program', Decimal('10'), Decimal('0'), Decimal('3600'),
         production_date=date(2026, 11, 10), production_time=datetime(2026, 11, 10, 10, 30))
     return normalize_analysis_context(build_context('2026-11-10', [row]))[0]
@@ -175,13 +175,13 @@ def duration_context():
                                       '任务耗时1:00:00。', '建议分2步核查。', '重点核对这2类记录。',
                                       '请检查以下 2 点信息。', '开始记录为2026-11-10T10:30:00。'])
 def test_brief_accepts_equivalent_duration_and_prose_numbering(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
 
 
 @pytest.mark.parametrize('summary', ['本期有2项任务。', '任务耗时59分钟。', '任务耗时约90分钟。', '任务耗时10.5小时。'])
 def test_brief_rejects_wrong_counts_durations_and_clock_times(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='数量|时长'):
         validate_brief(draft() | {'summary': summary}, duration_context)
 
@@ -191,20 +191,20 @@ def test_brief_rejects_wrong_counts_durations_and_clock_times(duration_context, 
                                       '任务耗时-约60分钟。', '任务耗时负60分钟。', '任务耗时− 01:00:00。',
                                       '任务耗时－1小时。'])
 def test_brief_checks_entire_clock_duration_and_rejects_negative_time(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='时长'):
         validate_brief(draft() | {'summary': summary}, duration_context)
 
 
 def test_clock_duration_can_exceed_twenty_four_hours(duration_context):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     duration_context['facts'] = []
     duration_context['tables'][0]['rows'][0]['work_time'] = 360123
     assert validate_brief(draft() | {'summary': '累计切割时长100:02:03。'}, duration_context)
 
 
 def test_internal_fact_ids_do_not_authorize_business_numbers():
-    from app.services.report_analysis.brief_validation import _numbers
+    from app.modules.reports.analysis.brief_validation import _numbers
     assert _numbers('F002 F012 Cutter02') == set()
     assert _numbers('待确认2项，覆盖率40.0%') == {2, 40}
 
@@ -212,7 +212,7 @@ def test_internal_fact_ids_do_not_authorize_business_numbers():
 @pytest.mark.parametrize('summary', ['建议分2个阶段核查。', '建议分为 2 个阶段进行核对。',
                                       '可按2阶段开展排查。'])
 def test_brief_accepts_small_procedural_stage_counts(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-09', [])
     assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
 
@@ -221,13 +221,13 @@ def test_brief_accepts_small_procedural_stage_counts(summary):
                                       '建议分999999个阶段核查。', '发现2类异常任务。', '本期存在2点异常。',
                                       '已完成2步加工。', '已核对2类异常任务。'])
 def test_procedural_exemptions_do_not_authorize_business_counts(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     with pytest.raises(ValueError, match='数量'):
         validate_brief(draft() | {'summary': summary}, build_context('2026-11-09', []))
 
 
 def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(duration_context):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = duration_context
     context['tables'][0]['rows'][0]['work_time'] = 3540
     assert validate_brief(draft() | {'summary': '该任务耗时59分钟。'}, context)
@@ -252,7 +252,7 @@ def test_brief_accepts_minutes_and_decimal_hours_from_authoritative_seconds(dura
     ([3630], '该任务耗时61分钟。'),
 ])
 def test_brief_accepts_compound_durations_and_rounded_units(duration_context, seconds, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     duration_context['facts'] = []
     duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in seconds])]
     assert validate_brief(draft() | {'summary': summary}, duration_context)['summary'] == summary
@@ -265,7 +265,7 @@ def test_brief_accepts_compound_durations_and_rounded_units(duration_context, se
     '任务耗时约60分钟，另有2项待确认。',
 ])
 def test_brief_keeps_duration_precision_and_business_counts(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     duration_context['facts'] = []
     duration_context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=value) for value in [3600, 3560, 7160]])]
     with pytest.raises(ValueError, match='时长|数量'):
@@ -274,7 +274,7 @@ def test_brief_keeps_duration_precision_and_business_counts(duration_context, su
 
 @pytest.mark.parametrize('summary', ['该任务耗时60分钟。', '该任务耗时1.01小时。', '该任务耗时01:00:00。'])
 def test_brief_rejects_duration_outside_display_precision(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-10', [])
     context['facts'] = []
     context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=3655)])]
@@ -285,7 +285,7 @@ def test_brief_rejects_duration_outside_display_precision(summary):
 @pytest.mark.parametrize('summary', ['切割长度9,714米。', '切割长度9,714.2米。', '任务数上升12%。',
                                       '任务数上升12.3%。', '任务数变化约12%。', '气耗12.3Nm³。', '电耗12kWh。'])
 def test_brief_accepts_metric_rounding_at_display_precision(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     duration_context['facts'].extend([
         dict(id='F098', label='长度', value='9,714.2 米', source='任务长度合计'),
         dict(id='F099', label='任务变化', value='上升 12.34%', source='上一可比周期'),
@@ -298,7 +298,7 @@ def test_brief_accepts_metric_rounding_at_display_precision(duration_context, su
 @pytest.mark.parametrize('summary', ['切割长度9,715米。', '切割长度9,714.3米。', '任务数下降12%。',
                                       '任务数上升13%。', '覆盖率13%。', '切割长度12米。', '切割长度2项。'])
 def test_brief_rejects_wrong_rounding_direction_units_and_counts(duration_context, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     duration_context['facts'].extend([
         dict(id='F098', label='长度', value='9,714.2 米', source='任务长度合计'),
         dict(id='F099', label='任务变化', value='上升 12.34%', source='上一可比周期'),
@@ -308,8 +308,8 @@ def test_brief_rejects_wrong_rounding_direction_units_and_counts(duration_contex
 
 
 def test_pending_share_uses_all_tasks_and_supports_rounded_percentage():
-    from app.services.report_analysis.brief_validation import validate_brief
-    from app.services.report_analysis.common import normalize_analysis_context
+    from app.modules.reports.analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.common import normalize_analysis_context
     from app.models.domain import WorkshopRecord
     records = [WorkshopRecord(str(index), 'P', None, None, None, None, None, None,
                               confirmed_by='工人' if index else None) for index in range(3)]
@@ -329,7 +329,7 @@ def test_pending_share_uses_all_tasks_and_supports_rounded_percentage():
 @pytest.mark.parametrize('summary', ['任务数上升约5%。', '任务数增长 5 %。', '任务数增加5％。',
                                       '任务数增长了大约5%。', '任务数上升-5%。'])
 def test_change_direction_cannot_be_bypassed_by_natural_percent_format(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-09', [])
     context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
     with pytest.raises(ValueError, match='变化方向'):
@@ -338,7 +338,7 @@ def test_change_direction_cannot_be_bypassed_by_natural_percent_format(summary):
 
 @pytest.mark.parametrize('summary', ['任务数下降约5%。', '任务数减少 5 %。', '任务数降低5％。', '任务数减少了大约5%。'])
 def test_equivalent_percent_formats_keep_the_same_direction(summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-09', [])
     context['facts'].append(dict(id='F099', label='任务变化', value='下降 5.0%', source='上一可比周期'))
     assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
@@ -346,7 +346,7 @@ def test_equivalent_percent_formats_keep_the_same_direction(summary):
 
 def test_reference_error_details_are_bounded_and_escape_untrusted_identifiers():
     from app.models.domain import WorkshopRecord
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-08-18', [WorkshopRecord('task', 'P', None, None, None, None, None, None)])
     output = draft() | {'findings': [dict(candidate_id='C_confirmation', title='确认信息待核对', detail='核对确认记录。',
         evidence_ids=['F999\n' + 'X' * 1000] * 100)]}
@@ -360,7 +360,7 @@ def test_reference_error_details_are_bounded_and_escape_untrusted_identifiers():
 @pytest.mark.parametrize('field', ['cut_length_m', 'groove_length_m', 'cut_length', 'groove_length'])
 @pytest.mark.parametrize('summary', ['明细长度为1,712.1米。', '明细长度约1,712米。'])
 def test_brief_accepts_lengths_from_typed_model_input_rows(field, summary):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-13', [])
     context['tables'] = [dict(name='每日明细', rows=[{field: 1712.1, 'task_count': 27}])]
     assert validate_brief(draft() | {'summary': summary}, context)['summary'] == summary
@@ -373,9 +373,9 @@ def test_equipment_production_can_reference_provided_trends_and_project_facts():
     from datetime import date
     from decimal import Decimal
     from app.models.domain import EquipmentRecord
-    from app.services.report_analysis.equipment import build_context as equipment_context
-    from app.services.report_analysis.brief_validation import validate_brief
-    from app.services.report_analysis.common import normalize_analysis_context
+    from app.modules.reports.analysis.equipment import build_context as equipment_context
+    from app.modules.reports.analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.common import normalize_analysis_context
     row = EquipmentRecord('task', 'machine', 'project', None, None, Decimal('1712.1'), Decimal('31807'),
         None, None, production_date=date(2026, 11, 13))
     context = normalize_analysis_context(equipment_context('2026-11-13', [row]))[0]
@@ -395,8 +395,8 @@ def test_leadership_comparison_can_reference_previous_period_and_year():
     from datetime import date
     from decimal import Decimal
     from app.models.domain import LeadershipPeriodRecord, LeadershipReportResult
-    from app.services.report_analysis.leadership import build_context as leadership_context
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.leadership import build_context as leadership_context
+    from app.modules.reports.analysis.brief_validation import validate_brief
     current = LeadershipPeriodRecord(date(2026, 11, 1), 269, Decimal('17481.1'), Decimal('1572.8'), 399069)
     previous = replace(current, period_start=date(2026, 10, 1), task_count=1051)
     year_ago = replace(current, period_start=date(2025, 11, 1), task_count=300)
@@ -410,7 +410,7 @@ def test_leadership_comparison_can_reference_previous_period_and_year():
 
 
 def test_schema_error_reports_fields_without_logging_model_content():
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     output = draft() | {'findings': 'sensitive-model-content-must-not-be-logged', 'unexpected': 'X' * 10000}
     with pytest.raises(ValueError, match='结构校验失败') as caught:
         validate_brief(output, build_context('2026-11-09', []))
@@ -433,7 +433,7 @@ def test_schema_error_reports_fields_without_logging_model_content():
     (5999, '切割时长约1.7小时。', False),
 ])
 def test_rounded_duration_must_also_stay_within_two_percent(seconds, summary, valid):
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     context = build_context('2026-11-09', [])
     context['facts'] = []
     context['tables'] = [dict(name='时长汇总', rows=[dict(work_time=seconds)])]

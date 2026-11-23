@@ -10,7 +10,7 @@ from app.core.operations_logging import event
 from app.modules.automation.delivery_repository import DeliveryRepository
 from app.modules.automation.email import EmailService, EmailConfigurationError, EmailDeliveryFailure, EmailRecipientsRefused
 from app.modules.automation.runtime import AutomationRuntime
-from app.services.report_service import archived_report_path
+from app.modules.reports.service import archived_report_path
 
 
 # Persisted operations incident fingerprints include the logger name.

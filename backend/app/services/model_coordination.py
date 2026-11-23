@@ -27,7 +27,7 @@ class ModelSlot:
             self.repository.register_model_waiter(self.waiter, self.expires)
 
     def acquire(self):
-        from app.services.llm_service import AnalysisCapacityError
+        from app.modules.reports.analysis.llm import AnalysisCapacityError
         while True:
             promoted = self.promoted() if callable(self.promoted) else self.promoted
             ensure_time_remaining()

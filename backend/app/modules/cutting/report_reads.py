@@ -3,7 +3,7 @@ from fastapi import HTTPException, Request
 
 from app.api.devices import device_state
 from app.database.sqlserver import SqlServerConfigurationError
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 
 
 def statistics_page(request: Request, report_type: str, query: dict, *, refresh: bool = False) -> dict | None:

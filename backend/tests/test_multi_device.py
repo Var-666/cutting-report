@@ -19,7 +19,7 @@ import pytest
 from app.api.auth import require_admin, require_user
 from app.api.devices import router as devices_router
 from app.modules.cutting.options_routes import router as options_router
-from app.api.reports import router as reports_router
+from app.modules.reports.routes import router as reports_router
 from tests.line_fixtures import CUTTING_SCOPES, cutting_settings, line_settings, configuration
 from app.device_config import load_line_catalog
 from app.modules.alarms.repository import AlarmRepository
@@ -27,16 +27,16 @@ from app.modules.alarms.source import SqlServerAlarmSource
 from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
 from app.modules.cutting.leadership_snapshots import LeadershipMonthSnapshot, LeadershipSnapshotRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
 from app.modules.cutting.workshop_errors import ConfirmationNotFoundError
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import LeadershipPeriodRecord, WorkshopRecord
 from app.modules.automation.schedules import AutomationService
-from app.services.device_runtime import build_device_runtime
-from app.services.custom_report_service import CustomReportService
-from app.services.pipeline import ReportPipeline
+from app.modules.cutting.runtime import build_device_runtime
+from app.modules.reports.custom import CustomReportService
+from app.modules.cutting.pipeline import ReportPipeline
 from app.modules.energy.periods import EnergyPeriodService
 from app.modules.energy.tasks import EquipmentEnergyService
 from app.modules.energy.repository import EnergyReportRepository
@@ -374,7 +374,8 @@ def test_global_repositories_cannot_implicitly_create_device_data(database):
 
 def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(database):
     from app.modules.alarms import routes as alarms
-    from app.api import analysis, conditions, database as database_api, designer
+    from app.modules.cutting import analysis_routes as analysis
+    from app.api import conditions, database as database_api, designer
     from app.modules.energy import routes as energy
     from app.modules.cutting import equipment_routes as equipment, leadership_routes as leadership, workshop_routes as workshop
     db, admin = database
@@ -405,7 +406,8 @@ def test_all_device_api_boundaries_reject_missing_unknown_and_duplicate_context(
 
 
 def test_database_preview_and_pdf_download_use_only_the_requested_runtime(database, tmp_path):
-    from app.api import database as database_api, reports
+    from app.api import database as database_api
+    from app.modules.reports import routes as reports
     db, admin = database
     base = cutting_settings(project_root=tmp_path)
     app = embedded_app(base)
@@ -454,8 +456,8 @@ def test_database_preview_and_pdf_download_use_only_the_requested_runtime(databa
 
 
 def test_analysis_cache_and_source_versions_are_distinct_for_identical_input(database, tmp_path):
-    from app.services.report_analysis.workshop import build_context
-    from app.services.report_analysis_service import ReportAnalysisService
+    from app.modules.reports.analysis.workshop import build_context
+    from app.modules.reports.analysis.service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     db, _ = database
     calls=[]

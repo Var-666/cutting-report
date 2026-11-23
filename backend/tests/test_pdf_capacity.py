@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
-from app.services.pdf_service import PdfService, PdfRenderError
+from app.modules.reports.pdf import PdfService, PdfRenderError
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
@@ -102,7 +102,7 @@ def test_isolated_renderer_is_terminated_after_operation_deadline(tmp_path, monk
 
     process = StuckProcess()
     monkeypatch.setattr(
-        "app.services.pdf_service.mp.get_context",
+        "app.modules.reports.pdf.mp.get_context",
         lambda _name: SimpleNamespace(Process=lambda **kwargs: process),
     )
     service = PdfService(operation_timeout_seconds=1)

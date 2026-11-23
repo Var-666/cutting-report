@@ -10,12 +10,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.models.domain import AnalysisResult, QueryBundle, ReportFilter, SummaryBaseRecord, WorkshopRecord
-from app.services.chart_service import ChartService
+from app.modules.reports.charts import ChartService
 from app.modules.cutting.service import QueryService
 from app.modules.cutting.range_reports import RangeReportService
-from app.services.report_analysis.workshop import build_context
-from app.services.report_generation.workshop import prepare_report
-from app.services.report_service import ReportService
+from app.modules.reports.analysis.workshop import build_context
+from app.modules.reports.generation.workshop import prepare_report
+from app.modules.reports.service import ReportService
 from app.modules.cutting.statistics import StatisticsService
 from app.modules.cutting.workshop import WorkshopService
 from tests.line_fixtures import cutting_settings

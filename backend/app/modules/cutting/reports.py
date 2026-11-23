@@ -9,12 +9,12 @@ from zoneinfo import ZoneInfo
 from pydantic import TypeAdapter
 
 from app.models.domain import LeadershipReportResult, QueryBundle, ReportFilter, to_primitive
-from app.database.report_snapshots import ReportKey, fingerprint
+from app.modules.reports.snapshot_repository import ReportKey, fingerprint
 from app.modules.cutting.equipment import summarize_equipment
 from app.modules.cutting.leadership import LeadershipReportService
 from app.modules.cutting.range_reports import validate_report_range
-from app.services.report_snapshots import ReportData, ReportSnapshotService
-from app.services.report_cache_policy import report_refresh_seconds
+from app.modules.reports.snapshots import ReportData, ReportSnapshotService
+from app.modules.reports.cache_policy import report_refresh_seconds
 
 
 class CuttingReportProvider:

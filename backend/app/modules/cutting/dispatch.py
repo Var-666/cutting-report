@@ -7,7 +7,6 @@ import logging
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-import logging
 
 from app.core.operations_logging import event
 from app.config import Settings

@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.services.pipeline import ReportPipeline, ReportPipelineCancelled
+from app.modules.cutting.pipeline import ReportPipeline, ReportPipelineCancelled
 from app.workers.report_worker import ReportWorker
 
 

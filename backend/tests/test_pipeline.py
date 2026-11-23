@@ -9,12 +9,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
 from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import ReportFilter
-from app.services.pipeline import ReportPipeline, ReportAnalysisPendingError
+from app.modules.cutting.pipeline import ReportPipeline, ReportAnalysisPendingError
 from tests.analysis_fakes import model_analysis
 
 
@@ -32,7 +32,7 @@ from tests.analysis_fakes import model_analysis
     *[(name, None, "--") for name in ("chinese_month", "chinese_date", "chinese_datetime")],
 ])
 def test_export_dates_use_two_digits(tmp_path: Path, filter_name: str, value, expected: str) -> None:
-    from app.services.report_service import ReportService
+    from app.modules.reports.service import ReportService
 
     template = ReportService(cutting_settings(project_root=tmp_path)).environment.from_string("{{ value|" + filter_name + " }}")
     assert template.render(value=value) == expected

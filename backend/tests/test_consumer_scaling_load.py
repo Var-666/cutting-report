@@ -13,7 +13,7 @@ import pytest
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import ExecutionLeaseLost, execution_scope
-from app.services.llm_service import llm_capacity
+from app.modules.reports.analysis.llm import llm_capacity
 from app.worker import WorkerProcess
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
@@ -219,7 +219,7 @@ def _report_consumer(cfg, stopped, ready, started, release):
 
 def test_report_process_crash_recovers_same_report_id_and_publishes_only_new_owner_file(postgres_state, tmp_path):
     import shutil
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     database, cfg, _ = postgres_state
     cfg = replace(cfg, worker_poll_seconds=.05)
     cfg.echarts_vendor_path.parent.mkdir(parents=True, exist_ok=True)

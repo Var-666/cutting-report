@@ -9,7 +9,7 @@ from app.models.workshop_requests import (
     RevokeTaskRequest, CorrectTaskRequest,
 )
 from app.modules.cutting.statistics import build_top_cut_length_tasks, build_worker_work_summaries, build_workshop_task_distributions
-from app.services.report_analysis_service import analysis_period_label, workshop_analysis_source_version
+from app.modules.reports.analysis.service import analysis_period_label, workshop_analysis_source_version
 from app.modules.cutting.workshop_sorting import sort_workshop_by_recency
 from app.modules.cutting.range_reports import filter_workshop_records, validate_report_range
 

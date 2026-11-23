@@ -289,7 +289,7 @@ class CoordinationRepository(PostgresRepository):
 
     @staticmethod
     def snapshot_task_key(line_id: str, payload: dict) -> str:
-        from app.database.report_snapshots import fingerprint
+        from app.modules.reports.snapshot_repository import fingerprint
         identity = {key: payload[key] for key in ('report_type', 'query', 'source_fingerprint')}
         return f'report_snapshot:{line_id}:{fingerprint(identity)}'
 

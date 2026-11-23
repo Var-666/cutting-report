@@ -12,8 +12,8 @@ from app.config import Settings
 from app.core.sql_capacity import SqlCapacity
 from app.database.source_registry import DatabaseSourceRegistry
 from app.device_config import ProductionLineCatalog, load_line_catalog
-from app.services.database_runtime import DatabaseServices
-from app.services.device_runtime import DeviceRuntime
+from app.runtime.database import DatabaseServices
+from app.modules.cutting.runtime import DeviceRuntime
 from tests.line_fixtures import configuration, runtime_line
 from tests.runtime_factories import install_runtime, make_application_runtime, make_database_services
 
