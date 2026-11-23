@@ -2,20 +2,29 @@
 
 ## API 契约
 
-车间 `/api/v1/workshop`、派发 `/api/v1/cutting`、告警 `/api/v1/alarms` 的 JSON 成功响应由 Pydantic 模型声明；文件下载保持 FileResponse。响应字段在 `backend/app/models/*_contracts.py`，车间请求在 `workshop_requests.py`。缺少必需字段时响应校验失败，不返回假成功。
+FastAPI/Pydantic 是 HTTP 数据契约的来源。业务模型在所属模块的 `contracts.py` 或共享 `backend/app/models/`。新增 JSON 接口优先使用明确的请求模型和 `ApiEnvelope[T]`，分页复用 `Items/Page` 并如实描述部署中的响应。焊接分页字段在 `query` 下。动态 SQL 列、能耗诊断等确实动态的字段可保留 JSON 类型，稳定响应使用具体模型。
 
-前端 `src/api/generated/` 是 Hey API 的生成产物，不手改。`src/types/cutting.ts`、`alarms.ts` 和车间报表类型只导出生成类型；页面草稿、浏览器请求选项保留本地类型。缓存、Cookie、设备参数和取消请求仍由现有 API 适配层负责。
+补齐旧接口类型时保留数字及 Decimal、日期、空值、缺失字段、附加字段和各状态分支。配置、自动化、焊接、领导、设备、能耗、报表任务及 AI 等既有接口使用 `responses={状态码: {'model': ApiEnvelope[T]}}` 配合 `response_model=None` 描述契约。该写法沿用现行序列化，不引入响应过滤和额外查询。修改契约或给新接口启用运行时响应校验时，用实际 HTTP 或 Service 载荷验证。下载按实际 MIME 描述并沿用文件响应。
 
-使用 Node >=22.18，在前端目录运行：
+前端 `src/api/generated/` 由现有 `@hey-api/openapi-ts` TypeScript 插件生成。业务调用优先引用生成的数据类型，稳定的已有名称可保留为类型别名。只写请求字段使用对应的 `*Writable` 类型。`request<T>()` 已解包 `data`，因此 `T` 使用业务数据类型。Cookie、产线和设备、取消、重试、缓存及下载继续由现有 API 适配层负责。
+
+页面草稿、URL 字符串筛选、驼峰参数适配、图表补零与任务轮询展示状态由前端处理，优先从生成类型派生。创建报表的最小接受响应和完整任务详情使用各自的类型。字段不一致时修正契约或调用方。
+
+### 生成类型
+
+新增参与类型复用的 Router 同步登记到 `scripts/export_api_contracts.py`。脚本只挂载 Router，导出时无需启动 Runtime 或连接数据源。在 `frontend/` 依次执行：
 
 ```sh
 pnpm run api:generate
 pnpm run api:check
+pnpm run typecheck
 ```
 
-脚本使用根目录 `.venv` 中的 Python，也可通过 `PYTHON` 指定已安装后端依赖的解释器。导出路由 OpenAPI 不启动 Web/Worker、不初始化或连接数据库，也不需要运行开发服务器。`api:check` 在临时目录重新生成并比对；GitHub 的 API contracts 工作流检查生成产物是否过期。
+使用 [开发指南](../project/development.md#环境准备) 的 Node 版本及 `.venv`，可通过 `PYTHON` 指定已安装后端依赖的解释器。`api:check` 在临时目录重新生成并比对。更新生成类型后修正调用方，并定向验证受影响的响应与调用。认证、设计器和系统诊断的历史接口按实际改动逐步纳入。
 
-变更顺序：修改 Pydantic/路由 → 生成 → 修正调用方 → 执行对应检查。配置、自动化、焊接、领导/设备/能耗、报表任务及 AI 等接口也已接入生成范围；具体序列化兼容规则见 [AGENTS.md](../../AGENTS.md#api-类型契约p07)。
+### 契约检查
+
+[API contracts 工作流](../../.github/workflows/api-contracts.yml)启动隔离 PostgreSQL 18，复用测试账号和迁移夹具，设置 `P5_TEST_POSTGRES=1`。JUnit 门禁要求工作流列出的契约、配置及 Runtime 边界测试模块均有收集，跳过、失败和错误均为零。工作流还单独检查生成类型漂移。
 
 ## 状态库与迁移
 
@@ -25,11 +34,9 @@ pnpm run api:check
 
 ## 车间模块边界
 
-- `api/workshop.py`：HTTP 输入、角色依赖、响应模型和错误码映射。
-- `services/workshop_service.py`：查询组织、筛选/统计/分页、日报生成和确认流程；不导入 FastAPI，不直接执行 SQL。
-- `database/users.py`：用户与权限身份记录；`sessions.py`：登录会话。
-- `database/workshop_reports.py`：日报、任务快照；`confirmations.py`：确认、撤销/改派和审计。
-- `database/workshop_scope.py`：共享设备范围约束。
-- `database/workshop.py`：保留原公开导入的兼容门面，不再承载实现。新运行时和新业务使用独立仓储；既有嵌入式调用和旧测试可继续使用门面，后续迁移调用方后再删除。
+- `modules/cutting/workshop_routes.py` 负责 HTTP 输入、角色依赖、响应与错误映射。
+- `modules/cutting/workshop.py` 组织查询、筛选、统计、分页及日报确认流程。
+- `database/users.py` 与 `database/sessions.py` 分别维护用户和会话。
+- `modules/cutting/workshop_repository.py` 维护日报及任务快照，`confirmations.py` 维护确认、撤销、改派及审计。`workshop_scope.py` 承载共享设备范围约束。
 
 与并发有关的条件更新、修订号检查、设备范围和权限冲突仍在同一数据库事务内校验；不为了分层将它们拆成先检查后写入的两个事务。UnitOfWork 显式提供日报、确认、用户和会话仓储，绑定同一连接；外部 SQL Server、模型、SMTP、魔盒调用不放进PostgreSQL状态写事务。

@@ -52,10 +52,15 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 - 配置解析由`configuration_sources`统一维护，优先级为`data/settings.env > 进程环境 > .env > 默认值`；业务使用传入Settings，不另读环境。
 - 产线目录、连接、自动化/SMTP及模型 ID 按现有白名单热加载。SQL容量、PG连接和其他冷参数按[配置参考](../deployment/配置参考.md)重启生效。只读诊断使用`inspect()`，不触发配置发布；比较四角色实际快照，不把目标值冒充已生效值。
 
+数据库配置的请求转换及脱敏位于 `services/database_configuration.py`，自动化配置契约位于 `modules/automation/configuration.py`。保存分别调用 `DatabaseRuntime.save_configuration` 和 `AutomationRuntime.save_configuration`。空密码优先保留锁内读到的最新文件值，文件无有效值时保留当前快照。路由负责调用 Runtime，锁、配置合并和发布由 Runtime 负责。
+
+配置字段在 `Settings` 声明环境键和默认值。热加载白名单在 `runtime.database.DATABASE_SETTINGS` 和 `modules.automation.runtime.HOT_SETTINGS`，新字段只有获得明确授权才纳入白名单与管理契约。具体可热加载的值以[配置参考](../deployment/配置参考.md#来源优先级与生效诊断)为准。
+
 ## 产线、设备与权限
 
 - `ProductionLineCatalog`从`PRODUCTION_LINES_JSON`校验稳定ID、类型、物理设备范围和`source_key`；外部连接只从`DATABASE_SOURCES_JSON`进入`DatabaseSourceRegistry`。
-- 同类型新实例通过配置接入；新类型登记构建函数、能力及对应业务入口，不复制公共Runtime/Worker/API。Provider统一访问与刷新契约，各产线保留自身指标、日期和单位。
+- `settings_for_line` 派生实例配置。同类型新实例通过配置接入并验证绑定与隔离。新类型在 `runtime/production_lines.py` 的 `ProductionLineRuntime` 接入可选能力，在 `runtime/application.py` 登记构建函数并实现领域 Repository、Service 和 Provider。通用 Worker 通过 `refresh_plan` 和 `report_snapshot_refresh` 服务各产线。切割月报沿用专属 bootstrap 与 AI 调度。
+- 数据源连接使用 `models/database_sources.py` 的配置模型与现有 SQL Server/MySQL 客户端。共享用途在 `runtime.database.source_bindings` 显式登记。装配时将当前来源客户端交给 Repository，再注入 Service。
 - 切割API必须显式提供唯一有效的`device_id`，焊接API明确提供`X-Production-Line`。产线头只限制能力，不能代替管理员/工人授权；前后端权限一致。
 - 任务确认以`(scope_machine_no, task_id)`隔离；日报按设备和日期保存，队列、导出、缓存、告警和分析继续保留设备/来源身份。不得凭当前默认设备猜历史归属。
 - BM船名通过可选`bm`数据源批量精确匹配完整工程号，字段缺失/冲突保留任务。工程统计键不变，确认/撤销不依赖BM可用性；PDM/派发船号保留原语义。
@@ -72,11 +77,11 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 
 四角色共享同一PG及本机文件卷，各复用一个有界PG池，不支持跨主机或网络共享卷。Web不启动后台消费者，不用多个Uvicorn workers替代Worker。
 
-Scheduler保留有界monotonic到期提示，PG中的计划/队列决定真实期限与去重；持久化失败不推进提示，来源/计划变化按新快照处理。Consumer每秒领取、5秒心跳，延迟任务按原退避和容量重新准入。
+Scheduler保留有界monotonic到期提示，PG中的计划/队列决定真实期限与去重；`BackgroundSchedule` 是领域提交周期及每日计划的入口。耗时准备仅在到期时执行，持久化失败不推进提示。来源、计划和停用变更按新快照处理，失效的内存提醒随后移除。Consumer 每秒领取、每 5 秒心跳。延迟任务保留 `next_attempt`，通常每 5 秒及容量释放时重新检查准入。
 
 后台使用30秒租约、5秒心跳和真实角色提交围栏。Consumer使用`worker:实例ID`租约，实例ID与每次获得的owner token分开；原生必须显式配置唯一`CONSUMER_INSTANCE_ID`，Docker使用容器身份。任务通过`SKIP LOCKED`原子领取，完成校验owner、claim_token和attempts，报表及能耗保留各自所有权检查。
 
-恢复只处理失效owner，不重置其他正常实例；来源缺失/不匹配的旧任务标为blocked，不猜测当前绑定。SMTP和派发结果未知时不盲目重试；数据库回滚不代表外部副作用撤销。
+恢复只处理失效owner，不重置其他正常实例；来源缺失/不匹配的旧任务标为blocked，不猜测当前绑定。SMTP和派发结果未知时不盲目重试；数据库回滚不代表外部副作用撤销。能耗任务的待提交结果由 Consumer 写入，热重建保留同 owner 的在途认领。提交围栏和恢复校验使用实际角色的 `execution_scope`。快照期限以持久化完成时间为准。Automation 独立负责计划和 SMTP，ReportWorker 不启动自动化或邮件线程。
 
 正式PG队列的三类周期分析入队时，仅合并同设备、同来源、同报表日期尚未执行的重复任务，原记录保留为completed/SUPERSEDED；在途轮次继续独立执行。分析失败保留原错误并短暂退避再试一次，达到两次队列执行后标为blocked，下一周期仍正常提交新任务。等待超过当前刷新间隔（至少30秒）的周期分析及Scheduler周期刷新在消费时跳过，避免恢复后补跑过期分析；历史月对账和手动刷新不套用周期刷新过期规则。既有429短重试、前台按需分析和最近成功结果保留规则不变。
 
@@ -118,7 +123,7 @@ Vue 3使用Soybean Admin、Naive UI、Pinia和UnoCSS。主题经现有store与`t
 - 数据库配置页始终展示全部来源与引用，业务配置表单使用页内独立的“配置对象”，默认目录第一条切割线、没有切割线时取第一条产线。读、写及连接测试显式绑定对象，未保存修改切换前确认；来源切换和空密码保留继续由原Runtime完成。
 - 数据库监控入口为`/admin/settings/database-monitors`；产线告警页只展示设备告警。报表推送入口为`/admin/automation`，旧地址`/admin/settings/automation`重定向至此；计划仍明确绑定切割产线，不因当前选中焊接而隐藏或改变归属。文件派发保留切割业务入口及现有共享数据，页面标明“切割产线共享”。
 
-表格、查询、指标及图表复用已有公共组件，单行、自适应360px文本上限、铺满容器、拖动与悬停全文等约束统一维护在[前端规范](../../AGENTS.md#前端设计开发规范)。
+表格、查询、指标及图表复用已有公共组件，单行、自适应360px文本上限、铺满容器、拖动与悬停全文等约束统一维护在[表格规范](development.md#表格)。
 
 文件派发的批量弹窗与专属样式由`DispatchBatchDialog`维护，派发执行与重试仍由`useCuttingDispatchBatch`协调。能耗报表的日期、路由、请求取消与激活恢复集中在`useEnergyReportQuery`，月汇总同步与有界轮询由`useEnergyReportSummary`维护；页面保留展示、导出和图表DOM生命周期。车间已有确认/更正弹窗及相关逻辑继续复用，不按行数强行拆分。
 

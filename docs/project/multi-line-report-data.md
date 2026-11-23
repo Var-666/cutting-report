@@ -4,11 +4,11 @@
 
 ## 共享能力与身份
 
-- `ProductionReportProvider`提供`report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`；业务查询与返回类型由各产线保留，不统一切割和焊接指标。
+- `ProductionReportProvider` 提供 `report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`。后台刷新参数必须可 JSON 序列化，各产线保留各自的查询类型、统计指标、单位和返回结构。
 - Provider 随不可变 `DatabaseServices` 发布，产线沿用真实 ID；PDM 由 Runtime 创建一次，登记于 `shared_reports`，使用独立身份 `@pdm-statistics`，不注册为设备。Scheduler、Consumer 共用解析入口，停用或来源变化的旧任务不能写入新来源。
-- `QueryCache`保存有界进程缓存，`CacheRevision`在同机共享卷发布失效修订，`ReportSnapshotService/ReportKey`通过PostgreSQL保存完整快照。切割领导月报、日报确认与能耗继续使用其专属业务结构。
+- `QueryCache`保存有界进程缓存，`CacheRevision`在同机共享卷发布失效修订，`ReportSnapshotService/ReportKey`通过PostgreSQL保存完整快照。普通缓存按产线、设备、来源、有效条件和必要版本隔离，可变结果由调用方复制。领导月报、日报确认与能耗保留各自的业务存储结构及新鲜度规则。
 - 快照键包含产线、类型、日期、规范化筛选、必要分页/排序、来源、schema和权限范围。配置切换后新操作使用新源键，在途旧操作只写旧键；设备/机器人/工艺/状态代码0都是有效条件。
-- `source_identity`用于来源隔离，`CacheRevision`仅失效进程缓存，存储`data_version`校验完整载荷。焊接公开业务版本仍由`WeldingService.version`生成，不能用存储校验和替换。
+- `source_identity`用于来源隔离，`CacheRevision`仅失效进程缓存，存储`data_version`校验完整载荷。焊接页面与现场导出使用 `WeldingService.version` 生成业务版本，`meta.report_data.data_version` 与页面公开版本一致。AI 验证页面版本并独立保存成功结果。现场导出随源数据变化可产生新版本，页面快照按原刷新流程维护。切割沿用自身分析版本算法。
 
 ## 页面查询
 
@@ -36,13 +36,13 @@ PDM 全量卡片、六张表和筛选选项使用同一快照流程；卡片不�
 
 ## 后台刷新与前端
 
-Scheduler 按全局周期执行 Provider 预热计划：切割当月领导、当日车间及设备统计，已接能耗的产线额外预热日、任务和当月能耗；焊接首页近7天、总览当前整月、当日日报公共聚合、任务及工件，设备页复用日报；PDM 全量卡片与默认当月报表。其他筛选、日期、选项、分页和排序按需生成，不扫描全部组合。保留领导历史校准、能耗补算和原模型分析节奏。
+Scheduler 按全局周期执行 Provider 预热计划：切割当月领导、当日车间及设备统计，已接能耗的产线额外预热日、任务和当月能耗；焊接首页近7天、总览当前整月、当日日报公共聚合、任务及工件，设备页复用日报；PDM 全量卡片与默认当月报表。焊接首页、总览及三个默认页面共五项预热。其他筛选、日期、选项、分页和排序按需生成，不扫描全部组合。保留领导历史校准、能耗补算和原模型分析节奏。
 
 Consumer复用原持久队列、产线锁、来源检查、去重与失败退避，不增加常驻线程或第二套缓存。任务提交时间`requested_at`与持久化完成时间参与原刷新合并；失败不覆盖旧快照，成功后发布跨进程失效修订。
 
-前端复用 `reportCache/readReport`，统一5分钟页面缓存且不超过服务端 `expires_at`；过期、更新中和失败结果不缓存为普通成功。`read` 可命中浏览器缓存，`reload` 重新读取服务端，`refresh` 提交一次刷新，`poll` 只检查结果。读取发起时固定产线身份，不能在异步执行前切换设备后污染旧键。共享 `ReportDataStatus` 显示北京时间及旧数据／失败／更新中状态，成功后替换结果。切换产线、已提交条件或离开时取消等待；不应用未提交草稿、不重复改写URL。PDM 每表保留独立筛选，默认报表的后台更新不得覆盖用户已修改的表。
+前端复用 `reportCache/readReport`，统一5分钟页面缓存且不超过服务端 `expires_at`；过期、更新中和失败结果不缓存为普通成功。`read` 可命中浏览器缓存，`reload` 重新读取服务端，`refresh` 提交一次刷新，`poll` 只检查结果。读取发起时固定产线身份，不能在异步执行前切换设备后污染旧键。共享 `ReportDataStatus` 显示北京时间及旧数据／失败／更新中状态，成功后替换结果。切换产线、已提交条件或离开时取消等待；不应用未提交草稿、不重复改写URL。焊接首页只监听有效产线和规范化条件。无关 URL 参数变化不清空数据、不重发请求或重启轮询。PDM 每表保留独立筛选，默认报表的后台更新不得覆盖用户已修改的表。
 
-已配置快照与协调器的页面读取使用现有有界工作池，焊接与 PDM 使用 `snapshot_requests`；焊接现场查询或嵌入式回退仍用 `welding_requests`。队列满、执行池排队、连接池耗尽、源查询失败分别处理，不扩大自动重试。
+已配置快照与协调器的页面读取使用现有有界工作池，焊接与 PDM 使用 `snapshot_requests`；焊接分析的快照前置读也使用 `snapshot_requests`。现场导出、下钻及缺少快照或协调器的嵌入式回退使用通用查询池 `query_requests`。队列满、执行池排队、连接池耗尽、源查询失败分别处理，不扩大自动重试。
 
 ## 新鲜度、容量与验证边界
 
@@ -51,6 +51,8 @@ Consumer复用原持久队列、产线锁、来源检查、去重与失败退避
 管理员在现有数据库配置页“统计缓存与刷新”保存四项全局参数，沿用锁内读取、候选校验、0600原子写入和发布。失败保留原文件与服务图；Web立即发布，各后台角色按下一操作加载，在途任务继续旧引用。发布失效修订后按原完成时间及新有效期判断，不伪造更新时间；明确失效的快照不会因延长有效期而复活。保存成功清理当前浏览器会话的统计缓存，其他会话下一次服务端读取采用新策略；配置诊断仅观察各角色已发布值，不触发热加载。
 
 快照保存使用短PG事务并校验执行租约，外部SQL不占状态写事务；有界淘汰和现有64/256队列策略保留。没有快照的源库故障不能返回假空数据；有快照也必须标明截止时间与过期状态。
+
+焊接查询日志记录产线、类型、日期、命中和分阶段耗时。禁止记录凭据、完整筛选或 SQL 参数。现场索引或扫描结论需要真实表结构、规模及 EXPLAIN 证据。
 
 仓储、隔离与并发回归位于 `test_report_snapshots.py/test_cutting_statistics_snapshots.py/test_welding_snapshots.py/test_pdm_statistics_snapshots.py`，配置与策略位于 `test_database_runtime.py/test_report_cache_policy.py`；前端缓存、轮询、取消及页面状态分别由对应局部测试覆盖。使用模拟源和隔离 PostgreSQL 验证，不由本地结果推导生产提升比例；现场性能需要真实规模及执行计划。
 
