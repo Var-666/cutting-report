@@ -1,10 +1,10 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from app.database.automation import AutomationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.automation.repository import AutomationRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.users import UserRepository
-from app.services.automation_service import next_run_at, report_date_for
+from app.modules.automation.schedules import next_run_at, report_date_for
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -104,36 +104,36 @@ def test_schedule_and_email_retry_history_are_persisted(state_database, tmp_path
         system_version="test",
     )
     repository.attach_report(run["run_id"], "rpt_automation_test", now=now)
-    delivery = repository.enqueue_delivery(
+    delivery = repository.deliveries.enqueue_delivery(
         "rpt_automation_test", subject="每日车间报表", now=now
     )
     assert delivery is not None
 
-    first = repository.claim_delivery(now)
+    first = repository.deliveries.claim_delivery(now)
     assert first is not None and first["attempt_count"] == 1
-    repository.mark_delivery_failed(
+    repository.deliveries.mark_delivery_failed(
         first,
         error="SMTP timeout",
         next_attempt_at="2026-08-24T18:01:00+08:00",
         now=now,
     )
-    second = repository.claim_delivery("2026-08-24T18:02:00+08:00")
+    second = repository.deliveries.claim_delivery("2026-08-24T18:02:00+08:00")
     assert second is not None and second["attempt_count"] == 2
-    repository.mark_delivery_failed(
+    repository.deliveries.mark_delivery_failed(
         second,
         error="SMTP timeout again",
         next_attempt_at="2026-08-24T18:04:00+08:00",
         now="2026-08-24T18:02:00+08:00",
     )
 
-    items, total = repository.list_deliveries(page=1, page_size=20)
+    items, total = repository.deliveries.list_deliveries(page=1, page_size=20)
     assert total == 1
     assert items[0]["status"] == "failed"
     assert items[0]["attempt_count"] == 2
     assert repository.summary()["delivery_failed"] == 1
 
-    assert repository.retry_delivery(delivery["delivery_id"], now=now)
-    retried = repository.claim_delivery(now)
+    assert repository.deliveries.retry_delivery(delivery["delivery_id"], now=now)
+    retried = repository.deliveries.claim_delivery(now)
     assert retried is not None and retried["attempt_count"] == 1
-    repository.mark_delivery_sent(retried, message_id="<message@example.com>", now=now)
+    repository.deliveries.mark_delivery_sent(retried, message_id="<message@example.com>", now=now)
     assert repository.summary()["delivery_sent"] == 1

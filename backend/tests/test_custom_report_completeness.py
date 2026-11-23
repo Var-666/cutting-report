@@ -7,9 +7,9 @@ import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
 from app.database.sqlserver import SqlServerClient
-from app.services.custom_report_service import CustomReportService
-from app.services.report_generation.custom import prepare_report
-from app.services.report_service import ReportService
+from app.modules.reports.custom import CustomReportService
+from app.modules.reports.generation.custom import prepare_report
+from app.modules.reports.service import ReportService
 from app.models.designer import TemplateConfig
 from app.core.report_deadline import report_deadline
 

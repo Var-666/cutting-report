@@ -9,11 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
-from app.database.automation import AutomationRepository
-from app.services.email_service import (
+from app.modules.automation import delivery_repository
+from app.modules.automation.repository import AutomationRepository
+from app.modules.automation.email import (
     EmailService, EmailDeliveryFailure, EmailDeliveryUnknown, EmailRecipientsRefused,
 )
-from app.services.email_report import EmailReport
+from app.modules.reports.generation.email import EmailReport
 from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
@@ -41,8 +42,8 @@ def smtp_service(monkeypatch, responses, *, quit_error=False):
                 raise result
             return result
 
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
-    monkeypatch.setattr("app.services.pdf_service.PdfService.render_email", lambda self, path, **kwargs: EmailReport("<h1>日报</h1>", {}))
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP", SMTP)
+    monkeypatch.setattr("app.modules.reports.pdf.PdfService.render_email", lambda self, path, **kwargs: EmailReport("<h1>日报</h1>", {}))
     configured = replace(settings, smtp_enabled=True, smtp_host="smtp.example.com",
                          smtp_from_email="report@example.com", smtp_username="", smtp_use_tls=False,
                          smtp_use_ssl=False)
@@ -79,7 +80,7 @@ def test_quit_failure_does_not_erase_received_delivery_result(monkeypatch, respo
 
 def test_smtp_stages_share_one_wall_clock_budget(monkeypatch):
     clock = iter([0.0, 1.0, 2.0, 25.0])
-    monkeypatch.setattr("app.services.email_service.monotonic", lambda: next(clock))
+    monkeypatch.setattr("app.modules.automation.email.monotonic", lambda: next(clock))
     sent = []
 
     class SMTP:
@@ -102,7 +103,7 @@ def test_smtp_stages_share_one_wall_clock_budget(monkeypatch):
             sent.append(message)
             return {}
 
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP", SMTP)
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP", SMTP)
     configured = replace(
         settings,
         smtp_enabled=True,
@@ -165,21 +166,21 @@ def test_partial_refusal_retries_only_rejected_recipients_with_same_message_id(w
     caplog.set_level(logging.INFO, logger='app.services.automation_service')
     repository, service, report_id = ready(workflow, ["a@example.com", "b@example.com"])
     email, configured, sent = smtp_service(monkeypatch, [{"b@example.com": (450, b"later")}, {}])
-    service.email_service = email
+    service.delivery.email_service = email
     service.runtime.apply(smtp_enabled=configured.smtp_enabled, smtp_host=configured.smtp_host,
                           smtp_from_email=configured.smtp_from_email, smtp_username="",
                           smtp_use_tls=False, smtp_use_ssl=False)
-    assert service.process_next_email(NOW)
-    first = repository.delivery_for_report(report_id)
+    assert service.delivery.process_next_email(NOW)
+    first = repository.deliveries.delivery_for_report(report_id)
     assert first["status"] == "retry_wait"
     assert first["recipients"] == ["b@example.com"]
     assert first["recipient_results"]["a@example.com"]["status"] == "accepted"
-    assert not repository.retry_delivery(first["delivery_id"], now=STAMP)
-    assert service.process_next_email(NOW + timedelta(hours=2))
+    assert not repository.deliveries.retry_delivery(first["delivery_id"], now=STAMP)
+    assert service.delivery.process_next_email(NOW + timedelta(hours=2))
     assert sent[0]["To"] == "a@example.com, b@example.com"
     assert sent[1]["To"] == "b@example.com"
     assert sent[0]["Message-ID"] == sent[1]["Message-ID"] == first["message_id"]
-    final = repository.delivery_for_report(report_id)
+    final = repository.deliveries.delivery_for_report(report_id)
     assert final["status"] == "sent"
     assert all(value["status"] == "accepted" for value in final["recipient_results"].values())
     logs = [record.operations_fields for record in caplog.records if hasattr(record, 'operations_fields')]
@@ -194,14 +195,14 @@ def test_mixed_refusal_automatically_retries_only_4xx_and_keeps_partial_failure(
     email, configured, sent = smtp_service(monkeypatch, [{
         'b@example.com': (450, b'temporary'), 'c@example.com': (550, b'permanent'),
     }, {}])
-    service.email_service = email
+    service.delivery.email_service = email
     service.runtime.apply(smtp_enabled=True, smtp_host=configured.smtp_host, smtp_from_email=configured.smtp_from_email,
                           smtp_username='', smtp_use_tls=False, smtp_use_ssl=False)
-    assert service.process_next_email(NOW)
-    first = repository.delivery_for_report(report_id)
+    assert service.delivery.process_next_email(NOW)
+    first = repository.deliveries.delivery_for_report(report_id)
     assert first['status'] == 'retry_wait' and first['recipients'] == ['b@example.com']
-    assert service.process_next_email(NOW + timedelta(hours=2))
-    final = repository.delivery_for_report(report_id)
+    assert service.delivery.process_next_email(NOW + timedelta(hours=2))
+    final = repository.deliveries.delivery_for_report(report_id)
     assert final['status'] == 'failed' and final['recipients'] == ['c@example.com']
     assert final['recipient_results'] == {
         'a@example.com': {'status': 'accepted'}, 'b@example.com': {'status': 'accepted'},
@@ -209,7 +210,7 @@ def test_mixed_refusal_automatically_retries_only_4xx_and_keeps_partial_failure(
     }
     assert sent[1]['To'] == 'b@example.com'
     assert sent[0]['Message-ID'] == sent[1]['Message-ID']
-    assert not service.process_next_email(NOW + timedelta(hours=4))
+    assert not service.delivery.process_next_email(NOW + timedelta(hours=4))
 
 
 def test_corrupted_html_is_stopped_before_submitting_any_email(workflow):
@@ -219,34 +220,34 @@ def test_corrupted_html_is_stopped_before_submitting_any_email(workflow):
     path.write_bytes(data.replace(b'h1', b'h2'))
     def reject(*_args, **_kwargs):
         pytest.fail('SMTP must never receive an unverified archive')
-    service.email_service = SimpleNamespace(send=reject)
-    assert service.process_next_email(NOW)
-    record = repository.delivery_for_report(report_id)
+    service.delivery.email_service = SimpleNamespace(send=reject)
+    assert service.delivery.process_next_email(NOW)
+    record = repository.deliveries.delivery_for_report(report_id)
     assert record['status'] == 'retry_wait' and '尚未提交 SMTP' in record['last_error']
 
 
 def test_success_then_database_failure_is_not_automatically_resent(workflow, monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger='app.services.automation_service')
     repository, service, report_id = ready(workflow)
-    service.email_service = SimpleNamespace(send=lambda job, *args, **kwargs: job["message_id"])
-    monkeypatch.setattr(repository, "mark_delivery_sent", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("disk failure")))
+    service.delivery.email_service = SimpleNamespace(send=lambda job, *args, **kwargs: job["message_id"])
+    monkeypatch.setattr(repository.deliveries, "mark_delivery_sent", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("disk failure")))
     with pytest.raises(RuntimeError, match="disk failure"):
-        service.process_next_email(NOW)
+        service.delivery.process_next_email(NOW)
     assert not any(getattr(record, 'operations_fields', {}).get('error_code') == 'SMTP_ACCEPTED'
                    for record in caplog.records)
-    assert repository.delivery_for_report(report_id)["status"] == "sending"
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "sending"
     restarted = AutomationRepository(repository.database)
-    assert restarted.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"
+    assert restarted.deliveries.delivery_for_report(report_id)["status"] == "sending", "Web schema initialization must not disturb live SMTP"
     from app.database.coordination import CoordinationRepository
     from app.database.postgres import execution_scope
     owner = CoordinationRepository(repository.database).acquire('automation',ttl=30)
     with execution_scope(repository.database,'automation',owner):
-        restarted.recover_interrupted_deliveries()
-    record = restarted.delivery_for_report(report_id)
+        restarted.deliveries.recover_interrupted_deliveries()
+    record = restarted.deliveries.delivery_for_report(report_id)
     assert record["status"] == "unknown"
     assert record["message_id"]
-    assert restarted.claim_delivery("2026-10-01T09:00:00+08:00") is None
-    assert not restarted.retry_delivery(record["delivery_id"], now=STAMP)
+    assert restarted.deliveries.claim_delivery("2026-10-01T09:00:00+08:00") is None
+    assert not restarted.deliveries.retry_delivery(record["delivery_id"], now=STAMP)
 
 
 def test_only_new_automation_can_recover_unknown_smtp_and_old_owner_cannot_mark_sent(workflow):
@@ -256,73 +257,73 @@ def test_only_new_automation_can_recover_unknown_smtp_and_old_owner_cannot_mark_
     coordination = CoordinationRepository(repository.database)
     owner = coordination.acquire("automation", ttl=30)
     with execution_scope(repository.database, "automation", owner):
-        delivery = repository.claim_delivery(STAMP)
+        delivery = repository.deliveries.claim_delivery(STAMP)
     # Web initialization neither resets sending nor allows recovery without a Worker lease.
-    assert repository.delivery_for_report(report_id)["status"] == "sending"
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "sending"
     with pytest.raises(ExecutionLeaseLost):
-        repository.recover_interrupted_deliveries()
+        repository.deliveries.recover_interrupted_deliveries()
     with repository.connect() as connection:
         connection.execute("UPDATE process_leases SET expires_at=0")
     replacement = coordination.acquire("automation", ttl=30)
     with execution_scope(repository.database, "automation", replacement):
-        repository.recover_interrupted_deliveries()
-    assert repository.delivery_for_report(report_id)["status"] == "unknown"
-    assert repository.claim_delivery(STAMP) is None
-    assert not repository.retry_delivery(delivery["delivery_id"], now=STAMP)
+        repository.deliveries.recover_interrupted_deliveries()
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "unknown"
+    assert repository.deliveries.claim_delivery(STAMP) is None
+    assert not repository.deliveries.retry_delivery(delivery["delivery_id"], now=STAMP)
     with execution_scope(repository.database, "automation", owner), pytest.raises(ExecutionLeaseLost):
-        repository.mark_delivery_sent(delivery, message_id=delivery["message_id"], now=STAMP)
-    assert repository.delivery_for_report(report_id)["status"] == "unknown"
+        repository.deliveries.mark_delivery_sent(delivery, message_id=delivery["message_id"], now=STAMP)
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "unknown"
 
 
 @pytest.mark.parametrize("status", ["pending", "sending", "sent", "retry_wait", "unknown"])
 def test_manual_retry_cannot_reset_active_sent_or_unknown_delivery(workflow, status):
     repository, _, report_id = ready(workflow)
-    record = repository.delivery_for_report(report_id)
+    record = repository.deliveries.delivery_for_report(report_id)
     with repository.connect() as connection:
         connection.execute("UPDATE email_deliveries SET status = %s WHERE report_id = %s", (status, report_id))
-    assert not repository.retry_delivery(record["delivery_id"], now=STAMP)
-    assert repository.delivery_for_report(report_id)["status"] == status
+    assert not repository.deliveries.retry_delivery(record["delivery_id"], now=STAMP)
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == status
 
 
 def test_concurrent_manual_retries_claim_failed_delivery_once(workflow):
     repository, _, report_id = ready(workflow)
-    record = repository.claim_delivery(STAMP)
+    record = repository.deliveries.claim_delivery(STAMP)
     record["attempt_count"] = record["max_attempts"]
-    repository.mark_delivery_failed(record, error="all refused", next_attempt_at=STAMP, now=STAMP)
+    repository.deliveries.mark_delivery_failed(record, error="all refused", next_attempt_at=STAMP, now=STAMP)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: repository.retry_delivery(record["delivery_id"], now=STAMP), range(2)))
+        results = list(pool.map(lambda _: repository.deliveries.retry_delivery(record["delivery_id"], now=STAMP), range(2)))
     assert sorted(results) == [False, True]
 
 
 def test_delivery_and_run_status_commit_atomically(workflow, monkeypatch):
     repository, _, report_id = ready(workflow)
-    record = repository.claim_delivery(STAMP)
-    monkeypatch.setattr(AutomationRepository, "mark_run", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("run write failed")))
+    record = repository.deliveries.claim_delivery(STAMP)
+    monkeypatch.setattr(delivery_repository, "update_run", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("run write failed")))
     with pytest.raises(RuntimeError, match="run write failed"):
-        repository.mark_delivery_sent(record, message_id=record["message_id"], now=STAMP)
-    assert repository.delivery_for_report(report_id)["status"] == "sending"
+        repository.deliveries.mark_delivery_sent(record, message_id=record["message_id"], now=STAMP)
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "sending"
 
 
 def test_unknown_outcome_is_held_and_stale_callback_cannot_change_it(workflow):
     repository, service, report_id = ready(workflow)
-    service.email_service = SimpleNamespace(send=lambda *args, **kwargs: (_ for _ in ()).throw(EmailDeliveryUnknown("lost DATA reply")))
-    assert service.process_next_email(NOW)
-    record = repository.delivery_for_report(report_id)
+    service.delivery.email_service = SimpleNamespace(send=lambda *args, **kwargs: (_ for _ in ()).throw(EmailDeliveryUnknown("lost DATA reply")))
+    assert service.delivery.process_next_email(NOW)
+    record = repository.deliveries.delivery_for_report(report_id)
     assert record["status"] == "unknown"
     assert repository.summary()["delivery_unknown"] == 1
     assert all(item["status"] == "unknown" for item in record["recipient_results"].values())
-    assert repository.claim_delivery("2026-10-01T09:00:00+08:00") is None
+    assert repository.deliveries.claim_delivery("2026-10-01T09:00:00+08:00") is None
     with pytest.raises(LookupError):
-        repository.mark_delivery_sent(record, message_id=record["message_id"], now=STAMP)
-    assert repository.delivery_for_report(report_id)["status"] == "unknown"
+        repository.deliveries.mark_delivery_sent(record, message_id=record["message_id"], now=STAMP)
+    assert repository.deliveries.delivery_for_report(report_id)["status"] == "unknown"
 
 
 def test_retry_api_reports_conflict_for_unknown_or_active_mail(workflow):
-    from app.api.automation import retry_delivery
+    from app.modules.automation.routes import retry_delivery
     from fastapi import HTTPException
 
     repository, _, report_id = ready(workflow)
-    record = repository.delivery_for_report(report_id)
+    record = repository.deliveries.delivery_for_report(report_id)
     app = embedded_app(settings)
     app.state.runtime.automation = repository
     request = request_for(app)

@@ -4,10 +4,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.database.automation import AutomationRepository
+from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.dispatch import DispatchRepository
-from app.database.metadata import MetadataRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.unit_of_work import UnitOfWork
 from app.database.users import UserRepository
 

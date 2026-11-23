@@ -7,11 +7,11 @@ from dotenv import dotenv_values
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api import automation
+from app.modules.automation import routes as automation
 from app.api.runtime import request_automation_settings
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
-from app.services.email_service import EmailService
+from app.modules.automation.runtime import AutomationRuntime
+from app.modules.automation.email import EmailService
 from app.services.runtime_settings_store import write_runtime_env
 
 
@@ -149,7 +149,7 @@ def test_failed_save_keeps_active_configuration(tmp_path, monkeypatch) -> None:
     def fail_write(_path, _values):
         raise OSError("disk unavailable")
 
-    monkeypatch.setattr("app.services.automation_runtime.write_runtime_env", fail_write)
+    monkeypatch.setattr("app.modules.automation.runtime.write_runtime_env", fail_write)
     with pytest.raises(HTTPException, match="配置保存失败"):
         automation.save_automation_configuration(
             automation.AutomationConfigurationRequest(
@@ -202,7 +202,7 @@ def test_failed_candidate_preparation_does_not_write_or_publish(tmp_path, monkey
     write_runtime_env(path, {'CUSTOM_VALUE': 'keep'})
     runtime = AutomationRuntime(initial)
     before = path.read_bytes()
-    monkeypatch.setattr('app.services.automation_runtime.replace', lambda *_, **__: (_ for _ in ()).throw(ValueError('private-details')))
+    monkeypatch.setattr('app.modules.automation.runtime.replace', lambda *_, **__: (_ for _ in ()).throw(ValueError('private-details')))
     with pytest.raises(HTTPException) as error:
         automation.save_automation_configuration(automation.AutomationConfigurationRequest(), _request(runtime))
     assert error.value.status_code == 500 and 'private-details' not in error.value.detail

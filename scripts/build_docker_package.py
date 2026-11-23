@@ -80,14 +80,14 @@ def collect_files(root: Path) -> dict[str, bytes]:
         "backend/app/worker.py", "backend/app/database/coordination.py", "backend/app/api/workloads.py",
         "frontend/dist/index.html", "vendor/echarts.min.js",
         "frontend/dist/licenses/soybean-admin/LICENSE",
-        "backend/app/api/energy.py", "backend/app/database/energy.py",
-        "backend/app/services/energy_period_service.py",
+        "backend/app/modules/energy/routes.py", "backend/app/modules/energy/repository.py",
+        "backend/app/modules/energy/periods.py",
         "frontend/src/views/EnergyPeriodReportView.vue",
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
         "frontend/src/views/CuttingDispatchView.vue",
-        "backend/app/api/welding.py", "backend/app/database/welding.py",
-        "backend/app/services/welding_service.py", "frontend/src/views/WeldingReportView.vue",
+        "backend/app/modules/welding/routes.py", "backend/app/modules/welding/repository.py",
+        "backend/app/modules/welding/service.py", "frontend/src/views/WeldingReportView.vue",
     )
     for name in required:
         if name not in payload:

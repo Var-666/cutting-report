@@ -2,8 +2,8 @@ from psycopg.errors import ForeignKeyViolation
 
 import pytest
 
-from app.database.confirmations import ConfirmationRepository
-from app.database.workshop_errors import ConfirmationConflictError, DailyReportRecordMismatchError, DailyReportScopeMismatchError
+from app.modules.cutting.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_errors import ConfirmationConflictError, DailyReportRecordMismatchError, DailyReportScopeMismatchError
 from test_workshop_snapshot_sync import record, setup
 
 

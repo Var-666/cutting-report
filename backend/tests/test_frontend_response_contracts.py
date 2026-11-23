@@ -3,7 +3,7 @@
 External production sources are replaced; routes, services and JSON conversion run.
 """
 
-from app.services.production_reports import CuttingReportProvider
+from app.modules.cutting.reports import CuttingReportProvider
 from tests.runtime_factories import make_device_runtime
 from tests.web_fixtures import embedded_app, database_services, replace_database_services
 from tests.line_fixtures import source_client
@@ -15,14 +15,16 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import auth, leadership, welding
+from app.api import auth
+from app.modules.cutting import leadership_routes as leadership
+from app.modules.welding import routes as welding
 from tests.line_fixtures import cutting_settings, welding_settings
 from app.device_config import load_line_catalog
-from app.database.welding import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
+from app.modules.welding.repository import JOB_FIELDS, PART_FIELDS, SEAM_FIELDS, WeldingRepository
 from app.database.sessions import SessionRepository
 from app.database.users import UserRepository
-from app.services.leadership_report_service import LeadershipReportService
-from app.services.welding_service import WeldingService
+from app.modules.cutting.leadership import LeadershipReportService
+from app.modules.welding.service import WeldingService
 
 
 @pytest.fixture
@@ -177,7 +179,7 @@ def test_welding_report_response_contract(client, kind, path, empty):
     replace_database_services(client.app, catalog=load_line_catalog(instance.settings.production_lines_json))
     client.headers['X-Production-Line'] = 'welding'
     report = data(client.get(f'/api/v1/welding/{path}?start=2026-10-01&end=2026-10-01'))
-    from app.models.welding_contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport
+    from app.modules.welding.contracts import WeldingDailyReport, WeldingJobsReport, WeldingPartsReport, WeldingEquipmentReport
     model = {'daily': WeldingDailyReport, 'jobs': WeldingJobsReport,
              'parts': WeldingPartsReport, 'equipment': WeldingEquipmentReport}[kind]
     assert model.model_validate(report).model_dump(mode='json', exclude_unset=True) == report
@@ -225,7 +227,7 @@ def test_welding_part_response_contract(client):
     replace_database_services(client.app, catalog=load_line_catalog(instance.settings.production_lines_json))
     client.headers['X-Production-Line'] = 'welding'
     result = data(client.get('/api/v1/welding/parts/1'))
-    from app.models.welding_contracts import WeldingPart
+    from app.modules.welding.contracts import WeldingPart
     assert WeldingPart.model_validate(result).model_dump(mode='json', exclude_unset=True) == result
     assert type(result['part']['id']) is int
     assert result['part']['serial_number'] is None

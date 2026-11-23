@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.services.report_cache_policy import report_ttl, report_refresh_seconds
+from app.modules.reports.cache_policy import report_ttl, report_refresh_seconds
 from tests.line_fixtures import configuration, line_settings
 
 
@@ -24,7 +24,7 @@ def test_all_lines_share_current_history_and_refresh_policy(tmp_path, line_id):
 
 
 def test_energy_uses_global_period_ttl_and_retains_cross_day_revalidation(tmp_path):
-    from app.services.energy_period_service import EnergyPeriodService
+    from app.modules.energy.periods import EnergyPeriodService
     cfg = replace(line_settings(configuration(tmp_path)), leadership_report_cache_seconds=73,
         leadership_report_history_cache_seconds=119)
     energy = EnergyPeriodService(cfg, None)
@@ -40,7 +40,7 @@ def test_energy_uses_global_period_ttl_and_retains_cross_day_revalidation(tmp_pa
 
 
 def test_energy_source_cache_can_be_disabled_by_the_shared_query_setting(tmp_path, monkeypatch):
-    from app.services.energy_api import EnergyApiClient
+    from app.modules.energy.client import EnergyApiClient
     cfg = replace(line_settings(configuration(tmp_path)), report_data_cache_seconds=0)
     client = EnergyApiClient(cfg)
     calls = []

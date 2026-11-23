@@ -12,10 +12,10 @@ from fastapi.testclient import TestClient
 
 import pytest
 
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.workshop_errors import (
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.workshop_errors import (
     ConfirmationConflictError,
     DailyReportScopeMismatchError,
     DailyReportSourceMismatchError,
@@ -42,7 +42,7 @@ def setup(state_database, tmp_path):
 
 
 def test_source_correction_routes_are_removed_without_removing_confirmation_routes():
-    from app.api.workshop import router
+    from app.modules.cutting.workshop_routes import router
 
     app = embedded_app()
     app.include_router(router)
@@ -282,7 +282,7 @@ def test_production_field_updates_preserve_task_identity_and_confirmation_histor
 @pytest.mark.parametrize('corrected', [False, True])
 def test_http_generation_and_task_list_accept_changed_production_data(state_database, tmp_path, corrected):
     from app.api.auth import require_user
-    from app.api.workshop import router
+    from app.modules.cutting.workshop_routes import router
     from tests.line_fixtures import cutting_settings
     from app.models.domain import QueryBundle
 
@@ -330,10 +330,10 @@ def test_http_generation_and_task_list_accept_changed_production_data(state_data
 
 def test_automation_preparation_syncs_existing_snapshot(state_database, tmp_path):
     from tests.line_fixtures import cutting_settings
-    from app.database.automation import AutomationRepository
-    from app.database.metadata import MetadataRepository
+    from app.modules.automation.repository import AutomationRepository
+    from app.modules.reports.repository import MetadataRepository
     from app.models.domain import QueryBundle
-    from app.services.automation_service import AutomationService
+    from app.modules.automation.schedules import AutomationService
 
     workshop = setup(state_database, tmp_path)
     cfg = cutting_settings(project_root=tmp_path, data_source_mode='sqlserver', demo_mode=False)

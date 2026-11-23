@@ -8,8 +8,10 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
-API = BACKEND / "app" / "api"
-DATABASE_RUNTIME = BACKEND / "app" / "services" / "database_runtime.py"
+APP = BACKEND / "app"
+API = APP / "api"
+MODULES = APP / "modules"
+DATABASE_RUNTIME = APP / "runtime" / "database.py"
 DATABASE_PACKAGE = "app.database"
 REMOVED_MODULE = f"{DATABASE_PACKAGE}.workshop"
 REMOVED_NAME = "Workshop" + "Repository"
@@ -78,8 +80,15 @@ def _api_probe(node, path):
     return True
 
 
+def _is_api(path: Path) -> bool:
+    return path.is_relative_to(API) or (
+        path.is_relative_to(MODULES)
+        and (path.name in {"routes.py", "report_reads.py"} or path.name.endswith("_routes.py"))
+    )
+
+
 def _runtime_casts(tree, path):
-    if path.is_relative_to(API):
+    if _is_api(path):
         scope = tree
     elif path == DATABASE_RUNTIME:
         scope = next(node for node in tree.body
@@ -102,7 +111,7 @@ def test_runtime_shape_boundary():
         for node in ast.walk(tree):
             if _removed_repository(node, path):
                 errors.append(f"{rel}:{node.lineno}: removed repository")
-            if path.is_relative_to(API) and isinstance(node, ast.Call) and _api_probe(node, path):
+            if _is_api(path) and isinstance(node, ast.Call) and _api_probe(node, path):
                 errors.append(f"{rel}:{node.lineno}: runtime shape probe")
         errors.extend(f"{rel}:{node.lineno}: runtime shape cast" for node in _runtime_casts(tree, path))
     assert not errors, "\n".join(sorted(set(errors)))

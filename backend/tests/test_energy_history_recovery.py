@@ -6,9 +6,9 @@ import pytest
 from app.core.operations_logging import configured_logging, operation_context
 from app.database.operations import OperationsRepository
 from app.models.operations import IncidentFilters
-from app.services.energy_api import EnergyApiError
+from app.modules.energy.client import EnergyApiError
 from app.services.operations_service import BUSINESS_ERROR_CODES, RECOVERY_EVIDENCE
-from app.workers.energy_history_worker import EnergyHistoryWorker
+from app.modules.energy.history import EnergyHistoryWorker
 from tests.energy_period_fixtures import NOW, service
 
 
@@ -138,7 +138,7 @@ def test_completion_write_retry_does_not_repeat_external_query(tmp_path, state_d
         worker._process(worker._claim())
     assert worker._pending_finish is not None
     monkeypatch.setattr(worker.repository, "reschedule_history_month", original)
-    worker._flush_pending_finish()
+    worker.flush_pending_finish()
     assert worker._pending_finish is None
     assert calls == [date(2026, 8, 1)]
     assert worker._claim() is None
@@ -161,9 +161,9 @@ def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, state_dat
 
     monkeypatch.setattr(worker.repository, 'reschedule_history_month', finish)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        old = pool.submit(worker._flush_pending_finish)
+        old = pool.submit(worker.flush_pending_finish)
         assert entered.wait(1)
-        new = pool.submit(replacement._flush_pending_finish)
+        new = pool.submit(replacement.flush_pending_finish)
         release.set()
         old.result(timeout=2)
         new.result(timeout=2)
@@ -173,7 +173,7 @@ def test_hot_snapshots_share_one_serialized_completion_retry(tmp_path, state_dat
 
 def test_sampling_configuration_isolates_persisted_queue(tmp_path, state_database):
     from dataclasses import replace
-    from app.services.energy_period_service import EnergyPeriodService
+    from app.modules.energy.periods import EnergyPeriodService
 
     worker, _ = worker_and_clock(tmp_path, state_database)
     worker.schedule_range(date(2026, 8, 1), date(2026, 8, 1))

@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.models.domain import EquipmentRecord
-from app.services.equipment_service import (
+from app.modules.cutting.equipment import (
     mock_energy,
     sort_equipment_records,
     summarize_equipment,

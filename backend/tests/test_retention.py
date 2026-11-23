@@ -7,15 +7,15 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.database.alarms import AlarmRepository
-from app.database.automation import AutomationRepository
-from app.database.dispatch import DispatchRepository
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.automation.repository import AutomationRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.retention import RetentionRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.services.retention_service import RetentionService
 from app.workers.retention_worker import RetentionWorker
 
@@ -75,7 +75,7 @@ def _alarm(source_id: int, *, closed: bool) -> dict:
 
 def test_dispatch_summary_survives_history_retention_and_still_appears_in_file_list(state_database, tmp_path):
     from app.database.pdm import MockPdmRepository
-    from app.services.cutting_dispatch_service import CuttingDispatchService
+    from app.modules.cutting.dispatch import CuttingDispatchService
     from app.services.file_source import DisabledFileSource
 
     *_, dispatches, _downloads, retention, admin = _repositories(state_database, tmp_path)
@@ -144,17 +144,17 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
                   dispatch_retention_days=0, audit_retention_days=0)
 
     def report(identifier, members, *, failed=False):
-        alarms.reserve_report(proposed_report_id=identifier, emission_key=identifier,
+        alarms.reports.reserve_report(proposed_report_id=identifier, emission_key=identifier,
             machine_no="Cutter01", incident_ids=[ids[i] for i in members], now=OLD)
         if failed:
-            alarms.fail_report(identifier, "生成失败后关联被解除")
+            alarms.reports.fail_report(identifier, "生成失败后关联被解除")
             return
         html = cfg.reports_dir / "alarms" / f"{identifier}.html"
         html.parent.mkdir(parents=True, exist_ok=True)
         html.write_text("report", encoding="utf-8")
         html.with_suffix(".pdf").write_bytes(b"pdf")
         html.with_suffix(".pdf.source").write_text("cache signature")
-        alarms.complete_report(identifier, analysis={}, model_status="model",
+        alarms.reports.complete_report(identifier, analysis={}, model_status="model",
             completed_at=NOW.isoformat(), html_relative_path=f"alarms/{identifier}.html",
             pdf_relative_path=f"alarms/{identifier}.pdf", pdf_filename=f"{identifier}.pdf",
             file_size=3, sha256="test")
@@ -169,10 +169,10 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
     assert result["records"]["alarm_events"] == 2
     assert result["records"]["alarm_reports"] == 1
     assert result["files"] == {"deleted": 2, "missing": 0, "failed": 0}
-    assert alarms.get_report("expired") is None
+    assert alarms.reports.get_report("expired") is None
     assert {item["first_alarm_id"] for item in alarms.list_incidents(None)} == {2, 3, 4}
     for identifier in ("failed-open", "shared", "boundary"):
-        assert alarms.get_report(identifier) is not None
+        assert alarms.reports.get_report(identifier) is not None
     assert (cfg.reports_dir / "alarms/shared.pdf").is_file()
     assert not (cfg.reports_dir / "alarms/expired.pdf").exists()
     assert (cfg.reports_dir / "alarms/shared.pdf.source").is_file()
@@ -184,7 +184,7 @@ def test_alarm_retention_uses_occurrence_and_preserves_reports_with_unresolved_m
     later = RetentionService(cfg, retention).cleanup_expired(now=NOW + timedelta(days=31))
     assert later["records"]["alarm_reports"] == 3
     assert alarms.list_incidents(None) == []
-    assert alarms.list_reports() == []
+    assert alarms.reports.list_reports() == []
 
 
 @pytest.mark.parametrize("delivery_status", ["pending", "unknown", "cancelled"])
@@ -279,7 +279,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     old_time = datetime.fromisoformat(OLD)
     alarms.ingest([_alarm(1, closed=True)], now=old_time, cursor=1, debounce_minutes=10)
     old_incident = alarms.list_incidents("closed")[0]
-    alarm_report_id = alarms.reserve_report(
+    alarm_report_id = alarms.reports.reserve_report(
         proposed_report_id="old-alarm-report",
         emission_key="old-alarm",
         machine_no="20kw切割机",
@@ -291,7 +291,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     alarm_html.parent.mkdir(parents=True)
     alarm_html.write_text("alarm", encoding="utf-8")
     alarm_pdf.write_bytes(b"alarm-pdf")
-    alarms.complete_report(
+    alarms.reports.complete_report(
         alarm_report_id,
         analysis={"summary": "old"},
         html_relative_path="alarms/2025/01/old.html",
@@ -309,7 +309,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
         debounce_minutes=10,
     )
     open_incident = alarms.list_incidents("open")[0]
-    active_alarm_report_id = alarms.reserve_report(
+    active_alarm_report_id = alarms.reports.reserve_report(
         proposed_report_id="active-alarm-report",
         emission_key="active-alarm",
         machine_no="20kw切割机",
@@ -321,7 +321,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     active_alarm_html.parent.mkdir(parents=True, exist_ok=True)
     active_alarm_html.write_text("active", encoding="utf-8")
     active_alarm_pdf.write_bytes(b"active-pdf")
-    alarms.complete_report(
+    alarms.reports.complete_report(
         active_alarm_report_id,
         analysis={"summary": "active"},
         html_relative_path="alarms/active.html",
@@ -494,14 +494,14 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
         "pending-delivery-report",
         now=OLD,
     )
-    assert automation.enqueue_delivery(
+    assert automation.deliveries.enqueue_delivery(
         "pending-delivery-report",
         subject="待发送",
         now=OLD,
     ) is not None
     if delivery_status == "unknown":
-        delivery = automation.claim_delivery(OLD)
-        automation.mark_delivery_unknown(delivery, now=OLD)
+        delivery = automation.deliveries.claim_delivery(OLD)
+        automation.deliveries.mark_delivery_unknown(delivery, now=OLD)
     elif cancelled:
         assert automation.cancel_manual_run(pending_run["run_id"], now=OLD)["status"] == "cancelled"
 
@@ -544,7 +544,7 @@ def test_unified_retention_removes_only_expired_terminal_data(state_database, tm
     assert not old_html.exists() and not old_pdf.exists()
     assert not alarm_html.exists() and not alarm_pdf.exists()
     assert active_alarm_html.is_file() and active_alarm_pdf.is_file()
-    assert alarms.get_report("active-alarm-report") is not None
+    assert alarms.reports.get_report("active-alarm-report") is not None
     assert metadata.get_analysis(
         "recent-analysis",
         report_type="equipment",

@@ -3,13 +3,13 @@ from __future__ import annotations
 from types import TracebackType
 from psycopg import Connection
 
-from app.database.automation import AutomationRepository
+from app.modules.automation.repository import AutomationRepository
 from app.database.definitions import DefinitionRepository
-from app.database.dispatch import DispatchRepository
-from app.database.metadata import MetadataRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.postgres import PostgresDatabase
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
 

@@ -48,7 +48,7 @@ def _late_write(cfg, owner, entered, resume, output):
 
 
 def _claim_report(cfg, owner, output):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     with PostgresDatabase(cfg) as database, execution_scope(database, "worker:test-consumer", owner):
         output.put(MetadataRepository(database).claim_next_job("2026-10-24T10:00:00+08:00") is not None)
 
@@ -148,7 +148,7 @@ def test_expiry_fences_a_transaction_opened_by_another_process_before_takeover(p
 
 
 def test_report_claim_is_atomic_between_processes(postgres_state):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     context = mp.get_context("spawn")
     database = postgres_state[0]
     repository = CoordinationRepository(database)
@@ -184,7 +184,7 @@ def test_executor_bounds_running_and_waiting_work():
 
 
 def test_energy_snapshot_compare_and_swap_keeps_concurrent_result(postgres_state):
-    from app.database.energy import EnergyReportRepository
+    from app.modules.energy.repository import EnergyReportRepository
     repository = EnergyReportRepository(postgres_state[0])
     original = {"report_date": "2026-10-24", "updated_at": "same-second", "rows": []}
     newer = {**original, "rows": [{"value": 1}]}

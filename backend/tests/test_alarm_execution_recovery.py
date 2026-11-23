@@ -9,8 +9,9 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.database.alarms import AlarmLeaseLostError, AlarmRepository
-from app.services.alarm_report_service import AlarmReportService
+from app.modules.alarms.leases import AlarmLeaseLostError
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.alarms.reports import AlarmReportService
 from test_alarm_recheck import NOW, START, monitor
 from test_alarm_monitor import alarm
 
@@ -42,10 +43,10 @@ def repository(state_database, tmp_path):
 
 
 def reserve(repository, owner=None, now=NOW):
-    incidents = repository.list_unreported_incidents()
+    incidents = repository.reports.list_unreported_incidents()
     ids = sorted(item["incident_id"] for item in incidents)
     key = hashlib.sha256("\n".join(ids).encode()).hexdigest()
-    return repository.reserve_report(proposed_report_id="interrupted", emission_key=key,
+    return repository.reports.reserve_report(proposed_report_id="interrupted", emission_key=key,
         machine_no="20kw切割机", incident_ids=ids, now=now.isoformat(),
         lease_owner=owner, lease_now=now)
 
@@ -54,16 +55,16 @@ def test_restart_recovers_report_associations_and_completes_once(repository):
     # Simulate an old process dying after durable reservation, before AI/PDF.
     assert repository.try_acquire_lease("dead-process", NOW, ttl_seconds=1)
     reserve(repository, "dead-process")
-    assert repository.list_unreported_incidents() == []
+    assert repository.reports.list_unreported_incidents() == []
     restarted = AlarmRepository(repository.database, source_name="production")
     restarted.initialize()
     service = monitor(restarted, Source())
     result = service.run_once(NOW + timedelta(seconds=2))
     assert result["report_id"] == "interrupted"
     assert result["report_status"] == "completed"
-    assert restarted.list_unreported_incidents() == []
+    assert restarted.reports.list_unreported_incidents() == []
     assert service.run_once(NOW + timedelta(seconds=3))["report_status"] == "idle"
-    assert len(restarted.list_reports()) == 1
+    assert len(restarted.reports.list_reports()) == 1
 
 
 def test_rate_limited_report_is_safely_recorded_and_retried_on_next_scan(repository):
@@ -77,15 +78,15 @@ def test_rate_limited_report_is_safely_recorded_and_retried_on_next_scan(reposit
     assert failed["report_status"] == "failed"
     assert failed["report_error"] == "模型接口限流"
     report_id = failed["report_id"]
-    assert repository.get_report(report_id)["error_message"] == "模型接口限流"
-    assert repository.list_unreported_incidents()
+    assert repository.reports.get_report(report_id)["error_message"] == "模型接口限流"
+    assert repository.reports.list_unreported_incidents()
 
     service.analyzer.analyze = analyze
     retried = service.run_once(NOW + timedelta(minutes=5))
     assert retried["report_id"] == report_id
     assert retried["report_status"] == "completed"
-    assert repository.get_report(report_id)["error_message"] is None
-    assert len(repository.list_reports()) == 1
+    assert repository.reports.get_report(report_id)["error_message"] is None
+    assert len(repository.reports.list_reports()) == 1
 
 
 def test_expired_owner_cannot_renew_ingest_complete_fail_or_clear_new_lease(repository):
@@ -94,7 +95,7 @@ def test_expired_owner_cannot_renew_ingest_complete_fail_or_clear_new_lease(repo
     later = NOW + timedelta(seconds=2)
     assert not repository.renew_lease("old", later)
     assert repository.try_acquire_lease("new", later)
-    assert repository.recover_interrupted_reports("new", later) == 1
+    assert repository.reports.recover_interrupted_reports("new", later) == 1
     assert reserve(repository, "new", later) == report_id
     artifact = dict(html_relative_path="new.html", pdf_relative_path="new.pdf", pdf_filename="new.pdf",
                     file_size=1, sha256="new")
@@ -102,18 +103,18 @@ def test_expired_owner_cannot_renew_ingest_complete_fail_or_clear_new_lease(repo
         repository.ingest([alarm(2)], now=later, cursor=2, debounce_minutes=10, lease_owner="old")
     assert repository.get_cursor() == 1
     with pytest.raises(AlarmLeaseLostError):
-        repository.complete_report(report_id, analysis={}, model_status="model", completed_at=later.isoformat(),
+        repository.reports.complete_report(report_id, analysis={}, model_status="model", completed_at=later.isoformat(),
                                    lease_owner="old", lease_now=later, **artifact)
     with pytest.raises(AlarmLeaseLostError):
-        repository.fail_report(report_id, "late failure", lease_owner="old", lease_now=later)
+        repository.reports.fail_report(report_id, "late failure", lease_owner="old", lease_now=later)
     # Omitting ownership is not an escape hatch for an owned report.
     with pytest.raises(AlarmLeaseLostError):
-        repository.fail_report(report_id, "legacy caller")
+        repository.reports.fail_report(report_id, "legacy caller")
     repository.release_lease("old")
     assert repository.renew_lease("new", later)
-    repository.complete_report(report_id, analysis={}, model_status="model", completed_at=later.isoformat(),
+    repository.reports.complete_report(report_id, analysis={}, model_status="model", completed_at=later.isoformat(),
                                lease_owner="new", lease_now=later, **artifact)
-    assert repository.get_report(report_id)["sha256"] == "new"
+    assert repository.reports.get_report(report_id)["sha256"] == "new"
 
 
 def test_same_service_is_non_reentrant_and_long_analysis_renews_lease(repository, monkeypatch):
@@ -179,7 +180,7 @@ def test_lease_takeover_during_render_cannot_fail_new_attempt(repository):
 
     def render(**kwargs):
         assert repository.try_acquire_lease("new-process", later)
-        assert repository.recover_interrupted_reports("new-process", later) == 1
+        assert repository.reports.recover_interrupted_reports("new-process", later) == 1
         assert reserve(repository, "new-process", later) == kwargs["report_id"]
         return artifact
 
@@ -187,19 +188,19 @@ def test_lease_takeover_during_render_cannot_fail_new_attempt(repository):
     with pytest.raises(AlarmLeaseLostError):
         service.run_once(NOW)
     assert discarded == [artifact]
-    report = repository.list_reports()[0]
+    report = repository.reports.list_reports()[0]
     assert report["status"] == "generating"
     assert report["execution_owner"] == "new-process"
     assert repository.renew_lease("new-process", later)
-    assert repository.list_unreported_incidents() == []
+    assert repository.reports.list_unreported_incidents() == []
 
 
 def test_recovery_requires_live_lease_and_releases_local_lock_after_error(repository, monkeypatch):
     assert repository.try_acquire_lease("live", NOW)
     reserve(repository, "live")
     with pytest.raises(AlarmLeaseLostError):
-        repository.recover_interrupted_reports("outsider", NOW)
-    assert repository.get_report("interrupted")["status"] == "generating"
+        repository.reports.recover_interrupted_reports("outsider", NOW)
+    assert repository.reports.get_report("interrupted")["status"] == "generating"
     repository.release_lease("live")
     service = monitor(repository, Source())
     original = repository.try_acquire_lease
@@ -213,7 +214,7 @@ def test_recovery_requires_live_lease_and_releases_local_lock_after_error(reposi
 def test_renewal_thread_start_failure_does_not_leak_service_lock_or_lease(repository, monkeypatch):
     service = monitor(repository, Source())
     with monkeypatch.context() as scope:
-        scope.setattr("app.services.alarm_monitor_service.threading.Thread.start",
+        scope.setattr("app.modules.alarms.monitoring.threading.Thread.start",
                       lambda _: (_ for _ in ()).throw(RuntimeError("thread capacity exhausted")))
         with pytest.raises(RuntimeError, match="thread capacity exhausted"):
             service.run_once(NOW)

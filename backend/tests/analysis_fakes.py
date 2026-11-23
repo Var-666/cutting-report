@@ -2,7 +2,7 @@ from dataclasses import replace
 
 from app.config import Settings
 from app.models.domain import AnalysisResult
-from app.services.llm_service import LlmService
+from app.modules.reports.analysis.llm import LlmService
 
 
 def worker_settings_with_fake_model(settings: Settings) -> Settings:
@@ -15,7 +15,7 @@ def model_analysis(_report_type: str, context: dict) -> AnalysisResult:
     """Return a deterministic model-shaped result for tests outside LLM transport."""
     period = context.get("report_month") or context.get("report_date") or "当前周期"
     if 'scope' in context:
-        from app.services.report_analysis.brief_validation import validate_brief
+        from app.modules.reports.analysis.brief_validation import validate_brief
         findings = [
             dict(candidate_id=candidate['id'], title=candidate['title'],
                  detail='{{F020}}。请核对原始任务记录。')

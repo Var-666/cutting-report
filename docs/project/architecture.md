@@ -20,12 +20,23 @@ FastAPI API → Service → Repository / 外部客户端
 
 ### 职责与依赖
 
-- `api/`负责HTTP输入、角色权限、请求容量和状态映射；业务规则放`services/`，SQL及原子约束放`database/`。默认调用方向为`api/workers → services → database`。
+核心业务按领域组织在 `backend/app/modules/` 下。
+
+| 模块 | 主要职责 |
+| --- | --- |
+| `cutting` | 切割查询和 SQL，领导、车间及设备统计，确认、派发、报表 Provider 与刷新 |
+| `welding` | MySQL 只读仓储，焊接统计、明细、快照访问、分析与导出 |
+| `energy` | 能管接口、仪表算法、任务能耗、日/月/区间统计和历史同步 |
+| `alarms` | 告警源、监测、事件归并、分析及报告生成与持久化 |
+| `automation` | 配置热加载、计划认领与执行、SMTP 投递与结果核对 |
+| `reports` | Provider 契约、快照和缓存、AI 分析、报告归档及 HTML/PDF 渲染 |
+
+- 领域路由负责 HTTP 输入、角色权限、请求容量和状态映射。默认调用方向为 `Routes → Service → Repository`，跨领域调用使用公开接口。认证、PDM、配置和运维入口继续使用现有目录。
 - `models/`保存领域与HTTP契约，`core/`保存共享取消注册表、执行期限、进程锁和SQL容量，不放业务字段或服务定位器。
-- `main.py`、各后台入口、`application_runtime.py`和`device_runtime.py`是装配边界；允许连接Service、Repository和Worker。`services/frontend_static.py`仅供Web提供静态资源。
+- `runtime/application.py` 是 Composition Root，切割及焊接的模块内 `runtime.py` 构建各自实例。Web 和后台入口复用同一套装配。`services/frontend_static.py`仅供Web提供静态资源。
 - 取消、期限、进程锁统一从`app.core`导入。条件模型/校验在`models/conditions.py`，字段映射与SQL/Mock编译在`database/condition_fields.py`和`condition_query.py`；`condition_service.py`只提供公开schema。
-- 切割筛选/最近生产日SQL位于`database/queries/`，由`cutting_queries.py`执行；HR与魔盒配置查询分别归`database/hr.py`、`magic_box.py`。焊接SQL和模型等待登记分别归已有焊接、协调仓储，Service保留业务编排。
-- 确认归属、派发唯一性、告警归并/认领、租约和队列状态等原子约束留在同一仓储事务内；不为了分层拆成先检查后写入。
+- 切割报表、筛选和最近生产日 SQL 位于 `modules/cutting/queries/`，由领域仓储执行；HR与魔盒配置查询分别归`database/hr.py`、`magic_box.py`。焊接SQL和模型等待登记分别归已有焊接、协调仓储，Service保留业务编排。
+- 确认归属、派发唯一性、告警归并和游标推进、报告认领和事件关联、邮件投递和计划运行状态更新各自保留同一事务。告警与自动化分别使用专属报告和投递仓储，绑定已有连接时沿用原事务。
 
 ### 兼容边界
 
@@ -33,7 +44,7 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 
 ## Runtime与配置
 
-- `application_runtime.build_runtime(settings, role=...)`装配各角色共享资源，`build_device_runtime`装配切割业务。所有产线实例统一登记在`DatabaseServices.lines`。
+- `runtime.application.build_runtime(settings, role=...)` 装配各角色共享资源，通过 `build_cutting_line` 和 `build_welding_line` 构建产线。所有产线实例统一登记在`DatabaseServices.lines`。
 - Web只挂载`app.state.runtime`。API通过`application_state`获取共享资源，`runtime_state`固定单请求的数据库服务快照，`device_state`校验唯一有效的`device_id`；Worker在新操作边界固定快照。在途操作继续使用原服务引用。
 - `DatabaseRuntime`和`AutomationRuntime`管理不可变配置快照。保存复用进程锁、锁内读改写、空密码保留、候选校验及原子文件发布；失败保留旧快照，不关闭仍被在途请求引用的连接池。
 - 请求期配置只通过 `request_settings` 获取；进程入口构造 `Settings` 并显式注入；禁止模块级 `Settings` 单例。
@@ -41,10 +52,15 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 - 配置解析由`configuration_sources`统一维护，优先级为`data/settings.env > 进程环境 > .env > 默认值`；业务使用传入Settings，不另读环境。
 - 产线目录、连接、自动化/SMTP及模型 ID 按现有白名单热加载。SQL容量、PG连接和其他冷参数按[配置参考](../deployment/配置参考.md)重启生效。只读诊断使用`inspect()`，不触发配置发布；比较四角色实际快照，不把目标值冒充已生效值。
 
+数据库配置的请求转换及脱敏位于 `services/database_configuration.py`，自动化配置契约位于 `modules/automation/configuration.py`。保存分别调用 `DatabaseRuntime.save_configuration` 和 `AutomationRuntime.save_configuration`。空密码优先保留锁内读到的最新文件值，文件无有效值时保留当前快照。路由负责调用 Runtime，锁、配置合并和发布由 Runtime 负责。
+
+配置字段在 `Settings` 声明环境键和默认值。热加载白名单在 `runtime.database.DATABASE_SETTINGS` 和 `modules.automation.runtime.HOT_SETTINGS`，新字段只有获得明确授权才纳入白名单与管理契约。具体可热加载的值以[配置参考](../deployment/配置参考.md#来源优先级与生效诊断)为准。
+
 ## 产线、设备与权限
 
 - `ProductionLineCatalog`从`PRODUCTION_LINES_JSON`校验稳定ID、类型、物理设备范围和`source_key`；外部连接只从`DATABASE_SOURCES_JSON`进入`DatabaseSourceRegistry`。
-- 同类型新实例通过配置接入；新类型登记构建函数、能力及对应业务入口，不复制公共Runtime/Worker/API。Provider统一访问与刷新契约，各产线保留自身指标、日期和单位。
+- `settings_for_line` 派生实例配置。同类型新实例通过配置接入并验证绑定与隔离。新类型在 `runtime/production_lines.py` 的 `ProductionLineRuntime` 接入可选能力，在 `runtime/application.py` 登记构建函数并实现领域 Repository、Service 和 Provider。通用 Worker 通过 `refresh_plan` 和 `report_snapshot_refresh` 服务各产线。切割月报沿用专属 bootstrap 与 AI 调度。
+- 数据源连接使用 `models/database_sources.py` 的配置模型与现有 SQL Server/MySQL 客户端。共享用途在 `runtime.database.source_bindings` 显式登记。装配时将当前来源客户端交给 Repository，再注入 Service。
 - 切割API必须显式提供唯一有效的`device_id`，焊接API明确提供`X-Production-Line`。产线头只限制能力，不能代替管理员/工人授权；前后端权限一致。
 - 任务确认以`(scope_machine_no, task_id)`隔离；日报按设备和日期保存，队列、导出、缓存、告警和分析继续保留设备/来源身份。不得凭当前默认设备猜历史归属。
 - BM船名通过可选`bm`数据源批量精确匹配完整工程号，字段缺失/冲突保留任务。工程统计键不变，确认/撤销不依赖BM可用性；PDM/派发船号保留原语义。
@@ -61,11 +77,11 @@ API 和 Service 只按 `ApplicationRuntime`、`DatabaseServices` 和 `DeviceRunt
 
 四角色共享同一PG及本机文件卷，各复用一个有界PG池，不支持跨主机或网络共享卷。Web不启动后台消费者，不用多个Uvicorn workers替代Worker。
 
-Scheduler保留有界monotonic到期提示，PG中的计划/队列决定真实期限与去重；持久化失败不推进提示，来源/计划变化按新快照处理。Consumer每秒领取、5秒心跳，延迟任务按原退避和容量重新准入。
+Scheduler保留有界monotonic到期提示，PG中的计划/队列决定真实期限与去重；`BackgroundSchedule` 是领域提交周期及每日计划的入口。耗时准备仅在到期时执行，持久化失败不推进提示。来源、计划和停用变更按新快照处理，失效的内存提醒随后移除。Consumer 每秒领取、每 5 秒心跳。延迟任务保留 `next_attempt`，通常每 5 秒及容量释放时重新检查准入。
 
 后台使用30秒租约、5秒心跳和真实角色提交围栏。Consumer使用`worker:实例ID`租约，实例ID与每次获得的owner token分开；原生必须显式配置唯一`CONSUMER_INSTANCE_ID`，Docker使用容器身份。任务通过`SKIP LOCKED`原子领取，完成校验owner、claim_token和attempts，报表及能耗保留各自所有权检查。
 
-恢复只处理失效owner，不重置其他正常实例；来源缺失/不匹配的旧任务标为blocked，不猜测当前绑定。SMTP和派发结果未知时不盲目重试；数据库回滚不代表外部副作用撤销。
+恢复只处理失效owner，不重置其他正常实例；来源缺失/不匹配的旧任务标为blocked，不猜测当前绑定。SMTP和派发结果未知时不盲目重试；数据库回滚不代表外部副作用撤销。能耗任务的待提交结果由 Consumer 写入，热重建保留同 owner 的在途认领。提交围栏和恢复校验使用实际角色的 `execution_scope`。快照期限以持久化完成时间为准。Automation 独立负责计划和 SMTP，ReportWorker 不启动自动化或邮件线程。
 
 正式PG队列的三类周期分析入队时，仅合并同设备、同来源、同报表日期尚未执行的重复任务，原记录保留为completed/SUPERSEDED；在途轮次继续独立执行。分析失败保留原错误并短暂退避再试一次，达到两次队列执行后标为blocked，下一周期仍正常提交新任务。等待超过当前刷新间隔（至少30秒）的周期分析及Scheduler周期刷新在消费时跳过，避免恢复后补跑过期分析；历史月对账和手动刷新不套用周期刷新过期规则。既有429短重试、前台按需分析和最近成功结果保留规则不变。
 
@@ -82,15 +98,16 @@ Web健康检查区分Web/PG可用性与`background_ready`；后台状态读取�
 
 ## 报表、缓存与智能分析
 
+- 设备报表与任务能耗共用任务区间校验、累计表差值及分表聚合；两条路径分别保留已配置的仪表范围和采样间隔。
 - 页面、HTML/PDF导出与分析共用统计口径、时区和区间。管理员车间/设备报表默认当天，无数据展示空状态，不回退到旧生产日；工人任务日期规则独立保留。
 - 日报同步更新已有任务的生产字段并追加新任务，保留日报/任务身份、确认及审计；不因字段变化拒绝整页。字段修订及旧页面确认保护见[功能参考](功能与接口参考.md#账号与车间确认)。
 - 查询复用有界`QueryCache`，跨进程失效复用`CacheRevision`，持久快照复用`ReportSnapshotService/ReportKey`及原队列。切割领导月报与能耗保留专属快照，焊接聚合和分页快照规则见[缓存与快照](multi-line-report-data.md)。
 - 前端保留当前设备的领导、车间、设备报表，返回时先展示匹配条件的已有数据并静默更新；跨日期/设备不混用，首次无缓存仍需加载。失活取消轮询和在途订阅，重新激活不叠加监听。
-- `services/report_analysis/`按三类切割报表构建权威事实、候选及完整业务关联，模型仅接收带覆盖说明的必要样本和汇总；`common.py`共享规范化和业务版本算法；`ReportAnalysisService`处理源版本、缓存/单飞、期限、模型及持久化。
-- 提示词和版本统一在`services/llm_prompts.py`。`llm_service.py`保留请求、限流、重试、取消/期限、用量和JSON校验；焊接与告警保留独立单位及输出契约。
+- `modules/reports/analysis/` 按三类切割报表构建权威事实、候选及完整业务关联，模型仅接收带覆盖说明的必要样本和汇总；`common.py`共享规范化和业务版本算法；`ReportAnalysisService`处理源版本、缓存/单飞、期限、模型及持久化。
+- 提示词和版本统一在`modules/reports/analysis/prompts.py`。`analysis/llm.py`保留请求、限流、重试、取消/期限、用量和JSON校验；焊接与告警保留独立单位及输出契约。
 - 焊接分析由 `WeldingService` 复用 `MetadataRepository` 的持久成功缓存和009迁移；同范围更新失败保留原分析、时间与事实，页面重开只读缓存，HTML/PDF同样复用。隔离和首次无缓存规则见[焊接集成](welding-integration.md#api)。
 - 切割分析新增可选 `brief`，模型只返回结论、事实ID、候选发现和跟进动作；后端校验引用、数字/日期及变化方向，再绑定原产线/周期内的真实业务对象。完整关联保存在既有分析JSON中，前端预览3项并按页查看全部；任务通过车间区间接口的精确 `task_id` 筛选定位。旧四字段由确定性适配保留，历史JSON无需迁移；焊接四段契约及告警专用契约独立保留。输入、输出和示例见[智能分析依据](功能与接口参考.md#智能分析依据)。
-- `services/report_generation/`按领导、车间、设备和自定义报表准备内容，显式接收协作服务。`ReportPipeline`统一校验设备、取消/超时和分析交付条件，渲染后在一个UnitOfWork保存报告及完成状态。
+- `modules/reports/generation/` 按领导、车间、设备和自定义报表准备内容，显式接收协作服务。`ReportPipeline`统一校验设备、取消/超时和分析交付条件，渲染后在一个UnitOfWork保存报告及完成状态。
 - 生产数据刷新与模型执行分开；默认页先读同设备/来源/周期成功分析，后台按配置更新，失败保留已有结果。新报表及邮件先校验本次分析输入，匹配版本才复用，变化时重新分析，失败后才回退同范围历史成功结果；无成功结果时不发布，切割继续使用009迁移的持久等待及退避。历史分析保留原时间、版本与事实，并通过 `cache_note` 标明旧数据依据；范围隔离及交付规则见[智能分析依据](功能与接口参考.md#智能分析依据)。分析版本冲突及导出现场校验继续生效，不能用旧快照绕过业务校验。
 - 系统设置中的数据库监控按管理员登记的独立 IP/端口检测 TCP 可达性，不登记业务数据源、不获取凭据或调用模型。Scheduler 每60秒提交全局 `database_monitor` 任务，Consumer复用原队列及租约串行执行，每个连接超时5秒；过期轮次丢弃，已检测过的旧轮次不补探测。目标修订号和观察版本保护在途结果；目标、故障与恢复记录由 `database_monitors/database_monitor_incidents` 保存，部署追加008迁移。规则及页面语义见[数据库端口监控](功能与接口参考.md#数据库端口监控)。
 
@@ -106,7 +123,7 @@ Vue 3使用Soybean Admin、Naive UI、Pinia和UnoCSS。主题经现有store与`t
 - 数据库配置页始终展示全部来源与引用，业务配置表单使用页内独立的“配置对象”，默认目录第一条切割线、没有切割线时取第一条产线。读、写及连接测试显式绑定对象，未保存修改切换前确认；来源切换和空密码保留继续由原Runtime完成。
 - 数据库监控入口为`/admin/settings/database-monitors`；产线告警页只展示设备告警。报表推送入口为`/admin/automation`，旧地址`/admin/settings/automation`重定向至此；计划仍明确绑定切割产线，不因当前选中焊接而隐藏或改变归属。文件派发保留切割业务入口及现有共享数据，页面标明“切割产线共享”。
 
-表格、查询、指标及图表复用已有公共组件，单行、自适应360px文本上限、铺满容器、拖动与悬停全文等约束统一维护在[前端规范](../../AGENTS.md#前端设计开发规范)。
+表格、查询、指标及图表复用已有公共组件，单行、自适应360px文本上限、铺满容器、拖动与悬停全文等约束统一维护在[表格规范](development.md#表格)。
 
 文件派发的批量弹窗与专属样式由`DispatchBatchDialog`维护，派发执行与重试仍由`useCuttingDispatchBatch`协调。能耗报表的日期、路由、请求取消与激活恢复集中在`useEnergyReportQuery`，月汇总同步与有界轮询由`useEnergyReportSummary`维护；页面保留展示、导出和图表DOM生命周期。车间已有确认/更正弹窗及相关逻辑继续复用，不按行数强行拆分。
 

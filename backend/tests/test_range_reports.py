@@ -1,8 +1,8 @@
 from tests.web_fixtures import cutting_request, embedded_app, replace_database_services
 from tests.runtime_factories import make_device_runtime, make_pipeline_stub
-from app.services.production_reports import CuttingReportProvider
+from app.modules.cutting.reports import CuttingReportProvider
 from app.config import Settings
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import source_client
 from tests.line_fixtures import as_line_services, runtime_line
 from datetime import date, datetime, timedelta
@@ -16,15 +16,15 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from tests.line_fixtures import cutting_settings
-from app.api.analysis import AnalysisRequest, analyze_report, get_analysis_version
-from app.api.leadership import get_leadership_report
-from app.api.workshop import list_range_tasks
-from app.database.metadata import MetadataRepository
+from app.modules.cutting.analysis_routes import AnalysisRequest, analyze_report, get_analysis_version
+from app.modules.cutting.leadership_routes import get_leadership_report
+from app.modules.cutting.workshop_routes import list_range_tasks
+from app.modules.reports.repository import MetadataRepository
 from app.models.api import ReportCreateRequest
 from app.models.domain import WorkshopRecord
-from app.services.pipeline import ReportPipeline
-from app.services.range_report_service import previous_equal_range
-from app.services.report_analysis_service import combined_analysis_source_version
+from app.modules.cutting.pipeline import ReportPipeline
+from app.modules.cutting.range_reports import previous_equal_range
+from app.modules.reports.analysis.service import combined_analysis_source_version
 from tests.analysis_fakes import model_analysis
 
 
@@ -112,9 +112,9 @@ def test_report_request_normalizes_and_limits_inclusive_period() -> None:
 ])
 def test_report_creation_preserves_monthly_and_explicit_range_semantics(body, stored_period, effective_period):
     from fastapi.testclient import TestClient
-    from app.api import reports
+    from app.modules.reports import routes as reports
     from app.api.auth import require_admin
-    from app.services.report_generation.common import _job_period
+    from app.modules.reports.generation.common import _job_period
 
     jobs = []
     app = embedded_app()
@@ -142,7 +142,7 @@ def test_report_creation_replay_is_atomic_and_scoped_to_admin_line_and_payload(s
     from concurrent.futures import ThreadPoolExecutor
     from uuid import uuid4
 
-    from app.api.reports import create_report
+    from app.modules.reports.routes import create_report
 
     def request(line):
         metadata = MetadataRepository(state_database, device_id=line)
@@ -502,7 +502,7 @@ def test_workshop_task_link_filters_real_id_within_original_period(state_databas
     settings, metadata, pipeline = _pipeline(state_database, tmp_path)
     _, records = pipeline.range_service.workshop_records(date(2026, 8, 18), date(2026, 8, 20))
     assert records
-    from app.services.workshop_service import WorkshopService
+    from app.modules.cutting.workshop import WorkshopService
     service = WorkshopService(None, None, settings, range_report_service=pipeline.range_service)
     query = dict(start_date=date(2026, 8, 18), end_date=date(2026, 8, 20), project_name=None,
         confirmation_status='all', page=1, page_size=10, task_id=records[0].task_id)
@@ -516,7 +516,7 @@ def test_workshop_task_link_filters_real_id_within_original_period(state_databas
 @pytest.mark.parametrize('kind', ['leadership', 'workshop', 'equipment'])
 def test_html_export_displays_dynamic_brief_and_keeps_backend_evidence(state_database, tmp_path, kind):
     from app.models.domain import AnalysisResult
-    from app.services.report_analysis.brief_validation import validate_brief
+    from app.modules.reports.analysis.brief_validation import validate_brief
     settings, metadata, pipeline = _pipeline(state_database, tmp_path)
     def model(report_type, context):
         candidate = context['candidates'][0]

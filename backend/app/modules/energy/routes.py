@@ -1,0 +1,154 @@
+from datetime import date
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from app.api.workloads import query_requests
+from app.api.devices import device_state
+from app.modules.cutting.report_reads import statistics_page
+from app.api.auth import require_admin
+from app.database.sqlserver import SqlServerConfigurationError
+from app.models.domain import ReportFilter, to_primitive
+from app.models.contracts import ApiEnvelope
+from app.modules.energy.contracts import EnergyDayReport, TaskEnergyReport, EnergyMonthReport, EnergyPeriodReport, EnergyRangeReport
+from app.modules.reports.analysis.service import (
+    analysis_table_source_version,
+    equipment_analysis_source_version,
+)
+from app.core.request_cancellation import SqlRequestCancelled
+from app.core.sql_capacity import SqlCapacityError
+from app.core.report_deadline import ReportOperationTimeout
+
+
+router = APIRouter(prefix="/api/v1/energy-report", tags=["energy-report"], dependencies=[Depends(require_admin)])
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.energy')
+
+
+def _add_analysis_source_version(task_report: dict) -> dict:
+    task_report.pop("source_failed", None)
+    task_report["analysis_source_version"] = equipment_analysis_source_version(
+        task_report
+    )
+    return task_report
+
+
+router.dependencies.append(Depends(device_state))
+
+
+@query_requests.route(router.get("/day", response_model=None, responses={200: {"model": ApiEnvelope[EnergyDayReport]}}))
+def get_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
+    service = device_state(request).energy_period_service
+    selected = report_date or service.now().date()
+    if not 1900 <= selected.year <= 2100:
+        raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
+    data = statistics_page(request, 'energy:day', {'report_date': selected}, refresh=refresh)
+    if data is not None:
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
+    data = service.get_day(selected, force=refresh)
+    return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
+@query_requests.route(router.get("/tasks", response_model=None, responses={200: {"model": ApiEnvelope[TaskEnergyReport]}}))
+def get_task_energy_day(request: Request, report_date: date | None = None, refresh: bool = False):
+    service = device_state(request).energy_period_service
+    selected = report_date or service.now().date()
+    if not 1900 <= selected.year <= 2100:
+        raise HTTPException(status_code=422, detail="日期需在 1900—2100 年之间")
+    data = statistics_page(request, 'energy:tasks', {'report_date': selected}, refresh=refresh)
+    if data is not None:
+        return {'success': True, 'data': _add_analysis_source_version(data), 'request_id': request.state.request_id}
+    try:
+        equipment = device_state(request).query_service.fetch_equipment_data(
+            ReportFilter(report_date=selected), force=refresh
+        )
+        data = service.get_task_day(selected, equipment.records, force=refresh)
+        data["data_updated_at"] = to_primitive(equipment.data_updated_at)
+        _add_analysis_source_version(data)
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
+        raise
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("task energy report query failed")
+        raise HTTPException(status_code=500, detail="任务能耗查询失败。") from exc
+    return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
+@query_requests.route(router.get("/month", response_model=None, responses={200: {"model": ApiEnvelope[EnergyMonthReport]}}))
+def get_energy_month(request: Request, report_month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), refresh: bool = False):
+    try:
+        selected = date.fromisoformat(report_month + "-01")
+        if not 1900 <= selected.year <= 2100:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="月份无效") from None
+    data = statistics_page(request, 'energy:month', {'report_month': report_month}, refresh=refresh)
+    if data is None:
+        data = device_state(request).energy_period_service.get_month(report_month)
+    return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
+@query_requests.route(router.get("/monthly-range", response_model=None, responses={200: {"model": ApiEnvelope[EnergyPeriodReport]}}))
+def get_energy_monthly_range(request: Request, start_date: date, end_date: date, refresh: bool = False):
+    data = statistics_page(request, 'energy:monthly-range', {'start': start_date, 'end': end_date}, refresh=refresh)
+    if data is not None:
+        worker = device_state(request).energy_history_worker
+        if data.get('missing_day_count', 0):
+            worker.schedule_range(start_date, end_date)
+            data['syncing'] = worker.is_syncing_range(start_date, end_date)
+        data['analysis_source_version'] = analysis_table_source_version(data.get('rows') or [])
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
+    try:
+        data = device_state(request).energy_period_service.get_monthly_range(
+            start_date, end_date
+        )
+        worker = device_state(request).energy_history_worker
+        if data.get("missing_day_count", 0):
+            worker.schedule_range(start_date, end_date)
+            data["syncing"] = worker.is_syncing_range(start_date, end_date)
+        else:
+            data["syncing"] = False
+        data["analysis_source_version"] = analysis_table_source_version(
+            data.get("rows") or []
+        )
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("equipment monthly range report query failed")
+        raise HTTPException(status_code=500, detail="设备月度汇总查询失败。") from exc
+    return {"success": True, "data": data, "request_id": request.state.request_id}
+
+
+@query_requests.route(router.get("/range", response_model=None, responses={200: {"model": ApiEnvelope[EnergyRangeReport]}}))
+def get_energy_range(
+    request: Request,
+    start_date: date,
+    end_date: date,
+    refresh: bool = False,
+):
+    data = statistics_page(request, 'energy:range', {'start': start_date, 'end': end_date}, refresh=refresh)
+    if data is not None:
+        data['task_report']['meta'] = data['meta']
+        data['period_report']['meta'] = data['meta']
+        _add_analysis_source_version(data['task_report'])
+        return {'success': True, 'data': data, 'request_id': request.state.request_id}
+    try:
+        data = device_state(request).range_report_service.equipment(
+            start_date, end_date, force=refresh
+        )
+        _add_analysis_source_version(data["task_report"])
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("equipment range report query failed")
+        raise HTTPException(status_code=500, detail="设备区间报表查询失败。") from exc
+    return {"success": True, "data": data, "request_id": request.state.request_id}

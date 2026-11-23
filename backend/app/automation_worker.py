@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from app.config import Settings
 from app.database.postgres import execution_scope, ExecutionLeaseLost
 from app.core.operations_logging import configured_logging, event
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.services.worker_status import role_health
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class AutomationProcess:
             self.stop()
             raise RuntimeError('已有有效 Automation 租约')
         try:
-            with self.scope(): self.runtime.automation.recover_interrupted_deliveries()
+            with self.scope(): self.runtime.automation.deliveries.recover_interrupted_deliveries()
             for thread in self.threads: thread.start()
             self._heartbeat()
         except BaseException:
@@ -153,10 +153,10 @@ class AutomationProcess:
                 if reconcile:
                     # This thread is the only SMTP consumer under the lease.
                     self._checkpoint("email", "recovering")
-                    self.runtime.automation.recover_interrupted_deliveries()
+                    self.runtime.automation.deliveries.recover_interrupted_deliveries()
                     reconcile = False
                 self._checkpoint("email", "delivery")
-                if self.automation_service.process_next_email(datetime.now(timezone)):
+                if self.automation_service.delivery.process_next_email(datetime.now(timezone)):
                     continue
             except ExecutionLeaseLost:
                 raise

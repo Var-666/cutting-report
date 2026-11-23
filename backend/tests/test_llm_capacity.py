@@ -7,12 +7,12 @@ import pytest
 import httpx
 
 from app.config import Settings
-from app.services.llm_service import (
+from app.modules.reports.analysis.llm import (
     AnalysisCapacityError, AnalysisInputTooLarge, AnalysisOutputValidationError, LlmRequestTimeout, LlmService,
     _LlmCapacity, background_llm_work, llm_capacity, post_llm_json,
 )
-from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.report_analysis.workshop import build_context
+from app.modules.alarms.analysis import AlarmAnalysisService
+from app.modules.reports.analysis.workshop import build_context
 from app.core.request_cancellation import (
     SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations,
 )
@@ -28,7 +28,7 @@ def test_report_input_budget_rejects_before_network(state_database, tmp_path, mo
     service = LlmService(config(tmp_path, llm_max_input_chars=1000), database=state_database)
     def fail(*args, **kwargs):
         raise AssertionError('network must not be called for oversized input')
-    monkeypatch.setattr('app.services.llm_service.httpx.Client', fail)
+    monkeypatch.setattr('app.modules.reports.analysis.llm.httpx.Client', fail)
     with pytest.raises(AnalysisInputTooLarge):
         context = build_context('2026-08-18', [])
         context['tables'] = [{'name': '大输入', 'rows': [{'x': 'x' * 2000}]}]
@@ -38,7 +38,7 @@ def test_report_input_budget_rejects_before_network(state_database, tmp_path, mo
 def test_alarm_input_budget_rejects_before_network(state_database, tmp_path, monkeypatch):
     settings = config(tmp_path, llm_max_input_chars=1000)
     service = AlarmAnalysisService(settings, database=state_database)
-    monkeypatch.setattr('app.services.alarm_analysis_service.httpx.Client',
+    monkeypatch.setattr('app.modules.alarms.analysis.httpx.Client',
                         lambda **kwargs: (_ for _ in ()).throw(AssertionError('network called')))
     incident = {'incident_id': 'i', 'machine_no': 'm', 'alarm_type': 't', 'alarm_code': 'c' * 2000,
                 'alarm_class': 'a', 'alarm_desc': 'd', 'severity': 'warning', 'status': 'open',
@@ -89,7 +89,7 @@ def test_capacity_cancellation_does_not_consume_slot(state_database, tmp_path):
 
 def test_two_devices_background_calls_leave_two_slots_for_foreground(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
-    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    monkeypatch.setattr('app.modules.reports.analysis.llm._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=4, llm_queue_timeout_seconds=2)
     background_entered = [Event(), Event(), Event()]
     foreground_entered = [Event(), Event()]
@@ -124,7 +124,7 @@ def test_two_devices_background_calls_leave_two_slots_for_foreground(state_datab
 
 def test_foreground_waiter_precedes_background_even_with_one_configured_slot(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
-    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    monkeypatch.setattr('app.modules.reports.analysis.llm._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
     order = []
 
@@ -149,7 +149,7 @@ def test_foreground_waiter_precedes_background_even_with_one_configured_slot(sta
 
 def test_cancelled_foreground_does_not_leave_background_permanently_blocked(state_database, tmp_path, monkeypatch):
     capacity = _LlmCapacity()
-    monkeypatch.setattr('app.services.llm_service._LLM_CAPACITY', capacity)
+    monkeypatch.setattr('app.modules.reports.analysis.llm._LLM_CAPACITY', capacity)
     settings = config(tmp_path, llm_max_concurrent=1, llm_queue_timeout_seconds=2)
     with llm_capacity(settings, database=state_database):
         execution = sql_request_cancellations.activate('foreground')
@@ -190,7 +190,7 @@ def test_model_output_budget_rejects_oversized_content(state_database, tmp_path,
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def post(self, *args, **kwargs): return Response()
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client", Client)
     with pytest.raises(Exception, match="超过配置容量"):
         LlmService(settings, database=state_database).analyze_context("workshop", build_context("2026-08-18", []))
 
@@ -334,7 +334,7 @@ def test_alarm_output_budget_is_checked_before_json_parsing(state_database, tmp_
     transport = httpx.MockTransport(lambda request: httpx.Response(
         200, json={"choices": [{"message": {"content": "x" * 1001}}]},
     ))
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client",
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     with pytest.raises(AnalysisOutputValidationError, match="超过配置容量"):
         AlarmAnalysisService(settings, database=state_database).analyze([])

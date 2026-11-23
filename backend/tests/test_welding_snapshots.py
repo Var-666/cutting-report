@@ -9,18 +9,18 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.line_fixtures import welding_settings
-from app.database.report_snapshots import ReportSnapshotRepository
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository
 from app.database.postgres import execution_scope
 from tests.postgres_fixtures import state_settings
 from app.database.coordination import CoordinationRepository
-from app.database.welding import WeldingUnavailable
-from app.database.welding import JOB_FIELDS, PART_FIELDS, WeldingRepository
-from app.models.welding import WeldingQuery
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
-from app.services.production_reports import report_provider
-from app.services.welding_service import WeldingService
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
+from app.database.mysql import MySqlUnavailable
+from app.modules.welding.repository import JOB_FIELDS, PART_FIELDS, WeldingRepository
+from app.modules.welding.models import WeldingQuery
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
+from app.modules.reports.provider import report_provider
+from app.modules.welding.service import WeldingService
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
 from test_welding_statistics_cache import Repository, aggregate_groups
@@ -39,7 +39,7 @@ class Source(Repository):
     def snapshot(self):
         self.calls['sessions'] += 1
         if self.down:
-            raise WeldingUnavailable('源库暂不可用')
+            raise MySqlUnavailable('源库暂不可用')
         yield self
 
     def summary(self, session, query):
@@ -231,11 +231,11 @@ def test_stale_aggregate_survives_outage_and_failed_worker_refresh(configured):
     assert service.report('equipment', query())['meta']['report_data']['stale']
     forced = service.report('daily', query(), force=True)
     assert forced['meta']['report_data']['refresh_failed']
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         service.fetch_summary('statistics', query(), force=True, requested_at=old.refreshed_at.timestamp() + 1)
     assert snapshots.get(service._snapshot_key(query())).data_version == old.data_version
     # Never disguise a failed live detail query as a successful empty table.
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         service.report('jobs', query())
 
 
@@ -322,7 +322,7 @@ def test_dashboard_keeps_expired_snapshot_and_manual_refresh_is_background_only(
     assert source.calls == before
     assert stale['data_version'] == fresh['data_version']
     assert stale['meta']['report_data']['stale'] and stale['meta']['report_data']['refreshing']
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         service.refresh_summary('dashboard', query().model_dump(mode='json'))
     assert service.dashboard(query())['data_version'] == fresh['data_version']
 
@@ -334,7 +334,7 @@ def test_refresh_plan_warms_each_default_page_with_homepage_first(configured, mo
         @staticmethod
         def now(zone):
             return datetime(selected.year, selected.month, selected.day, tzinfo=zone)
-    monkeypatch.setattr('app.services.welding_service.datetime', Clock)
+    monkeypatch.setattr('app.modules.welding.service.datetime', Clock)
     plan = service.refresh_plan()
     month_start = selected.replace(day=1)
     month_end = selected.replace(day=monthrange(selected.year, selected.month)[1])
@@ -406,7 +406,7 @@ def test_every_page_reads_one_coherent_snapshot_and_refreshes_only_its_own_stati
     assert cached['meta']['report_data']['refreshing']
     assert cached['meta']['report_data']['details_source'] in ('snapshot', 'cache')
     task = queue.claim_task(owner, analysis=False)
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         restarted.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
     assert snapshots.get(restarted._snapshot_key(WeldingQuery.model_validate(task['payload']['query']), f'page:{kind}'))
 
@@ -492,7 +492,7 @@ def test_background_query_failure_is_visible_and_recovery_replaces_retained_snap
     owner = queue.acquire('worker:test-consumer', ttl=30)
     task = queue.claim_task(owner, analysis=False)
     source.down = True
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         service.refresh_summary(task['payload']['report_type'], task['payload']['query'], requested_at=task['created_at'])
     assert queue.finish_task(task, owner, error='WeldingUnavailable')
     assert queue.snapshot_refresh_status(cfg.device_id, payload) == (True, True)
@@ -521,7 +521,7 @@ def test_background_query_failure_is_visible_and_recovery_replaces_retained_snap
 def test_page_refreshes_share_sampled_source_info_without_reusing_old_business_statistics(configured, monkeypatch):
     cfg, _, _, source, service = configured
     clock = [0]
-    monkeypatch.setattr('app.services.query_cache.monotonic', lambda: clock[0])
+    monkeypatch.setattr('app.modules.reports.query_cache.monotonic', lambda: clock[0])
     service.refresh_summary('page:daily', query().model_dump(mode='json'))
     first = service.page('daily', query())
     source.count = 9
@@ -625,8 +625,8 @@ def test_hot_configuration_never_reuses_previous_source_snapshots(configured, mo
 @pytest.mark.parametrize('current_seconds, history_seconds', [(600, 86400), (73, 119), (0, 0)])
 def test_existing_configuration_controls_current_history_and_filtered_freshness(configured, current_seconds, history_seconds):
     cfg, _, _, _, service = configured
-    from app.services.leadership_report_service import LeadershipReportService
-    from app.services.report_cache_policy import report_ttl
+    from app.modules.cutting.leadership import LeadershipReportService
+    from app.modules.reports.cache_policy import report_ttl
     cfg = replace(cfg, leadership_report_cache_seconds=current_seconds,
                   leadership_report_history_cache_seconds=history_seconds, report_background_refresh_seconds=317)
     service = WeldingService(cfg, Source())

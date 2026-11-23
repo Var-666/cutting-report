@@ -6,11 +6,11 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from app.database.coordination import CoordinationRepository
-from app.database.report_snapshots import ReportSnapshotRepository
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository
 from app.models.pdm_statistics import PdmStatisticsQuery
 from app.services.pdm_statistics import PdmStatisticsService, PDM_STATISTICS_SCOPE
-from app.services.production_reports import report_provider, report_providers
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshFailed
+from app.modules.reports.provider import report_provider, report_providers
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshFailed
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings
 
@@ -162,8 +162,8 @@ def test_cold_source_waits_for_retry_and_stops_on_terminal_failure(configured, m
 def test_runtime_owned_pdm_uses_consumer_scope_and_rejects_old_sources(tmp_path, postgres_state):
     from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
     from app.models.database_sources import DatabaseSourceConfig
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
+    from app.runtime.application import build_runtime
+    from app.runtime.database import database_context
     from app.worker import WorkerProcess, TaskSourceUnavailable
     cfg = configuration(tmp_path)
     sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()

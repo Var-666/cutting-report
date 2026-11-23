@@ -131,9 +131,9 @@ def test_model_configuration_http_requires_admin_and_redacts_validation(service)
 
 
 def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(postgres_state, service):
-    from app.services.application_runtime import build_runtime
-    from app.services.database_runtime import database_context
-    from app.services.report_analysis_service import PROMPT_VERSION
+    from app.runtime.application import build_runtime
+    from app.runtime.database import database_context
+    from app.modules.reports.analysis.service import PROMPT_VERSION
 
     settings = state_settings(service.settings, postgres_state)
     runtimes = [build_runtime(settings, role=role) for role in ("web", "worker", "scheduler", "automation")]
@@ -149,7 +149,7 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
         )
         old_welding = previous[0].lines["welding"].service
         old_welding.remember_analysis("unchanged-data", "old-welding-analysis")
-        from app.models.welding import WeldingQuery
+        from app.modules.welding.models import WeldingQuery
         selected = WeldingQuery(start=date(2026, 11, 11), end=date(2026, 11, 11))
         old_welding.analysis_metadata.save_analysis(
             cache_key=old_welding._analysis_key('a' * 64, 'daily', selected), report_type='welding_daily',
@@ -229,7 +229,7 @@ def test_model_change_updates_each_process_and_keeps_old_operations_and_caches(p
     {"LLM_API_KEY": "new-provider-secret"}, {"LLM_ENABLED": "false"},
 ])
 def test_pending_provider_configuration_keeps_its_model_until_restart(service, changes):
-    from app.services.database_runtime import parse_database_settings
+    from app.runtime.database import parse_database_settings
     updated = parse_database_settings(service.settings, {"LLM_MODEL": "provider-new-model", **changes},
                                       current_model="already-hot-model")
     assert updated.llm_model == "already-hot-model"
@@ -238,7 +238,7 @@ def test_pending_provider_configuration_keeps_its_model_until_restart(service, c
 
 
 def test_failed_model_write_does_not_publish_the_prepared_services(postgres_state, service, monkeypatch):
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     runtime = build_runtime(state_settings(service.settings, postgres_state), role="web")
     try:
         previous = runtime.database_runtime.snapshot()

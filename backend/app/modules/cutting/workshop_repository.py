@@ -1,0 +1,511 @@
+from __future__ import annotations
+
+
+from typing import Any
+
+
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import uuid4
+from app.models.domain import WorkshopRecord
+from app.modules.cutting.workshop_scope import WorkshopScopeRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
+from app.modules.cutting.workshop_errors import DailyReportRecordMismatchError, DailyReportScopeMismatchError, DailyReportSourceMismatchError, DailyReportExistsError
+
+_SNAPSHOT_DECIMAL_FIELDS = frozenset(
+    {"cut_length", "groove_length", "work_time"}
+)
+
+def _snapshot_field_equal(field: str, actual: Any, expected: Any) -> bool:
+    if field in _SNAPSHOT_DECIMAL_FIELDS and actual is not None and expected is not None:
+        try:
+            return Decimal(str(actual)) == Decimal(str(expected))
+        except (TypeError, ValueError, ArithmeticError):
+            pass
+    return actual == expected
+
+def _snapshot_values_equal(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return all(
+        _snapshot_field_equal(field, actual.get(field), value)
+        for field, value in expected.items()
+    )
+
+def _snapshot_values(record: WorkshopRecord, report_date: str) -> dict[str, Any]:
+    return {
+        "project_name": record.project_code or record.ship_no,
+        "segment_name": record.segment_name,
+        "program_no": record.program_no,
+        "cut_length": str(record.cut_length) if record.cut_length is not None else None,
+        "groove_length": str(record.groove_length) if record.groove_length is not None else None,
+        "work_time": str(record.work_time) if record.work_time is not None else None,
+        "production_time": record.production_time.isoformat() if record.production_time else None,
+        "remark": record.remark,
+        "production_date": record.production_date.isoformat() if record.production_date else report_date,
+    }
+
+def _unique_snapshot_records(
+    records: list[WorkshopRecord], report_date: str
+) -> list[WorkshopRecord]:
+    unique: list[WorkshopRecord] = []
+    values_by_id: dict[str, dict[str, Any]] = {}
+    for record in records:
+        task_id = str(record.task_id)
+        values = _snapshot_values(record, report_date)
+        previous = values_by_id.get(task_id)
+        if previous is not None:
+            if not _snapshot_values_equal(previous, values):
+                raise DailyReportRecordMismatchError(
+                    f"源数据中同一任务存在冲突记录：{task_id}；请核对源数据"
+                )
+            continue
+        values_by_id[task_id] = values
+        unique.append(record)
+    return unique
+
+
+class WorkshopReportRepository(WorkshopScopeRepository):
+    def completion_date_task_ids(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute('''SELECT DISTINCT i.task_id FROM workshop_report_items i
+                JOIN workshop_reports r ON r.report_id=i.report_id
+                WHERE sqlite_nocase(r.scope_machine_no)=sqlite_nocase(%s) AND r.source_mode='sqlserver'
+                ORDER BY i.task_id''', (self.require_scope(),)).fetchall()
+        return [row['task_id'] for row in rows]
+
+    def reconcile_completion_dates(self, dates: dict[str, date], *, apply: bool = False) -> dict[str, int]:
+        """Reassign verified source tasks atomically; confirmation and audit times stay intact."""
+        result = {'changed_tasks': 0, 'merged_snapshots': 0}
+        if not dates:
+            return result
+        with self.connect() as connection:
+            self.lock_scope(connection)
+            rows = connection.execute('''SELECT i.*, r.report_date FROM workshop_report_items i
+                JOIN workshop_reports r ON r.report_id=i.report_id
+                WHERE sqlite_nocase(r.scope_machine_no)=sqlite_nocase(%s) AND r.source_mode='sqlserver'
+                  AND i.task_id=ANY(%s) ORDER BY i.task_id,r.report_date,i.report_item_id''',
+                (self.require_scope(), list(dates))).fetchall()
+            grouped: dict[str, list] = {}
+            for row in rows:
+                grouped.setdefault(row['task_id'], []).append(row)
+            touched = set()
+            for task_id, snapshots in grouped.items():
+                day = dates[task_id].isoformat()
+                if len(snapshots) == 1 and snapshots[0]['report_date'] == day and snapshots[0]['production_date'] == day:
+                    continue
+                target = connection.execute('''SELECT * FROM workshop_reports WHERE report_date=%s
+                    AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''', (day, self.require_scope())).fetchone()
+                if target and target['source_mode'] != 'sqlserver':
+                    raise DailyReportSourceMismatchError('目标日期包含其他来源日报，拒绝混合')
+                confirmation = connection.execute('''SELECT report_id FROM workshop_confirmations
+                    WHERE task_id=%s AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''',
+                    (task_id, self.require_scope())).fetchone()
+                old_reports = {row['report_id'] for row in snapshots}
+                if confirmation and confirmation['report_id'] and confirmation['report_id'] not in old_reports:
+                    raise DailyReportSourceMismatchError('任务确认指向其他来源日报，拒绝校正')
+                canonical = next((row for row in snapshots if confirmation and row['report_id'] == confirmation['report_id']),
+                                 max(snapshots, key=lambda row: row['snapshot_revision']))
+                comparable = {field: canonical[field] for field in (
+                    'project_name', 'segment_name', 'program_no', 'cut_length', 'groove_length',
+                    'work_time', 'production_time', 'remark', 'ship_no')}
+                if any(not _snapshot_values_equal(row, comparable) for row in snapshots):
+                    raise DailyReportRecordMismatchError(f'任务 {task_id} 的历史生产字段不一致，已停止校正并保留快照，请核对源数据')
+                result['changed_tasks'] += 1
+                result['merged_snapshots'] += len(snapshots) - 1
+                if not apply:
+                    continue
+                if target is None:
+                    target = {'report_id': f'wdr_{uuid4().hex[:16]}'}
+                    connection.execute('''INSERT INTO workshop_reports (report_id,report_date,source_mode,scope_machine_no,
+                        item_count,generated_by_id,generated_by_name,generated_at,created_at,snapshot_revision_floor)
+                        SELECT %s,%s,source_mode,scope_machine_no,0,generated_by_id,generated_by_name,generated_at,
+                            created_at,snapshot_revision_floor FROM workshop_reports WHERE report_id=%s''',
+                        (target['report_id'], day, canonical['report_id']))
+                connection.execute('DELETE FROM workshop_report_items WHERE report_item_id=ANY(%s)',
+                    ([row['report_item_id'] for row in snapshots if row['report_item_id'] != canonical['report_item_id']],))
+                ordinal = connection.execute('SELECT COALESCE(MAX(ordinal),0)+1 AS ordinal FROM workshop_report_items WHERE report_id=%s',
+                    (target['report_id'],)).fetchone()['ordinal']
+                connection.execute('''UPDATE workshop_report_items SET report_id=%s,production_date=%s,
+                    ordinal=%s,snapshot_revision=%s WHERE report_item_id=%s''',
+                    (target['report_id'], day, ordinal, max(row['snapshot_revision'] for row in snapshots) + 1, canonical['report_item_id']))
+                connection.execute('''UPDATE workshop_confirmations SET report_id=%s WHERE task_id=%s
+                    AND sqlite_nocase(scope_machine_no)=sqlite_nocase(%s)''', (target['report_id'], task_id, self.require_scope()))
+                touched.update(old_reports | {target['report_id']})
+            if touched:
+                connection.execute('''UPDATE workshop_reports r SET item_count=(SELECT COUNT(*) FROM workshop_report_items i
+                    WHERE i.report_id=r.report_id) WHERE r.report_id=ANY(%s)''', (list(touched),))
+        return result
+
+    @staticmethod
+    def _report_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "report_id": row["report_id"],
+            "report_date": row["report_date"],
+            "source_mode": row["source_mode"],
+            "scope_machine_no": row["scope_machine_no"],
+            "item_count": int(row["item_count"]),
+            "confirmed_count": int(row["confirmed_count"]),
+            "generated_by_id": row["generated_by_id"],
+            "generated_by_name": row["generated_by_name"],
+            "generated_at": row["generated_at"],
+        }
+
+    def get_daily_report(self, report_date: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT r.*,
+                       COUNT(c.task_id) AS confirmed_count
+                FROM workshop_reports AS r
+                LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
+                LEFT JOIN workshop_confirmations AS c
+                    ON c.task_id = i.task_id
+                    AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(r.scope_machine_no)
+                    AND (c.report_id = r.report_id OR c.report_id IS NULL)
+                WHERE r.report_date = %s
+                  AND sqlite_nocase(r.scope_machine_no) = sqlite_nocase(%s)
+                GROUP BY r.report_id
+                """,
+                (report_date, self.require_scope()),
+            ).fetchone()
+        return self._report_dict(row)
+
+    def sync_daily_report(
+        self,
+        *,
+        report_date: str,
+        source_mode: str,
+        records: list[WorkshopRecord],
+        user: dict[str, Any],
+        now: str,
+        scope_machine_no: str | None = None,
+    ) -> dict[str, Any]:
+        """Refresh task data and append new tasks atomically, preserving confirmations."""
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
+        with self.connect() as connection:
+            self.lock_scope(connection)
+            repository = WorkshopReportRepository(self.database, connection=connection, scope_machine_no=self.scope_machine_no)
+            arguments = dict(
+                report_date=report_date,
+                source_mode=source_mode,
+                records=records,
+                user=user,
+                now=now,
+                scope_machine_no=scope_machine_no,
+            )
+            report = repository.populate_empty_daily_report(**arguments)
+            if report is not None:
+                return report
+            return repository.create_daily_report(**arguments)
+
+    def create_daily_report(
+        self,
+        *,
+        report_date: str,
+        source_mode: str,
+        records: list[WorkshopRecord],
+        user: dict[str, Any],
+        now: str,
+        scope_machine_no: str | None = None,
+    ) -> dict[str, Any]:
+        report_id = f"wdr_{uuid4().hex[:16]}"
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
+        with self.connect() as connection:
+            self.lock_scope(connection)
+            existing = connection.execute(
+                "SELECT report_id FROM workshop_reports WHERE report_date = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)",
+                (report_date, self.require_scope()),
+            ).fetchone()
+            if existing:
+                raise DailyReportExistsError("当日车间报表已经生成")
+
+            unique_records = _unique_snapshot_records(records, report_date)
+
+            connection.execute(
+                """
+                INSERT INTO workshop_reports (
+                    report_id, report_date, source_mode, scope_machine_no, item_count,
+                    generated_by_id, generated_by_name, generated_at, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    report_id,
+                    report_date,
+                    source_mode,
+                    scope_machine_no,
+                    len(unique_records),
+                    user["user_id"],
+                    user["display_name"],
+                    now,
+                    now,
+                ),
+            )
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO workshop_report_items (
+                        report_item_id, report_id, task_id, ordinal, project_name,
+                        segment_name, program_no, cut_length, groove_length,
+                        work_time, production_time, remark, production_date, ship_no
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            f"wdi_{uuid4().hex[:20]}",
+                            report_id,
+                            str(record.task_id),
+                            ordinal,
+                            record.project_code or record.ship_no,
+                            record.segment_name,
+                            record.program_no,
+                            str(record.cut_length) if record.cut_length is not None else None,
+                            str(record.groove_length) if record.groove_length is not None else None,
+                            str(record.work_time) if record.work_time is not None else None,
+                            record.production_time.isoformat() if record.production_time else None,
+                            record.remark,
+                            record.production_date.isoformat() if record.production_date else report_date,
+                            record.ship_no,
+                        )
+                        for ordinal, record in enumerate(unique_records, start=1)
+                    ],
+                )
+        report = self.get_daily_report(report_date)
+        if report is None:
+            raise RuntimeError("车间报表生成后未能读取")
+        return report
+
+    def populate_empty_daily_report(
+        self,
+        *,
+        report_date: str,
+        source_mode: str,
+        records: list[WorkshopRecord],
+        user: dict[str, Any],
+        now: str,
+        scope_machine_no: str | None = None,
+    ) -> dict[str, Any] | None:
+        selected_scope = self.require_scope()
+        if scope_machine_no is not None and scope_machine_no != selected_scope:
+            raise DailyReportScopeMismatchError("日报范围与设备上下文不一致")
+        scope_machine_no = selected_scope
+        with self.connect() as connection:
+            self.lock_scope(connection)
+            report = connection.execute(
+                "SELECT * FROM workshop_reports WHERE report_date = %s AND sqlite_nocase(scope_machine_no) = sqlite_nocase(%s)",
+                (report_date, self.require_scope()),
+            ).fetchone()
+            if report is None:
+                return None
+            if report["source_mode"] != source_mode:
+                raise DailyReportSourceMismatchError("日报数据源已变化，拒绝混合同一日报快照")
+            records = _unique_snapshot_records(records, report_date)
+            snapshot_revision = int(report["snapshot_revision_floor"])
+            if int(report["item_count"]) > 0:
+                existing_rows = {
+                    str(row["task_id"]): dict(row)
+                    for row in connection.execute(
+                        "SELECT * FROM workshop_report_items WHERE report_id = %s",
+                        (report["report_id"],),
+                    ).fetchall()
+                }
+                existing_ids = set(existing_rows)
+                unique_records: list[WorkshopRecord] = []
+                task_updates: list[tuple[Any, ...]] = []
+                ship_backfills: list[tuple[str, str]] = []
+                for record in records:
+                    task_id = str(record.task_id)
+                    expected = _snapshot_values(record, report_date)
+                    if task_id in existing_rows:
+                        existing = existing_rows[task_id]
+                        if record.ship_no and record.ship_no != existing.get('ship_no') and existing.get('ship_no') in (None, existing.get('project_name')):
+                            ship_backfills.append((record.ship_no, existing['report_item_id']))
+                        if not _snapshot_values_equal(existing, expected):
+                            project_backfill_only = (
+                                not (existing.get("project_name") or "").strip()
+                                and expected["project_name"]
+                                and _snapshot_values_equal(existing, {
+                                    field: value for field, value in expected.items() if field != "project_name"
+                                })
+                            )
+                            revision = int(existing['snapshot_revision']) + (0 if project_backfill_only else 1)
+                            task_updates.append((*expected.values(), revision, existing['report_item_id']))
+                        continue
+                    unique_records.append(record)
+                if task_updates:
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            """UPDATE workshop_report_items
+                            SET project_name=%s, segment_name=%s, program_no=%s, cut_length=%s,
+                                groove_length=%s, work_time=%s, production_time=%s, remark=%s,
+                                production_date=%s, snapshot_revision=%s
+                            WHERE report_item_id=%s""",
+                            task_updates,
+                        )
+                if ship_backfills:
+                    with connection.cursor() as cursor:
+                        cursor.executemany('UPDATE workshop_report_items SET ship_no = %s WHERE report_item_id = %s', ship_backfills)
+                if unique_records:
+                    ordinal = int(connection.execute(
+                        "SELECT COALESCE(MAX(ordinal), 0) AS count FROM workshop_report_items WHERE report_id = %s",
+                        (report["report_id"],),
+                    ).fetchone()['count'])
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            """
+                            INSERT INTO workshop_report_items (
+                                report_item_id, report_id, task_id, ordinal, project_name,
+                                segment_name, program_no, cut_length, groove_length,
+                                work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            [
+                                (
+                                    f"wdi_{uuid4().hex[:20]}", report["report_id"],
+                                    str(record.task_id), ordinal + index,
+                                    record.project_code or record.ship_no, record.segment_name,
+                                    record.program_no,
+                                    str(record.cut_length) if record.cut_length is not None else None,
+                                    str(record.groove_length) if record.groove_length is not None else None,
+                                    str(record.work_time) if record.work_time is not None else None,
+                                    record.production_time.isoformat() if record.production_time else None,
+                                    record.remark,
+                                    record.production_date.isoformat() if record.production_date else report_date,
+                                    snapshot_revision,
+                                    record.ship_no,
+                                )
+                                for index, record in enumerate(unique_records, start=1)
+                            ],
+                        )
+                if unique_records or task_updates or ship_backfills:
+                    connection.execute(
+                        "UPDATE workshop_reports SET item_count = %s, generated_by_id = %s, generated_by_name = %s, generated_at = %s WHERE report_id = %s",
+                        (len(existing_ids) + len(unique_records), user["user_id"], user["display_name"], now, report["report_id"]),
+                    )
+                populated = connection.execute(
+                    """
+                    SELECT r.*, COUNT(c.task_id) AS confirmed_count
+                    FROM workshop_reports AS r
+                    LEFT JOIN workshop_report_items AS i ON i.report_id = r.report_id
+                    LEFT JOIN workshop_confirmations AS c
+                        ON c.task_id = i.task_id
+                        AND sqlite_nocase(c.scope_machine_no) = sqlite_nocase(r.scope_machine_no)
+                        AND (c.report_id = r.report_id OR c.report_id IS NULL)
+                    WHERE r.report_id = %s GROUP BY r.report_id
+                    """, (report["report_id"],),
+                ).fetchone()
+                return self._report_dict(populated)
+
+            unique_records = records
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO workshop_report_items (
+                        report_item_id, report_id, task_id, ordinal, project_name,
+                        segment_name, program_no, cut_length, groove_length,
+                        work_time, production_time, remark, production_date, snapshot_revision, ship_no
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            f"wdi_{uuid4().hex[:20]}",
+                            report["report_id"],
+                            str(record.task_id),
+                            ordinal,
+                            record.project_code or record.ship_no,
+                            record.segment_name,
+                            record.program_no,
+                            str(record.cut_length) if record.cut_length is not None else None,
+                            str(record.groove_length) if record.groove_length is not None else None,
+                            str(record.work_time) if record.work_time is not None else None,
+                            record.production_time.isoformat() if record.production_time else None,
+                            record.remark,
+                            record.production_date.isoformat() if record.production_date else report_date,
+                            snapshot_revision,
+                            record.ship_no,
+                        )
+                        for ordinal, record in enumerate(unique_records, start=1)
+                    ],
+                )
+            connection.execute(
+                """
+                UPDATE workshop_reports
+                SET source_mode = %s, scope_machine_no = %s, item_count = %s, generated_by_id = %s,
+                    generated_by_name = %s, generated_at = %s, snapshot_revision_floor = %s
+                WHERE report_id = %s
+                """,
+                (
+                    source_mode,
+                    scope_machine_no,
+                    len(unique_records),
+                    user["user_id"],
+                    user["display_name"],
+                    now,
+                    snapshot_revision,
+                    report["report_id"],
+                ),
+            )
+        return self.get_daily_report(report_date)
+
+    @staticmethod
+    def _optional_decimal(value: Any) -> Decimal | None:
+        return Decimal(str(value)) if value not in (None, "") else None
+
+    def get_daily_report_records(
+        self, report_date: str
+    ) -> tuple[dict[str, Any] | None, list[WorkshopRecord]]:
+        report = self.get_daily_report(report_date)
+        if report is None:
+            return None, []
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM workshop_report_items
+                WHERE report_id = %s
+                ORDER BY ordinal
+                """,
+                (report["report_id"],),
+            ).fetchall()
+        confirmations = ConfirmationRepository(self.database, connection=self._connection, scope_machine_no=self.scope_machine_no).get_confirmations(
+            [str(row["task_id"]) for row in rows], report_id=report["report_id"]
+        )
+        records: list[WorkshopRecord] = []
+        for row in rows:
+            confirmation = confirmations.get(str(row["task_id"]))
+            records.append(
+                WorkshopRecord(
+                    task_id=str(row["task_id"]),
+                    project_code=row["project_name"],
+                    ship_no=row["ship_no"],
+                    segment_name=row["segment_name"],
+                    program_no=row["program_no"],
+                    cut_length=self._optional_decimal(row["cut_length"]),
+                    groove_length=self._optional_decimal(row["groove_length"]),
+                    work_time=self._optional_decimal(row["work_time"]),
+                    remark=row["remark"],
+                    production_date=date.fromisoformat(row["production_date"] or report_date),
+                    snapshot_revision=int(row["snapshot_revision"]),
+                    production_time=(
+                        datetime.fromisoformat(row["production_time"])
+                        if row["production_time"]
+                        else None
+                    ),
+                    confirmed_by_id=confirmation["worker_id"] if confirmation else None,
+                    confirmed_by=confirmation["worker_name"] if confirmation else None,
+                    confirmed_by_company_no=(
+                        confirmation["worker_company_no"] if confirmation else None
+                    ),
+                    confirmed_at=(
+                        datetime.fromisoformat(confirmation["confirmed_at"])
+                        if confirmation
+                        else None
+                    ),
+                )
+            )
+        return report, records

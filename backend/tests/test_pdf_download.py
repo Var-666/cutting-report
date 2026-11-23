@@ -10,9 +10,9 @@ from urllib.parse import unquote
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import reports
+from app.modules.reports import routes as reports
 from app.api.auth import require_admin
-from app.services.pdf_service import PdfRenderError, PdfService
+from app.modules.reports.pdf import PdfRenderError, PdfService
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ def test_completed_record_with_a_missing_archive_is_unavailable_in_status_and_hi
     client, job, calls, html = report_client
     job.update(report_id="saved", device_id="Cutter01", stage_message="报告生成成功", report_date="2026-08-18",
                project_code=None, ship_no=None, created_at="2026-08-18T09:00:00+08:00", file_size=html.stat().st_size)
-    from app.api import reports
+    from app.modules.reports import routes as reports
 
     assert reports._serialize_job(job, html.parent)["status"] == 'completed'
     html.unlink()

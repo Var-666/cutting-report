@@ -14,7 +14,7 @@ import pytest
 from app.config import Settings
 from app.database.postgres import ExecutionLeaseLost
 from tests.postgres_fixtures import state_settings
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
 from test_web_worker_processes import configuration
@@ -160,8 +160,8 @@ def clock(monkeypatch):
         def now(cls, tz=None):
             return datetime.fromtimestamp(value[0], tz)
     monkeypatch.setattr('app.scheduler.datetime', ClockDateTime)
-    monkeypatch.setattr('app.services.welding_service.datetime', ClockDateTime)
-    monkeypatch.setattr('app.services.production_reports.datetime', ClockDateTime)
+    monkeypatch.setattr('app.modules.welding.service.datetime', ClockDateTime)
+    monkeypatch.setattr('app.modules.cutting.reports.datetime', ClockDateTime)
     monkeypatch.setattr('app.scheduler.time', lambda: value[0])
     monkeypatch.setattr('app.scheduler.monotonic', lambda: value[1])
     monkeypatch.setattr('app.worker.monotonic', lambda: value[1])
@@ -314,7 +314,7 @@ def test_daily_reconciliation_tracks_each_month_retries_and_resets_on_the_next_d
 
 def test_interval_hotload_recalculates_from_the_last_persisted_round_and_survives_restart(postgres_state, tmp_path, clock):
     from tests.line_fixtures import configuration
-    from app.services.database_runtime import database_context
+    from app.runtime.database import database_context
     from app.services.runtime_settings_store import write_runtime_env
     cfg = state_settings(configuration(tmp_path, real=True, welding=True),postgres_state)
     process = SchedulerProcess(cfg)
@@ -421,8 +421,8 @@ def test_web_submissions_are_polled_each_tick_and_capacity_release_admits_deferr
 
 def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bounded(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
-    from app.services.database_runtime import database_context
-    from app.services.production_reports import report_providers
+    from app.runtime.database import database_context
+    from app.modules.reports.provider import report_providers
     from app.models.database_sources import DatabaseSourceRequest
     process = SchedulerProcess(state_settings(configuration(tmp_path, real=True, welding=True, leadership_report_reconcile_hour=0),postgres_state))
     process._schedule()
@@ -474,7 +474,7 @@ def test_hotadded_shared_source_lines_plan_changes_and_retirement_keep_state_bou
 
 def test_snapshot_plan_parameters_and_intervals_remain_independent_and_capacity_rejection_retries(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
-    from app.services.database_runtime import database_context
+    from app.runtime.database import database_context
     process = SchedulerProcess(state_settings(configuration(tmp_path, welding=True),postgres_state))
     provider = database_context(process.runtime).lines['welding'].report_provider
     payload = provider.refresh_plan()[0][0]
@@ -536,7 +536,7 @@ def test_imported_schedule_adopts_interval_without_changing_deadline(tmp_path, m
 
 def test_snapshot_completion_updates_the_deadline_without_shared_memory(postgres_state, tmp_path, monkeypatch, clock):
     from tests.line_fixtures import configuration
-    from app.services.database_runtime import database_context
+    from app.runtime.database import database_context
     cfg=state_settings(configuration(tmp_path, welding=True),postgres_state)
     scheduler=SchedulerProcess(cfg)
     consumer=WorkerProcess(cfg)

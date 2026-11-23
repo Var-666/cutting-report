@@ -17,10 +17,10 @@ from app.config import Settings
 from app.database.source_registry import DatabaseSourceRegistry, SourceConflict
 from app.device_config import ProductionLineCatalog, load_line_catalog
 from app.models.database_sources import DatabaseSourceRequest
-from app.models.welding import WeldingQuery
-from app.services.application_runtime import build_runtime
-from app.services.database_runtime import database_context
-from app.services.production_lines import supports_path, registered_lines
+from app.modules.welding.models import WeldingQuery
+from app.runtime.application import build_runtime
+from app.runtime.database import database_context
+from app.runtime.production_lines import supports_path, registered_lines
 from app.services.runtime_settings_store import RuntimeSettingsSaveError, read_runtime_env, write_runtime_env
 from app.worker import WorkerProcess
 from app.scheduler import SchedulerProcess
@@ -42,7 +42,7 @@ def test_new_instances_share_resources_without_sharing_scopes_or_snapshots(postg
     try:
         assert set(context.lines) == {'Cutter01', 'Cutter02', 'Cutter03', 'welding', 'welding-2'}
         one, three = (context.lines[key].cutting() for key in ('Cutter01', 'Cutter03'))
-        assert one is not three and one.query_service.client is three.query_service.client
+        assert one is not three and one.query_service.repository.client is three.query_service.repository.client
         assert one.settings.report_machine_no == 'Cutter01' and three.settings.report_machine_no == 'Cutter03'
         assert one.metadata.device_id == 'Cutter01' and three.metadata.device_id == 'Cutter03'
         assert one.report_provider.source_identity() != three.report_provider.source_identity()
@@ -70,8 +70,8 @@ def test_source_change_rebuilds_only_bound_lines_and_worker_loads_it_at_new_oper
         assert fresh.lines['Cutter01'] is not old.lines['Cutter01']
         assert fresh.lines['Cutter02'] is not old.lines['Cutter02']
         assert fresh.lines['welding'] is old.lines['welding']
-        assert old.lines['Cutter01'].cutting().query_service.client.connection_config()['host'] == 'cutting.test'
-        assert fresh.lines['Cutter01'].cutting().query_service.client.connection_config()['host'] == 'new.test'
+        assert old.lines['Cutter01'].cutting().query_service.repository.client.connection_config()['host'] == 'cutting.test'
+        assert fresh.lines['Cutter01'].cutting().query_service.repository.client.connection_config()['host'] == 'new.test'
         assert fresh.lines['Cutter01'].report_provider.source_identity() != old.lines['Cutter01'].report_provider.source_identity()
         assert worker.database_runtime.current_context is old_worker
         assert database_context(worker).lines['Cutter01'].settings.source_fingerprint == fresh.lines['Cutter01'].settings.source_fingerprint
@@ -103,7 +103,7 @@ def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(postgres_st
             action()
         assert runtime.database_runtime.current_context is current
         assert cfg.runtime_settings_env_path.read_bytes() == before
-    monkeypatch.setattr('app.services.database_runtime.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr('app.runtime.database.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError()))
     payload = DatabaseSourceRequest.model_validate({**current.database_sources.get('cutting-production').model_dump(), 'host': 'new.test'})
     with pytest.raises(RuntimeSettingsSaveError):
         runtime.database_runtime.save_source(payload)
@@ -112,7 +112,7 @@ def test_invalid_bindings_and_failed_save_preserve_file_and_snapshot(postgres_st
 
 
 def test_shared_mysql_scope_is_required_and_bound_in_sql(postgres_state, tmp_path):
-    from app.database.welding import WeldingRepository
+    from app.modules.welding.repository import WeldingRepository
     cfg = configuration(tmp_path, welding=True)
     catalog = load_line_catalog(cfg.production_lines_json)
     first = catalog.get('welding')
@@ -175,7 +175,7 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
     for runtime in (web, worker):
         context = database_context(runtime)
         assert {'Cutter03', 'weld-2'} <= context.lines.keys()
-        assert context.lines['Cutter03'].cutting().query_service.client.connection_config()['host'] == 'sql-3.test'
+        assert context.lines['Cutter03'].cutting().query_service.repository.client.connection_config()['host'] == 'sql-3.test'
         assert context.lines['weld-2'].service.repository.client.config.host == 'mysql-2.test'
         process = SchedulerProcess(context.settings, runtime)
         process._schedule()
@@ -188,7 +188,7 @@ def test_new_cutting_and_welding_instances_hotload_in_both_processes(postgres_st
 def test_disabled_line_keeps_historical_report_access_and_rejects_new_work(postgres_state, tmp_path):
     from fastapi.testclient import TestClient
     from app.api.auth import require_admin
-    from app.api.reports import router
+    from app.modules.reports.routes import router
     cfg = configuration(tmp_path)
     runtime = build_runtime(state_settings(cfg,postgres_state), role='web')
     original = database_context(runtime)
@@ -251,12 +251,12 @@ def test_fresh_example_bootstraps_explicit_demo_without_legacy_config(postgres_s
     context = database_context(runtime)
     assert context.settings.effective_data_source_mode == 'demo'
     assert set(context.lines) == {'Cutter01', 'Cutter02', 'welding'}
-    assert context.lines['Cutter01'].cutting().query_service.client is None
+    assert context.lines['Cutter01'].cutting().query_service.repository.client is None
     assert not context.lines['welding'].config.enabled
 
 
 def test_completion_date_upgrade_isolates_old_analysis_in_the_bound_source(state_database, postgres_state, tmp_path):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     cfg = configuration(tmp_path)
     from app.database.source_registry import DatabaseSourceRegistry
     scope = 'Cutter01:' + DatabaseSourceRegistry.from_json(cfg.database_sources_json).fingerprint('cutting-production')

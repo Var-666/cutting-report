@@ -14,7 +14,7 @@ from app.services.runtime_settings_store import (
 )
 
 if TYPE_CHECKING:
-    from app.services.database_runtime import DatabaseRuntime
+    from app.runtime.database import DatabaseRuntime
 
 
 class ModelCatalogError(RuntimeError):

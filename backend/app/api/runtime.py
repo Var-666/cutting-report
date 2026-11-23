@@ -3,8 +3,8 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.config import Settings
-from app.services.application_runtime import ApplicationRuntime
-from app.services.database_runtime import DatabaseServices, database_context
+from app.runtime.application import ApplicationRuntime
+from app.runtime.database import DatabaseServices, database_context
 
 
 def application_state(request: Request) -> ApplicationRuntime:

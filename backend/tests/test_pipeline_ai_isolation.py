@@ -1,4 +1,4 @@
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 from tests.line_fixtures import source_client
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -6,18 +6,18 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.line_fixtures import cutting_settings, source_client
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.users import UserRepository
 from app.models.domain import ReportFilter
-from app.services.llm_service import AnalysisOutputValidationError, LlmRequestTimeout
-from app.services.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError, LlmRequestTimeout
+from app.modules.cutting.pipeline import ReportPipeline, ReportPipelineCancelled, ReportAnalysisPendingError
 from app.core.report_deadline import ReportOperationTimeout
 from app.core.request_cancellation import SqlRequestCancelled
 from tests.analysis_fakes import model_analysis
 
 
 def test_unavailable_analysis_log_identifies_the_report_and_reason(tmp_path, caplog):
-    from app.services.report_analysis_service import AnalysisUnavailableError
+    from app.modules.reports.analysis.execution import AnalysisUnavailableError
     pipeline = ReportPipeline.__new__(ReportPipeline)
     pipeline.settings = cutting_settings(project_root=tmp_path, llm_enabled=True)
     pipeline._cancellation_check = None
@@ -229,7 +229,7 @@ def test_report_reuses_current_analysis_and_omits_it_when_history_changes(state_
         assert '智能分析暂不可用' not in html
     assert 'class="analysis-sparkline"' not in html
     if report_type == 'leadership' and not interval:
-        from app.services.pdf_service import PdfService
+        from app.modules.reports.pdf import PdfService
         email = PdfService(operation_timeout_seconds=30).render_email(pipeline.settings.reports_dir / completed['relative_path'])
         assert email.images
         assert all(f'src="cid:{cid}"' in email.html for cid in email.images)

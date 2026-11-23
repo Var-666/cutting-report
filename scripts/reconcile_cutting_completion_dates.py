@@ -13,13 +13,13 @@ sys.path.insert(0, str(ROOT / 'backend'))
 
 from app.config import Settings
 from app.core.sql_capacity import SqlCapacity
-from app.database.cutting_queries import CuttingQueryRepository
+from app.modules.cutting.repository import CuttingQueryRepository
 from app.database.postgres import PostgresDatabase
 from app.database.source_registry import DatabaseSourceRegistry
-from app.database.workshop_reports import WorkshopReportRepository
-from app.database.workshop_errors import DailyReportRecordMismatchError, DailyReportSourceMismatchError
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
+from app.modules.cutting.workshop_errors import DailyReportRecordMismatchError, DailyReportSourceMismatchError
 from app.device_config import load_line_catalog
-from app.services.cache_revision import CacheRevision
+from app.modules.reports.cache_revision import CacheRevision
 
 
 def main(argv=None, *, settings: Settings | None = None):

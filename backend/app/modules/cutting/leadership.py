@@ -1,0 +1,502 @@
+from __future__ import annotations
+
+from calendar import monthrange
+from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+import logging
+from threading import Lock
+from time import monotonic
+from zoneinfo import ZoneInfo
+
+from app.config import Settings
+from app.core.operations_logging import data_quality
+from app.modules.reports.cache_revision import CacheRevision
+from app.modules.reports.query_cache import QueryCache
+from app.modules.reports.cache_policy import report_cache_seconds
+from app.modules.reports.snapshots import observe_report_snapshot
+from app.modules.cutting.leadership_snapshots import (
+    LeadershipMonthSnapshot,
+    LeadershipSnapshotRepository,
+)
+from app.modules.cutting.repository import CuttingQueryRepository
+from app.database.sqlserver import SqlServerClient
+from app.models.domain import (
+    LeadershipPeriodRecord,
+    LeadershipReportResult,
+    LeadershipSnapshotState,
+    ProjectDistributionRecord,
+)
+
+
+ZERO = Decimal("0")
+METER_PRECISION = Decimal("0.001")
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.services.leadership_report_service')
+
+
+def _decimal(value: object) -> Decimal:
+    if value is None or value == "":
+        return ZERO
+    return Decimal(str(value))
+
+
+def _date(value: object) -> date:
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _previous_month(month_start: date, months: int) -> date:
+    absolute_month = month_start.year * 12 + month_start.month - 1 - months
+    return date(absolute_month // 12, absolute_month % 12 + 1, 1)
+
+
+class LeadershipReportService:
+    SNAPSHOT_VERSION = 4
+
+    def __init__(
+        self,
+        settings: Settings,
+        snapshots: LeadershipSnapshotRepository | None = None,
+        *, client: SqlServerClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self.cache_revision = CacheRevision(settings, "leadership")
+        self.repository = CuttingQueryRepository(client, settings.report_machine_no)
+        self.snapshots = snapshots
+        self._cache_lock = Lock()
+        self._query_cache = QueryCache[LeadershipReportResult]()
+        self._cache: dict[tuple, tuple[float, float, LeadershipReportResult]] = {}
+        self.on_snapshot_saved = None
+
+    def fetch(
+        self, report_month: date, *, force: bool = False
+    ) -> LeadershipReportResult:
+        month_start = report_month.replace(day=1)
+        if (
+            self.snapshots is not None
+            and self.settings.effective_data_source_mode == "sqlserver"
+        ):
+            if force:
+                self.refresh(
+                    month_start,
+                    bootstrap=self.needs_bootstrap(month_start),
+                )
+            return self._fetch_snapshot_report(month_start)
+
+        return self._query_cache.read(
+            (self.settings.device_id, self.source_identity(), month_start,
+             self.cache_revision.version()),
+            lambda: self._fetch_uncached(month_start),
+            ttl=self.settings.leadership_report_cache_seconds,
+            force=force,
+        )
+
+    def _fetch_uncached(self, month_start: date) -> LeadershipReportResult:
+        if self.settings.effective_data_source_mode == "demo":
+            return self._demo_data(month_start)
+
+        range_start = _previous_month(month_start, 12)
+        next_month = _previous_month(month_start, -1)
+        snapshots = self._query_snapshots(range_start, next_month)
+        return self._compose_snapshot_report(
+            month_start, snapshots, cached=False
+        )
+
+    def needs_bootstrap(self, report_month: date) -> bool:
+        if self.snapshots is None:
+            return False
+        months = self._window_months(report_month.replace(day=1))
+        return len(self._load_snapshots(months)) != len(months)
+
+    def refresh(self, report_month: date, *, bootstrap: bool = False) -> int:
+        month_start = report_month.replace(day=1)
+        range_start = _previous_month(month_start, 12) if bootstrap else month_start
+        range_end = _previous_month(month_start, -1)
+        snapshots = self._query_snapshots(range_start, range_end)
+        if self.snapshots is not None:
+            self.snapshots.upsert_many(list(snapshots.values()))
+            self.cache_revision.publish()
+            if self.on_snapshot_saved is not None:
+                self.on_snapshot_saved()
+        with self._cache_lock:
+            self._cache.clear()
+        self._query_cache.clear()
+        return len(snapshots)
+
+    def _fetch_snapshot_report(self, month_start: date) -> LeadershipReportResult:
+        cache_key = (month_start, self.cache_revision.version())
+        cache_seconds = self.current_refresh_seconds
+        now_tick = monotonic()
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached and cached[0] > now_tick:
+                return cached[2]
+
+        snapshots = self._load_snapshots(self._window_months(month_start))
+        result = self._compose_snapshot_report(month_start, snapshots, cached=True)
+        # Missing or expired snapshots are checked again quickly while the worker
+        # refreshes them. Fresh results retain the normal in-process TTL.
+        selected = snapshots.get(month_start)
+        if selected is not None:
+            scope = month_start.isoformat()
+            month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+            observe_report_snapshot(line_id=self.settings.device_id, source_id=self.source_identity(),
+                                    report_type='leadership', start=scope, end=month_end.isoformat(),
+                                    scope=('leadership', scope), data_as_of=selected.data_as_of.isoformat(), stale=result.snapshot.stale)
+        remaining_seconds = (
+            int(
+                (
+                    selected.expires_at
+                    - datetime.now(ZoneInfo(self.settings.timezone))
+                ).total_seconds()
+            )
+            if selected is not None
+            else 0
+        )
+        ttl = (
+            2
+            if result.snapshot.stale
+            else min(cache_seconds, max(1, remaining_seconds))
+        )
+        created_at = monotonic()
+        with self._cache_lock:
+            self._cache = {key: value for key, value in self._cache.items()
+                           if key[0] != month_start}
+            self._cache[cache_key] = (created_at + ttl, created_at, result)
+        return result
+
+    def _load_snapshots(
+        self, months: list[date]
+    ) -> dict[date, LeadershipMonthSnapshot]:
+        if self.snapshots is None:
+            return {}
+        return self.snapshots.get_many(
+            months,
+            source_fingerprint=self.source_identity(),
+            snapshot_version=self.SNAPSHOT_VERSION,
+        )
+
+    def _query_snapshots(
+        self, range_start: date, range_end: date
+    ) -> dict[date, LeadershipMonthSnapshot]:
+        started_at = monotonic()
+        result_sets = self.repository.leadership_result_sets(range_start, range_end)
+        if len(result_sets) != 2:
+            raise RuntimeError("领导报表批量查询未返回预期的两个结果集")
+
+        daily_by_month: dict[date, list[LeadershipPeriodRecord]] = {}
+        remark_counts_by_month: dict[date, int] = {}
+        for row in result_sets[0]:
+            period_start = _date(row["period_start"])
+            remark_count = int(row.get("remark_count") or 0)
+            report_month = period_start.replace(day=1)
+            remark_counts_by_month[report_month] = (
+                remark_counts_by_month.get(report_month, 0) + remark_count
+            )
+            daily_by_month.setdefault(report_month, []).append(
+                LeadershipPeriodRecord(
+                    period_start=period_start,
+                    task_count=int(row.get("task_count") or 0),
+                    cut_length_m=_decimal(row.get("cut_length_m")),
+                    groove_length_m=_decimal(row.get("groove_length_m")),
+                    work_time_seconds=int(_decimal(row.get("work_time_seconds"))),
+                    remark=(
+                        f"含 {remark_count} 条任务备注" if remark_count else None
+                    ),
+                )
+            )
+
+        projects_by_month: dict[date, list[ProjectDistributionRecord]] = {}
+        for row in result_sets[1]:
+            period_start = _date(row["period_start"]).replace(day=1)
+            projects_by_month.setdefault(period_start, []).append(
+                ProjectDistributionRecord(
+                    project_name=str(row.get("project_name") or "未标注工程"),
+                    task_count=int(row.get("task_count") or 0),
+                    cut_length_m=_decimal(row.get("cut_length_m")),
+                    work_time_seconds=int(_decimal(row.get("work_time_seconds"))),
+                )
+            )
+
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        current_month = now.date().replace(day=1)
+        query_duration_ms = round((monotonic() - started_at) * 1000)
+        snapshots: dict[date, LeadershipMonthSnapshot] = {}
+        for report_month in self._months_between(range_start, range_end):
+            daily = daily_by_month.get(report_month, [])
+            projects = projects_by_month.get(report_month, [])
+            daily_count = sum(item.task_count for item in daily)
+            project_count = sum(item.task_count for item in projects)
+            mismatch = daily_count != project_count
+            day = report_month.isoformat()
+            month_end = report_month.replace(day=monthrange(report_month.year, report_month.month)[1])
+            data_quality(logger, 'REPORT_AGGREGATE_DATA_QUALITY',
+                         '领导报表按日和按工程的任务数不一致' if mismatch else '同口径生产任务数已核对一致',
+                         scope=(day,), level=logging.ERROR if mismatch else logging.INFO,
+                         state='count_mismatch' if mismatch else 'verified', line_id=self.settings.device_id,
+                         source_id=self.source_identity(), stage='leadership', period_start=day,
+                         period_end=month_end.isoformat(), data_as_of=now.isoformat(),
+                         daily_count=daily_count, grouped_count=project_count)
+            ttl_seconds = (
+                self.current_refresh_seconds
+                if report_month >= current_month
+                else self.history_refresh_seconds
+            )
+            snapshots[report_month] = LeadershipMonthSnapshot(
+                report_month=report_month,
+                daily_records=sorted(
+                    daily, key=lambda item: item.period_start, reverse=True
+                ),
+                project_distribution=sorted(
+                    projects_by_month.get(report_month, []),
+                    key=lambda item: (-item.task_count, item.project_name),
+                ),
+                total=self._total(
+                    report_month,
+                    daily,
+                    remark_count=remark_counts_by_month.get(report_month, 0),
+                ),
+                data_as_of=now,
+                refreshed_at=now,
+                expires_at=now + timedelta(seconds=ttl_seconds),
+                query_duration_ms=query_duration_ms,
+                source_fingerprint=self.source_identity(),
+                snapshot_version=self.SNAPSHOT_VERSION,
+            )
+        return snapshots
+
+    def _compose_snapshot_report(
+        self,
+        month_start: date,
+        snapshots: dict[date, LeadershipMonthSnapshot],
+        *,
+        cached: bool,
+    ) -> LeadershipReportResult:
+        months = self._window_months(month_start)
+        selected = snapshots.get(month_start)
+        monthly_records = [
+            snapshots[period].total if period in snapshots else self._empty(period)
+            for period in months[:12]
+        ]
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        stale = (
+            selected is None
+            or selected.expires_at <= now
+            or any(period not in snapshots for period in months)
+        )
+        return self._result(
+            month_start=month_start,
+            source_mode="sqlserver",
+            daily_records=selected.daily_records if selected else [],
+            monthly_records=monthly_records
+            + ([snapshots[months[12]].total] if months[12] in snapshots else []),
+            project_distribution=(selected.project_distribution if selected else []),
+            snapshot=LeadershipSnapshotState(
+                data_as_of=selected.data_as_of if selected else None,
+                stale=stale,
+                cached=cached,
+                source="postgres" if cached else "database",
+                query_duration_ms=(selected.query_duration_ms if selected else None),
+            ),
+        )
+
+    def source_identity(self) -> str:
+        from app.modules.reports.snapshot_repository import fingerprint
+        return fingerprint((self.settings.device_id, self.settings.source_fingerprint,
+            self.settings.effective_data_source_mode, self.settings.report_machine_no.casefold(), self.SNAPSHOT_VERSION))
+
+    @property
+    def current_refresh_seconds(self) -> int:
+        return report_cache_seconds(self.settings)
+
+    @property
+    def history_refresh_seconds(self) -> int:
+        return report_cache_seconds(self.settings, historical=True)
+
+    @staticmethod
+    def _months_between(range_start: date, range_end: date) -> list[date]:
+        months: list[date] = []
+        current = range_start.replace(day=1)
+        while current < range_end:
+            months.append(current)
+            current = _previous_month(current, -1)
+        return months
+
+    @staticmethod
+    def _window_months(month_start: date) -> list[date]:
+        return [_previous_month(month_start, offset) for offset in range(13)]
+
+    @staticmethod
+    def _empty(period_start: date) -> LeadershipPeriodRecord:
+        return LeadershipPeriodRecord(
+            period_start=period_start,
+            task_count=0,
+            cut_length_m=ZERO,
+            groove_length_m=ZERO,
+            work_time_seconds=0,
+            remark=None,
+        )
+
+    @staticmethod
+    def _total(
+        month_start: date,
+        daily_records: list[LeadershipPeriodRecord],
+        *,
+        remark_count: int = 0,
+    ) -> LeadershipPeriodRecord:
+        return LeadershipPeriodRecord(
+            period_start=month_start,
+            task_count=sum(item.task_count for item in daily_records),
+            cut_length_m=sum((item.cut_length_m for item in daily_records), ZERO),
+            groove_length_m=sum(
+                (item.groove_length_m for item in daily_records), ZERO
+            ),
+            work_time_seconds=sum(item.work_time_seconds for item in daily_records),
+            remark=f"含 {remark_count} 条任务备注" if remark_count else None,
+        )
+
+    def _result(
+        self,
+        *,
+        month_start: date,
+        source_mode: str,
+        daily_records: list[LeadershipPeriodRecord],
+        monthly_records: list[LeadershipPeriodRecord],
+        project_distribution: list[ProjectDistributionRecord] | None = None,
+        snapshot: LeadershipSnapshotState | None = None,
+    ) -> LeadershipReportResult:
+        total = self._total(month_start, daily_records)
+        monthly_by_period = {item.period_start: item for item in monthly_records}
+        year_ago_total = monthly_by_period.get(_previous_month(month_start, 12))
+        complete_months = [
+            monthly_by_period.get(
+                period_start,
+                LeadershipPeriodRecord(
+                    period_start=period_start,
+                    task_count=0,
+                    cut_length_m=ZERO,
+                    groove_length_m=ZERO,
+                    work_time_seconds=0,
+                    remark=None,
+                ),
+            )
+            for period_start in (
+                _previous_month(month_start, offset)
+                for offset in range(0, 12)
+            )
+        ]
+        twelve_month_total = LeadershipPeriodRecord(
+            period_start=month_start,
+            task_count=sum(item.task_count for item in complete_months),
+            cut_length_m=sum((item.cut_length_m for item in complete_months), ZERO),
+            groove_length_m=sum(
+                (item.groove_length_m for item in complete_months), ZERO
+            ),
+            work_time_seconds=sum(item.work_time_seconds for item in complete_months),
+            remark=None,
+        )
+        previous_month_start = _previous_month(month_start, 1)
+        return LeadershipReportResult(
+            report_month=month_start,
+            source_mode=source_mode,
+            daily_records=sorted(
+                daily_records, key=lambda item: item.period_start, reverse=True
+            ),
+            monthly_records=complete_months,
+            current_month_total=total,
+            twelve_month_total=twelve_month_total,
+            year_ago_total=year_ago_total,
+            comparison_total=complete_months[1],
+            comparison_start=previous_month_start,
+            comparison_end=date(
+                previous_month_start.year,
+                previous_month_start.month,
+                monthrange(previous_month_start.year, previous_month_start.month)[1],
+            ),
+            project_distribution=project_distribution or [],
+            snapshot=snapshot
+            or LeadershipSnapshotState(
+                data_as_of=datetime.now(ZoneInfo(self.settings.timezone)),
+                source=source_mode,
+            ),
+        )
+
+    def _demo_data(self, month_start: date) -> LeadershipReportResult:
+        last_day = monthrange(month_start.year, month_start.month)[1]
+        demo_rows = [
+            (1, 24, "969.272", 7595),
+            (2, 19, "832.514", 6840),
+            (4, 27, "1124.806", 9238),
+            (5, 16, "708.335", 5774),
+            (8, 31, "1286.920", 10462),
+            (11, 22, "914.680", 7316),
+            (14, 25, "1038.492", 8465),
+            (18, 18, "776.158", 6130),
+            (22, 29, "1195.743", 9578),
+            (25, 21, "867.309", 6992),
+        ]
+        daily_records = [
+            LeadershipPeriodRecord(
+                period_start=month_start.replace(day=day),
+                task_count=task_count,
+                cut_length_m=Decimal(cut_length),
+                groove_length_m=ZERO,
+                work_time_seconds=work_seconds,
+                remark=None,
+            )
+            for day, task_count, cut_length, work_seconds in demo_rows
+            if day <= last_day
+        ]
+        current_total = LeadershipPeriodRecord(
+            period_start=month_start,
+            task_count=sum(item.task_count for item in daily_records),
+            cut_length_m=sum((item.cut_length_m for item in daily_records), ZERO),
+            groove_length_m=sum(
+                (item.groove_length_m for item in daily_records), ZERO
+            ),
+            work_time_seconds=sum(item.work_time_seconds for item in daily_records),
+            remark=None,
+        )
+
+        monthly_records: list[LeadershipPeriodRecord] = []
+        for offset in range(12, -1, -1):
+            period_start = _previous_month(month_start, offset)
+            if offset == 0:
+                monthly_records.append(current_total)
+                continue
+            scale = Decimal("0.72") + Decimal(11 - offset) * Decimal("0.031")
+            monthly_records.append(
+                LeadershipPeriodRecord(
+                    period_start=period_start,
+                    task_count=max(1, int(Decimal(current_total.task_count) * scale)),
+                    cut_length_m=(current_total.cut_length_m * scale).quantize(
+                        METER_PRECISION, rounding=ROUND_HALF_UP
+                    ),
+                    groove_length_m=ZERO,
+                    work_time_seconds=int(
+                        Decimal(current_total.work_time_seconds) * scale
+                    ),
+                    remark=None,
+                )
+            )
+        return self._result(
+            month_start=month_start,
+            source_mode="demo",
+            daily_records=daily_records,
+            monthly_records=monthly_records,
+            project_distribution=[
+                ProjectDistributionRecord(
+                    project_name="DEMO-A",
+                    task_count=current_total.task_count * 55 // 100,
+                    cut_length_m=(current_total.cut_length_m * Decimal("0.55")).quantize(METER_PRECISION),
+                    work_time_seconds=current_total.work_time_seconds * 55 // 100,
+                ),
+                ProjectDistributionRecord(
+                    project_name="DEMO-B",
+                    task_count=current_total.task_count - current_total.task_count * 55 // 100,
+                    cut_length_m=(current_total.cut_length_m * Decimal("0.45")).quantize(METER_PRECISION),
+                    work_time_seconds=current_total.work_time_seconds - current_total.work_time_seconds * 55 // 100,
+                ),
+            ],
+        )

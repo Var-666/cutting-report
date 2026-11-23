@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import wait
 from typing import Callable
 
-from app.services.llm_service import background_llm_work, generation_priority
+from app.modules.reports.analysis.llm import background_llm_work, generation_priority
 from app.workers.bounded_executor import BoundedExecutor
 
 

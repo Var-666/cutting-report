@@ -4,9 +4,10 @@ from threading import Event, Lock
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
-from app.services.automation_service import AutomationService
-from app.services.email_service import EmailService, EmailDeliveryFailure
+from app.modules.automation.runtime import AutomationRuntime
+from app.modules.automation.schedules import AutomationService
+from app.modules.automation.delivery import DeliveryService
+from app.modules.automation.email import EmailService, EmailDeliveryFailure
 from app.workers.report_worker import ReportWorker
 
 
@@ -55,8 +56,8 @@ def test_email_service_uses_latest_smtp_configuration_per_delivery(monkeypatch) 
         def send_message(self, message):
             self.call["from"] = message["From"]
 
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP", FakeSMTP)
-    monkeypatch.setattr("app.services.email_service.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP", FakeSMTP)
+    monkeypatch.setattr("app.modules.automation.email.smtplib.SMTP_SSL", FakeSMTP)
     delivery = {
         "recipients": ["manager@example.com"],
         "subject": "日报",
@@ -117,7 +118,7 @@ def test_automation_enable_and_retry_delay_use_live_configuration(tmp_path) -> N
     service.settings = initial
     service.runtime = runtime
     service.repository = repository
-    service.email_service = FailingEmail()
+    delivery = DeliveryService(initial, repository, FailingEmail(), runtime)
     initial.reports_dir.mkdir(parents=True)
     (initial.reports_dir / "r.html").write_text("<h1>日报</h1>")
     now = datetime(2026, 9, 23, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -127,7 +128,7 @@ def test_automation_enable_and_retry_delay_use_live_configuration(tmp_path) -> N
     runtime.apply(automation_enabled=True, email_retry_base_seconds=10)
     assert service.process_due_schedules(now) == 0
     assert repository.scans == 1
-    assert service.process_next_email(now) is True
+    assert delivery.process_next_email(now) is True
     assert repository.retry_at == "2026-09-23T12:00:20+08:00"
 
 

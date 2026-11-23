@@ -13,7 +13,7 @@ from app.database.sqlserver import SqlServerConfigurationError, sqlserver_driver
 from app.models.contracts import ApiEnvelope
 from app.models.pdm_statistics import PdmBranchOptions, PdmOptionsQuery, PdmOverviewReport, PdmStatisticsQuery, PdmStatisticsReport
 from app.services.pdm_statistics import PdmStatisticsService, PDM_STATISTICS_SCOPE
-from app.services.report_snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
+from app.modules.reports.snapshots import SnapshotRefreshBusy, SnapshotRefreshRejected, SnapshotRefreshFailed
 
 router = APIRouter(prefix='/api/v1/pdm-statistics', tags=['pdm-statistics'], dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)

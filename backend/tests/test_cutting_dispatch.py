@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api.cutting import (
+from app.modules.cutting.routes import (
     DispatchBatchCreateRequest,
     DispatchCreateRequest,
     DispatchExecuteRequest,
@@ -19,8 +19,8 @@ from app.api.cutting import (
     get_dispatch as get_dispatch_api,
 )
 from app.config import Settings
-from app.database.dispatch import DispatchRepository
-from app.services.cutting_dispatch_service import CuttingDispatchError, DispatchConflictError, DispatchNotFoundError, DuplicateDispatchError, standard_instruction_parameters, standard_instruction_segment
+from app.modules.cutting.dispatch_repository import DispatchRepository
+from app.modules.cutting.dispatch import CuttingDispatchError, DispatchConflictError, DispatchNotFoundError, DuplicateDispatchError, standard_instruction_parameters, standard_instruction_segment
 from app.services.file_download_service import DownloadError
 from app.services.file_source import LocalFileSource, MockFileSource, normalize_relative_path
 from app.services.magic_box_service import MagicBoxError

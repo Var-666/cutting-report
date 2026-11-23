@@ -2,7 +2,7 @@ from contextlib import closing
 
 import pytest
 
-from app.services.pdf_service import PdfService
+from app.modules.reports.pdf import PdfService
 from tests.report_style_fixtures import BUSINESS_MARKER, STYLE_KINDS, style_report_html
 
 

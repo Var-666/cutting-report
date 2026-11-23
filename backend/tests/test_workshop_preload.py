@@ -9,13 +9,13 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.api.auth import require_user
-from app.api.workshop import router
+from app.modules.cutting.workshop_routes import router
 from tests.line_fixtures import cutting_settings
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import QueryBundle
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ def test_workshop_warmup_and_report_generation_share_query_without_confirming(st
 
 def test_warmup_cache_expires_and_separates_dates(service, monkeypatch):
     clock = [0]
-    monkeypatch.setattr("app.services.query_service.monotonic", lambda: clock[0])
+    monkeypatch.setattr("app.modules.cutting.service.monotonic", lambda: clock[0])
     first_date, second_date = date(2026, 9, 2), date(2026, 9, 3)
     first = service.prepare_workshop_data(first_date)
     assert service.prepare_workshop_data(first_date) is first

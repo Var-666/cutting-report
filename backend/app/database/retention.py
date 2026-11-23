@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from app.database.postgres import PostgresDatabase, PostgresRepository
-from app.database.dispatch import UNRESOLVED_DISPATCH_SQL
+from app.modules.cutting.dispatch_repository import UNRESOLVED_DISPATCH_SQL
 
 
 REPORT_TERMINAL_STATUSES = ("completed", "failed")

@@ -12,10 +12,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.config import Settings
-from app.database.alarm_source import SqlServerAlarmSource
-from app.database.alarms import AlarmRepository
-from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.alarm_monitor_service import AlarmMonitorService
+from app.modules.alarms.source import SqlServerAlarmSource
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.alarms.analysis import AlarmAnalysisService
+from app.modules.alarms.monitoring import AlarmMonitorService
 
 
 settings = Settings()
@@ -99,7 +99,7 @@ def test_recent_recheck_does_not_skip_incremental_backlog(state_database, tmp_pa
     with restarted.connect() as connection:
         ids = {r["source_alarm_id"] for r in connection.execute("SELECT source_alarm_id FROM alarm_source_events")}
     assert ids == set(range(1, 23))
-    assert len(restarted.list_reports()) == 1
+    assert len(restarted.reports.list_reports()) == 1
 
 
 def test_alarm_events_and_scan_boundary_rollback_and_retry_together(state_database, tmp_path, monkeypatch):
@@ -109,7 +109,7 @@ def test_alarm_events_and_scan_boundary_rollback_and_retry_together(state_databa
     arguments = dict(now=now, debounce_minutes=10)
     repository.ingest([], cursor=10, open_recheck_after_id=5,
                       history_recheck_after_id=6, **arguments)
-    from app.database import alarms as alarm_module
+    from app.modules.alarms import repository as alarm_module
     original_hash = alarm_module._source_hash
 
     def fail_second(record):
@@ -184,7 +184,7 @@ def test_alarm_analysis_requires_a_model_result(state_database, monkeypatch) -> 
         def __exit__(self, *_args):
             return None
 
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", FailingClient)
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", FailingClient)
     with pytest.raises(RuntimeError, match="model unavailable"):
         AlarmAnalysisService(replace(settings, llm_enabled=True), database=state_database).analyze([incident()])
 
@@ -242,9 +242,9 @@ def test_alarm_analysis_keeps_rule_fields_deterministic_and_normalizes_limitatio
         def post(self, *_args, **_kwargs):
             return Response()
 
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     monkeypatch.setattr(
-        "app.services.llm_service.record_llm_call",
+        "app.modules.reports.analysis.llm.record_llm_call",
         lambda *_args, **_kwargs: None,
     )
 
@@ -310,9 +310,9 @@ def test_alarm_analysis_adds_rule_fields_when_model_omits_them(state_database, m
         def post(self, *_args, **_kwargs):
             return Response()
 
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     monkeypatch.setattr(
-        "app.services.llm_service.record_llm_call", lambda *_args, **_kwargs: None
+        "app.modules.reports.analysis.llm.record_llm_call", lambda *_args, **_kwargs: None
     )
 
     result = AlarmAnalysisService(
@@ -370,8 +370,8 @@ def test_same_open_problem_emits_once_and_real_recurrence_emits_again(state_data
         [alarm(1)], now=now, cursor=1, debounce_minutes=10
     )
     assert first["created_incidents"] == 1
-    incident = repository.list_unreported_incidents()[0]
-    repository.reserve_report(
+    incident = repository.reports.list_unreported_incidents()[0]
+    repository.reports.reserve_report(
         proposed_report_id="alarm_report_1",
         emission_key="first",
         machine_no="20kw切割机",
@@ -387,7 +387,7 @@ def test_same_open_problem_emits_once_and_real_recurrence_emits_again(state_data
         cursor=2,
         debounce_minutes=10,
     )
-    assert repository.list_unreported_incidents() == []
+    assert repository.reports.list_unreported_incidents() == []
     assert len(repository.list_incidents(None)) == 1
 
     cleared = "2026-09-09 12:05:00"
@@ -405,7 +405,7 @@ def test_same_open_problem_emits_once_and_real_recurrence_emits_again(state_data
         [alarm(3)], now=recurrence_time, cursor=3, debounce_minutes=10
     )
     assert result["created_incidents"] == 1
-    assert len(repository.list_unreported_incidents()) == 1
+    assert len(repository.reports.list_unreported_incidents()) == 1
     assert len(repository.list_incidents(None)) == 2
 
 
@@ -414,8 +414,8 @@ def test_recurrence_inside_debounce_window_does_not_emit_again(state_database, t
     repository.initialize()
     now = datetime(2026, 9, 9, 9, 0, tzinfo=TZ)
     repository.ingest([alarm(1)], now=now, cursor=1, debounce_minutes=10)
-    incident = repository.list_unreported_incidents()[0]
-    repository.reserve_report(
+    incident = repository.reports.list_unreported_incidents()[0]
+    repository.reports.reserve_report(
         proposed_report_id="alarm_report_1",
         emission_key="first",
         machine_no="20kw切割机",
@@ -432,7 +432,7 @@ def test_recurrence_inside_debounce_window_does_not_emit_again(state_database, t
         [alarm(2)], now=now + timedelta(minutes=5), cursor=2, debounce_minutes=10
     )
     assert result["created_incidents"] == 0
-    assert repository.list_unreported_incidents() == []
+    assert repository.reports.list_unreported_incidents() == []
 
 
 def test_failed_report_remains_visible_after_incidents_are_released_for_retry(state_database,
@@ -449,8 +449,8 @@ def test_failed_report_remains_visible_after_incidents_are_released_for_retry(st
         debounce_minutes=10,
         monitor_start_at=cutoff,
     )
-    current = repository.list_unreported_incidents(monitor_start_at=cutoff)[0]
-    repository.reserve_report(
+    current = repository.reports.list_unreported_incidents(monitor_start_at=cutoff)[0]
+    repository.reports.reserve_report(
         proposed_report_id="failed-report",
         emission_key="failed-emission",
         machine_no="20kw切割机",
@@ -458,10 +458,10 @@ def test_failed_report_remains_visible_after_incidents_are_released_for_retry(st
         now=now.isoformat(timespec="seconds"),
     )
 
-    repository.fail_report("failed-report", "模型输出格式错误")
+    repository.reports.fail_report("failed-report", "模型输出格式错误")
 
-    reports = repository.list_reports(monitor_start_at=cutoff)
-    assert repository.list_unreported_incidents(monitor_start_at=cutoff)
+    reports = repository.reports.list_reports(monitor_start_at=cutoff)
+    assert repository.reports.list_unreported_incidents(monitor_start_at=cutoff)
     assert len(reports) == 1
     assert reports[0]["status"] == "failed"
     assert reports[0]["error_message"] == "模型输出格式错误"
@@ -715,7 +715,7 @@ def test_recent_recheck_captures_late_rows_once_and_applies_delayed_updates(stat
     third = service.run_once(now + timedelta(minutes=10))
 
     incidents = repository.list_incidents(None)
-    reports = repository.list_reports()
+    reports = repository.reports.list_reports()
     assert first["report_status"] == "completed"
     assert second["report_status"] == "idle"
     assert third["report_status"] == "idle"
@@ -802,7 +802,7 @@ def test_report_failure_does_not_mark_successful_alarm_sync_as_failed(state_data
     ).isoformat(
         timespec="seconds"
     )
-    assert {report["status"] for report in repository.list_reports()} == {"failed"}
+    assert {report["status"] for report in repository.reports.list_reports()} == {"failed"}
 
 
 def test_incident_page_excludes_alarms_before_start_and_keeps_full_counts(state_database, tmp_path) -> None:
@@ -862,7 +862,7 @@ def test_incident_page_excludes_alarms_before_start_and_keeps_full_counts(state_
 
 
 def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_database, tmp_path, monkeypatch) -> None:
-    from app.api import alarms as alarm_api
+    from app.modules.alarms import routes as alarm_api
 
     repository = AlarmRepository(state_database, source_name="production")
     repository.initialize()
@@ -874,11 +874,11 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
     )
     incidents = {item["alarm_code"]: item for item in repository.list_incidents(None)}
     for code, report_id in [("1", "old-completed"), ("2", "generating"), ("3", "legacy-failed"), ("4", "no-file")]:
-        repository.reserve_report(
+        repository.reports.reserve_report(
             proposed_report_id=report_id, emission_key=report_id, machine_no="Cutter01",
             incident_ids=[incidents[code]["incident_id"]], now="2026-10-01T09:00:00+08:00",
         )
-    repository.complete_report(
+    repository.reports.complete_report(
         "old-completed", analysis={"summary": "older report"},
         html_relative_path="alarms/old.html", pdf_relative_path="alarms/old.pdf",
         pdf_filename="old.pdf", file_size=100, sha256="sha", model_status="model",
@@ -891,11 +891,11 @@ def test_incident_page_exposes_report_state_without_a_recent_report_limit(state_
         connection.execute("UPDATE alarm_reports SET status = 'completed' WHERE report_id = 'no-file'")
         connection.execute("UPDATE alarm_incidents SET pdf_report_id = 'missing' WHERE incident_id = %s", (incidents["5"]["incident_id"],))
     for index in range(51):
-        repository.reserve_report(
+        repository.reports.reserve_report(
             proposed_report_id=f"new-{index}", emission_key=f"new-{index}", machine_no="Cutter01",
             incident_ids=[f"other-{index}"], now=f"2026-10-07T08:{index:02d}:00+08:00",
         )
-    assert "old-completed" not in {item["report_id"] for item in repository.list_reports(50)}
+    assert "old-completed" not in {item["report_id"] for item in repository.reports.list_reports(50)}
     settings = cutting_settings(alarm_monitor_start_at=cutoff)
     app = embedded_app(settings)
     runtime = make_device_runtime(alarm_repository=repository, settings=settings)
@@ -929,7 +929,7 @@ def test_alarm_report_page_returns_ten_items_and_full_counts(state_database, tmp
     for index in range(23):
         report_id = f"report-{index:02d}"
         created_at = f"2026-10-06T08:{index:02d}:00+08:00"
-        repository.reserve_report(
+        repository.reports.reserve_report(
             proposed_report_id=report_id,
             emission_key=f"emission-{index:02d}",
             machine_no="Cutter01",
@@ -937,7 +937,7 @@ def test_alarm_report_page_returns_ten_items_and_full_counts(state_database, tmp
             now=created_at,
         )
         if index % 2 == 0:
-            repository.complete_report(
+            repository.reports.complete_report(
                 report_id,
                 analysis={"summary": f"report {index}"},
                 html_relative_path=f"alarms/{report_id}.html",
@@ -949,12 +949,12 @@ def test_alarm_report_page_returns_ten_items_and_full_counts(state_database, tmp
                 completed_at=created_at,
             )
 
-    second_page = repository.page_reports(
+    second_page = repository.reports.page_reports(
         monitor_start_at=None,
         page=2,
         page_size=10,
     )
-    last_page = repository.page_reports(
+    last_page = repository.reports.page_reports(
         monitor_start_at=None,
         page=99,
         page_size=10,

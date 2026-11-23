@@ -14,7 +14,7 @@ from tests.line_fixtures import configuration as line_configuration
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import PostgresDatabase
 from tests.postgres_fixtures import state_settings
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 
 
 def configuration(root, postgres_state=None):
@@ -82,7 +82,7 @@ def _worker(root, stop, entered=None, release=None):
 
 
 def _hold_model(root, output, release):
-    from app.services.llm_service import llm_capacity
+    from app.modules.reports.analysis.llm import llm_capacity
     from dataclasses import replace
     with PostgresDatabase(configuration(root)) as database:
         configured = replace(configuration(root), llm_max_concurrent=2, llm_queue_timeout_seconds=10)
@@ -92,7 +92,7 @@ def _hold_model(root, output, release):
 
 
 def _hold_pdf(root, output, release):
-    from app.services.pdf_service import PdfRenderError, PdfService
+    from app.modules.reports.pdf import PdfRenderError, PdfService
     service = PdfService(max_waiters=0, coordination_path=Path(root) / "pdf-render.lock")
     try:
         with service._render_slot():
@@ -103,7 +103,7 @@ def _hold_pdf(root, output, release):
 
 
 def _configuration_observer(root, output, changed):
-    from app.services.automation_runtime import AutomationRuntime
+    from app.modules.automation.runtime import AutomationRuntime
     runtime = AutomationRuntime(configuration(root))
     old, revision = runtime.snapshot()
     output.put((old.smtp_host, revision))
@@ -130,7 +130,7 @@ def _uncommitted(path, entered):
 
 
 def _publish_cache(root):
-    from app.services.cache_revision import CacheRevision
+    from app.modules.reports.cache_revision import CacheRevision
     from tests.line_fixtures import line_settings
     CacheRevision(line_settings(configuration(root)), "production").publish()
     from tests.line_fixtures import line_settings
@@ -155,10 +155,10 @@ def _cleanup_after_push(root, download_id, entered, release, output):
 def _analysis_child(root, output, background):
     from contextlib import nullcontext
     from dataclasses import replace
-    from app.database.metadata import MetadataRepository
-    from app.services.llm_service import background_llm_work, llm_capacity
-    from app.services.report_analysis.workshop import build_context
-    from app.services.report_analysis_service import ReportAnalysisService
+    from app.modules.reports.repository import MetadataRepository
+    from app.modules.reports.analysis.llm import background_llm_work, llm_capacity
+    from app.modules.reports.analysis.workshop import build_context
+    from app.modules.reports.analysis.service import ReportAnalysisService
     from tests.analysis_fakes import model_analysis
     with PostgresDatabase(configuration(root)) as database:
         configured = replace(configuration(root), llm_enabled=True, llm_max_concurrent=2, llm_queue_timeout_seconds=5)
@@ -318,7 +318,7 @@ def test_postgres_rolls_back_process_killed_inside_write_transaction(tmp_path, p
 
 def test_foreground_process_promotes_and_reuses_another_process_generation(tmp_path, postgres_state):
     from dataclasses import replace
-    from app.services.llm_service import background_llm_work, llm_capacity
+    from app.modules.reports.analysis.llm import background_llm_work, llm_capacity
     configured = replace(configuration(tmp_path, postgres_state), llm_max_concurrent=2, llm_queue_timeout_seconds=5)
     build_runtime(configured, role="worker")
     context, processes = mp.get_context("spawn"), []
@@ -349,9 +349,9 @@ def test_foreground_process_promotes_and_reuses_another_process_generation(tmp_p
 def test_worker_refresh_invalidates_only_its_device_local_caches(tmp_path, postgres_state, monkeypatch):
     from dataclasses import replace
     from datetime import date
-    from app.services.query_service import QueryService, EquipmentQueryResult
+    from app.modules.cutting.service import QueryService, EquipmentQueryResult
     from app.models.domain import ReportFilter
-    from app.services.leadership_report_service import LeadershipReportService
+    from app.modules.cutting.leadership import LeadershipReportService
     configured = configuration(tmp_path, postgres_state)
     runtime = build_runtime(configured, role="worker")
     from tests.line_fixtures import line_settings

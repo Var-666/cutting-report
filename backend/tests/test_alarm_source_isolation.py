@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.database.alarms import AlarmRepository, _fingerprint
+from app.modules.alarms.repository import AlarmRepository, _fingerprint
 
 STAMP = '2026-11-01T08:00:00+08:00'
 NOW = datetime.fromisoformat(STAMP)

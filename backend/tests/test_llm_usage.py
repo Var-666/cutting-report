@@ -5,10 +5,10 @@ import httpx
 
 from app.config import Settings
 from app.database.llm_usage import LlmUsageRepository
-from app.services.alarm_analysis_service import AlarmAnalysisService
+from app.modules.alarms.analysis import AlarmAnalysisService
 from app.services.llm_usage_service import record_llm_call
-from app.services.llm_service import LlmService
-from app.services.llm_prompts import ALARM_SYSTEM_PROMPT
+from app.modules.reports.analysis.llm import LlmService
+from app.modules.reports.analysis.prompts import ALARM_SYSTEM_PROMPT
 
 
 class Response:
@@ -57,7 +57,7 @@ def test_report_model_request_is_counted_even_when_provider_omits_usage(state_da
         def post(self, *_args, **_kwargs):
             return ModelResponse()
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client", Client)
     LlmService(settings, database=state_database).analyze_context("welding", {"facts": [], "tables": []})
     assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 0, "total_tokens": 0,
@@ -98,7 +98,7 @@ def test_alarm_model_request_adds_provider_token_usage(state_database, tmp_path,
             assert _kwargs['json']['messages'][0] == {'role': 'system', 'content': ALARM_SYSTEM_PROMPT}
             return ModelResponse()
 
-    monkeypatch.setattr("app.services.alarm_analysis_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.alarms.analysis.httpx.Client", Client)
     AlarmAnalysisService(settings, database=state_database).analyze([])
     assert LlmUsageRepository(state_database).summary() == {
         "call_count": 1, "metered_count": 1, "total_tokens": 9,
@@ -124,7 +124,7 @@ def test_failed_http_attempt_counts_without_inventing_tokens(state_database, tmp
         def post(self, *_args, **_kwargs):
             raise RuntimeError("connection failed")
 
-    monkeypatch.setattr("app.services.llm_service.httpx.Client", Client)
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client", Client)
     with pytest.raises(RuntimeError, match="connection failed"):
         LlmService(settings, database=state_database).analyze_context("welding", {"facts": [], "tables": []})
     assert LlmUsageRepository(state_database).summary() == {
@@ -156,7 +156,7 @@ def test_real_streamed_model_response_succeeds_and_records_usage(state_database,
     response = httpx.Response(200, stream=body)
     original_client = httpx.Client
     transport = httpx.MockTransport(lambda request: response)
-    monkeypatch.setattr("app.services.llm_service.httpx.Client",
+    monkeypatch.setattr("app.modules.reports.analysis.llm.httpx.Client",
                         lambda **kwargs: original_client(transport=transport, **kwargs))
     if scenario == "report":
         assert LlmService(settings, database=state_database).analyze_context("welding", {"facts": [], "tables": []}).status == "success"

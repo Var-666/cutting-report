@@ -7,7 +7,7 @@ import anyio
 import pytest
 
 from app.config import Settings
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.main import health
 from app.workers.report_worker import ReportWorker
 from test_report_worker_resilience import IdleMetadata

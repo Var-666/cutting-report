@@ -7,10 +7,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.line_fixtures import cutting_settings, as_line_services
-from app.database.automation import AutomationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.automation.repository import AutomationRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.users import UserRepository
-from app.services.automation_service import AutomationService
+from app.modules.automation.schedules import AutomationService
 
 NOW = datetime(2026, 9, 30, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
 STAMP = NOW.isoformat(timespec="seconds")

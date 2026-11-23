@@ -227,7 +227,7 @@ def test_email_consumer_recovers_after_one_claim_error():
             return False
 
     worker = automation_process(replace(settings, worker_poll_seconds=0.01), Automation())
-    worker.runtime.automation.recover_interrupted_deliveries = lambda: reconciliations.append(True)
+    worker.runtime.automation.deliveries.recover_interrupted_deliveries = lambda: reconciliations.append(True)
     try:
         worker.start()
         assert recovered.wait(1), "one outbox fault must not permanently stop delivery"
@@ -238,7 +238,8 @@ def test_email_consumer_recovers_after_one_claim_error():
 
 def test_partial_thread_start_failure_stops_already_started_workers(monkeypatch):
     automation = SimpleNamespace(reconcile_runs=lambda now: None,
-                                 process_due_schedules=lambda now: None)
+                                 process_due_schedules=lambda now: None,
+                                 process_next_email=lambda now: pytest.fail("mail consumer did not start"))
     worker = automation_process(replace(settings, worker_poll_seconds=0.01), automation)
 
     def fail_start():

@@ -14,37 +14,37 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from app.services.frontend_static import FrontendAssets
-from app.services.production_lines import supports_path
+from app.runtime.production_lines import supports_path
 
 from app.api.configuration import router as configuration_router
 from app.api.database import router as database_router
-from app.api.analysis import router as analysis_router
-from app.api.automation import router as automation_router
-from app.api.cutting import router as cutting_router, callback_router as magic_box_callback_router
+from app.modules.cutting.analysis_routes import router as analysis_router
+from app.modules.automation.routes import router as automation_router
+from app.modules.cutting.routes import router as cutting_router, callback_router as magic_box_callback_router
 from app.api.downloads import router as downloads_router
 from app.api.conditions import router as conditions_router
 from app.api.auth import SESSION_COOKIE, router as auth_router
-from app.api.alarms import router as alarms_router
+from app.modules.alarms.routes import router as alarms_router
 from app.api.database_monitors import router as database_monitors_router
 from app.api.operations import router as operations_router
 from app.api.llm_usage import router as llm_usage_router
 from app.api.designer import router as designer_router
-from app.api.equipment import router as equipment_router
-from app.api.energy import router as energy_router
-from app.api.leadership import router as leadership_router
-from app.api.options import router as options_router
-from app.api.reports import router as reports_router
-from app.api.reports import view_router
+from app.modules.cutting.equipment_routes import router as equipment_router
+from app.modules.energy.routes import router as energy_router
+from app.modules.cutting.leadership_routes import router as leadership_router
+from app.modules.cutting.options_routes import router as options_router
+from app.modules.reports.routes import router as reports_router
+from app.modules.reports.routes import view_router
 from app.api.requests import REQUEST_ID_PATTERN, router as requests_router
-from app.api.workshop import router as workshop_router
+from app.modules.cutting.workshop_routes import router as workshop_router
 from app.config import Settings
 from app.api.devices import router as devices_router
 from app.api.runtime import application_state, request_settings, runtime_state
 from app.api.workloads import build_workloads
-from app.api.welding import router as welding_router
+from app.modules.welding.routes import router as welding_router
 from app.api.production_lines import router as production_lines_router
 from app.api.pdm_statistics import router as pdm_statistics_router
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.core.operations_logging import configured_logging, event, operation_context
 from app.core.sql_capacity import SqlCapacityError, sql_identity
 from app.core.report_deadline import ReportOperationTimeout

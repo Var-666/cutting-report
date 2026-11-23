@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import require_admin
 from app.api.runtime import runtime_state
-from app.services.production_lines import registered_lines
+from app.runtime.production_lines import registered_lines
 from app.device_config import PublicLineCatalog, ProductionLineCatalog
 from app.models.contracts import ApiEnvelope
 from app.api.runtime import application_state
-from app.services.database_runtime import DatabaseServices
+from app.runtime.database import DatabaseServices
 
 
 router = APIRouter(prefix='/api/v1/production-lines', tags=['production-lines'], dependencies=[Depends(require_admin)])

@@ -10,7 +10,9 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.api import analysis, reports, workloads
+from app.modules.cutting import analysis_routes as analysis
+from app.modules.reports import routes as reports
+from app.api import workloads
 from app.api.auth import require_admin, require_user
 from tests.line_fixtures import cutting_settings, as_line_services
 from app.device_config import ProductionLineCatalog

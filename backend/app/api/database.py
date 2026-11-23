@@ -7,7 +7,6 @@ import secrets
 from dataclasses import asdict
 from dataclasses import replace
 from datetime import date
-from pathlib import Path
 from time import perf_counter
 from typing import Literal
 
@@ -26,11 +25,12 @@ from app.services.database_configuration import (
     database_configuration_data,
 )
 from app.config import Settings
+from app.modules.cutting.repository import QUERY_DIR
 from app.database.sqlserver import SqlServerClient, SqlServerConfigurationError
 from app.models.domain import ReportFilter, to_primitive
 from app.models.contracts import ApiEnvelope, Items
 from app.models.configuration_contracts import ReportCacheConfiguration
-from app.services.report_cache_policy import REPORT_CACHE_FIELDS
+from app.modules.reports.cache_policy import REPORT_CACHE_FIELDS
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest, DatabaseSourceView, SourceEnabledRequest, SourceDeleted
 from app.database.source_registry import SourceNotFound, SourceConflict
 from app.services.database_configuration import test_source_connection, SourceConnectionError
@@ -131,7 +131,6 @@ class SqlExecuteRequest(SqlValidateRequest):
 
 
 def _query_mapping_status() -> list[dict]:
-    query_dir = Path(__file__).resolve().parents[1] / "database" / "queries"
     labels = {
         "leadership_report.sql": "领导报表日/月汇总",
         "leadership_projects.sql": "领导报表工程分布",
@@ -141,7 +140,7 @@ def _query_mapping_status() -> list[dict]:
     }
     items = []
     for filename, label in labels.items():
-        path = query_dir / filename
+        path = QUERY_DIR / filename
         content = path.read_text(encoding="utf-8") if path.is_file() else ""
         items.append(
             {
@@ -300,7 +299,7 @@ def execute_sql(
 
     query_hash = hashlib.sha256(payload.sql.encode("utf-8")).hexdigest()[:16]
     try:
-        service = SqlWorkbenchService(settings, client=device_state(request).query_service.client)
+        service = SqlWorkbenchService(settings, client=device_state(request).query_service.repository.client)
         result = service.execute(payload.sql, payload.max_rows)
     except SqlWorkbenchValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

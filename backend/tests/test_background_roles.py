@@ -16,7 +16,7 @@ from app.worker import WorkerProcess
 from app.automation_worker import AutomationProcess
 from app.database.coordination import CoordinationRepository
 from app.database.postgres import execution_scope, ExecutionLeaseLost
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.services.worker_status import WorkerStatusReader, background_ready, public_status
 from tests.postgres_fixtures import state_settings
 from tests.line_fixtures import configuration
@@ -117,10 +117,10 @@ def test_role_fencing_rolls_back_expired_commits_and_rejects_foreign_recovery(po
     try:
         with execution_scope(database,'worker:test-consumer' if role=='worker' else role,new):
             if role=='automation':
-                runtime.automation.recover_interrupted_deliveries()
+                runtime.automation.deliveries.recover_interrupted_deliveries()
                 with pytest.raises(ExecutionLeaseLost):runtime.metadata.recover_interrupted_jobs()
             else:
-                with pytest.raises(ExecutionLeaseLost):runtime.automation.recover_interrupted_deliveries()
+                with pytest.raises(ExecutionLeaseLost):runtime.automation.deliveries.recover_interrupted_deliveries()
     finally:runtime.database_runtime.close();runtime.database.close()
 
 
@@ -187,8 +187,8 @@ def test_consumer_callback_and_automation_reconciliation_share_one_outbox(postgr
         monkeypatch.setattr(automation.runtime.email_service,'send',lambda *a,**kw:sends.append(1) or 'message-id')
         automation.automation_runtime.apply(smtp_enabled=True)
         with automation.scope():
-            assert automation.automation_service.process_next_email(NOW)
-            assert not automation.automation_service.process_next_email(NOW)
+            assert automation.automation_service.delivery.process_next_email(NOW)
+            assert not automation.automation_service.delivery.process_next_email(NOW)
         assert sends==[1] and auto.get_run(run['run_id'])['status']=='sent'
         with auto.connect() as connection:assert connection.execute('SELECT count(*) FROM email_deliveries').fetchone()['count']==1
     finally:consumer.stop();automation.stop()
@@ -224,7 +224,7 @@ def test_role_diagnostics_include_all_snapshots_and_public_health_never_leaks_fi
 
 @pytest.mark.parametrize("updates", [{"REPORT_BACKGROUND_REFRESH_SECONDS": 60}, {"LLM_MODEL": "hot-model"}])
 def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(postgres_state,tmp_path,monkeypatch,updates):
-    from app.services.database_runtime import database_context
+    from app.runtime.database import database_context
     cfg=state_settings(configuration(tmp_path,real=True,energy_api_enabled=True),postgres_state)
     consumer=WorkerProcess(cfg);scheduler=SchedulerProcess(cfg)
     consumer.owner=consumer.repository.acquire('worker:test-consumer',ttl=30)
@@ -249,7 +249,7 @@ def test_consumer_owns_energy_recovery_and_hot_rebuild_keeps_inflight_claim(post
         with consumer.scope():consumer._initialize_lines()
         assert new._pending_finish is None
         snapshot=database_context(scheduler.runtime).lines['Cutter01'].cutting().energy_history_worker
-        monkeypatch.setattr(snapshot,'_flush_pending_finish',lambda:pytest.fail('scheduler flushed execution result'))
+        monkeypatch.setattr(snapshot,'flush_pending_finish',lambda:pytest.fail('scheduler flushed execution result'))
         scheduler.owner=scheduler.repository.acquire('scheduler',ttl=30)
         with scheduler.scope():scheduler._schedule()
     finally:consumer.stop();scheduler.stop()

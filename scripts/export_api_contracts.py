@@ -7,7 +7,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 
 from fastapi import FastAPI
-from app.api import production_lines, devices, alarms, cutting, workshop, database, automation, configuration, welding, leadership, equipment, analysis, energy, reports, options
+from app.api import production_lines, devices, database, configuration
+from app.modules.cutting import analysis_routes as analysis
+from app.modules.reports import routes as reports
+from app.modules.alarms import routes as alarms
+from app.modules.automation import routes as automation
+from app.modules.cutting import routes as cutting, workshop_routes as workshop, leadership_routes as leadership, equipment_routes as equipment, options_routes as options
+from app.modules.energy import routes as energy
+from app.modules.welding import routes as welding
 from app.api.auth import status_router
 from app.api.operations import router as operations_router
 from app.api.database_monitors import router as database_monitors_router

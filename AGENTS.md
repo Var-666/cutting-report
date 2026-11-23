@@ -1,8 +1,35 @@
- # 项目开发指南
+# 项目开发规范
 
-## 交付前静态分析门禁
+## 工作范围
 
-完成开发依赖安装后，从仓库根目录执行以下命令，交付前必须全部零报错通过。
+- 先检查 `git status` 和 `git diff`，再读 [文档入口](docs/README.md) 中与任务直接相关的章节和代码。保留已有未提交修改。
+- 开发任务在当前 Git 分支上完成。仅在用户明确要求时创建新分支。
+- 只修改完成需求所必需的代码。修改共享接口、认证、统计口径或后台机制前，用 `rg` 查调用方与测试。新增业务规则、入口或流程需有明确需求。
+- 优先复用现有模块、组件和机制。删除兼容入口前检查源码、脚本、测试及嵌入式调用。
+- 在 API、CLI 和外部 I/O 边界校验。内部依赖类型与已建立的不变量。禁止宽泛捕获异常后静默返回空值、重复判空或增加无依据的兼容兜底。Python 保留类型标注，Vue 使用 Composition API。
+
+## 后端与数据安全
+
+- 领域实现放在 `backend/app/modules/`，应用装配放在 `backend/app/runtime/`。依赖遵循 Routes → Service → Repository。路由负责校验、授权、容量与响应。Service 负责业务编排并显式接收依赖，独立于 HTTP 和全局状态。Repository 持有 SQL 和原子约束，依赖方向保持单向。跨模块使用公开接口。
+- PostgreSQL 是唯一应用状态库。跨仓储原子写入使用 `UnitOfWork`，外部 SQL、LLM、SMTP 和文件 I/O 在状态写事务之外执行。已发布迁移只追加，不改写。普通启动不安装 Schema。
+- 生产 SQL Server、MySQL、HR、PDM 和能管平台默认只读。连接通过 `DatabaseSourceRegistry` 取得。连接测试仅执行固定的 `SELECT 1`。
+- 新请求和任务使用当前配置快照，在途操作保持原引用。沿用现有保存锁、原子发布与热加载白名单。配置诊断只读已发布状态。
+- Web、Scheduler、Consumer、Automation 各守角色边界。保留共享容量、持久化队列、租约、提交围栏和未知外部结果的恢复保护。
+- API 必须实施角色授权。设备相关请求、任务、缓存和写入显式保留设备、产线与来源身份。`X-Production-Line` 只限制能力范围。移动模块时保留已用于运维事件指纹的 logger 名称。
+- 禁止提交密钥、Token、Cookie、`.env`、运行数据和原始资料。响应、日志、诊断和浏览器不得暴露凭据。禁止手工修改 `frontend/dist/`、生成的 API 类型或构建同步的 `vendor/echarts.min.js`。
+
+## 接口、报表与前端
+
+- HTTP 契约以 FastAPI/Pydantic 为准。保留既有字段、序列化、状态码和下载语义。修改契约时按 [API 契约说明](docs/design/API契约与迁移约定.md) 更新生成类型和调用方。
+- 页面、导出、邮件和分析共享统计口径、单位、时区及区间。缺失值按业务规则保留。改变统计范围、仪表组、设备映射或告警范围前核对业务依据。
+- 复用现有设计系统和公共组件。表格保持单行，长文本可查看全文，窄屏通过表内横向滚动呈现。报表草稿与已应用筛选分离。表格列宽、样式和交互细节见[前端开发](docs/project/development.md#前端开发)。
+- 报表交付按[展示与核对](docs/project/功能与接口参考.md#报表展示与核对)验收。统计区间、单位、数量和状态通过标题、字段、数据或状态标签表达。
+
+## 测试与交付
+
+- 先根据改动和调用关系确定影响范围。功能变化补同层级回归，优先运行最小相关用例。共享能力变更覆盖实际调用方。仅在明确要求、发布门禁或局部测试不足以覆盖重大跨模块风险时执行全量测试。失败后定向修复及复验，已通过且条件未变的用例无需重复运行。
+- 公共测试数据与桩放测试辅助模块，pytest 公共夹具经 `conftest.py` 注册。前端用 Vue Test Utils 验证真实组件与用户可观察的结果，纯函数直接导入。禁止以源码正则或截取执行替代行为测试。UI 改动覆盖窄屏、空数据、加载及失败状态。
+- 代码交付须通过以下静态门禁。CI 的 Backend Tests、API contracts 和 Frontend CI 均为合并检查，覆盖范围见[开发指南](docs/project/development.md#测试与构建)。
 
 ```bash
 .venv/bin/ruff check backend/app
@@ -11,190 +38,16 @@ pnpm --dir frontend run lint
 pnpm --dir frontend run typecheck
 ```
 
-禁止用 `# noqa`、`# type: ignore`、`# pyright: ignore`、`eslint-disable`、`@ts-ignore`、`@ts-expect-error` 或 `as any` 绕过检查。确因外部 I/O 边界或已授权的业务降级无法消除的误报，只能逐行豁免明确的规则，并就地注明原因。
+禁止用 `# noqa`、`# type: ignore`、`# pyright: ignore`、`eslint-disable`、`@ts-ignore`、`@ts-expect-error` 或 `as any` 绕过门禁。外部 I/O 边界或已授权业务降级确有误报时，逐行豁免明确规则并注明原因。
 
-## 项目用途
+## 按任务查阅技术文档
 
-本项目是面向内网的切割生产智能产报系统，提供领导、车间和设备报表，工人任务确认，智能分析与告警，报表导出与自动发送，以及切割指令文件管理。
+| 修改范围 | 查阅文档 |
+| --- | --- |
+| 模块依赖、Runtime、注册新产线、后台职责 | [系统架构](docs/project/architecture.md) |
+| 配置来源、冷热字段、数据源接入 | [配置参考](docs/deployment/配置参考.md) |
+| 持久化、事务、租约与停机迁移 | [事务设计](docs/design/PostgreSQL仓储与事务设计.md)、[进程部署](docs/deployment/WEB_WORKER进程隔离升级说明.md)、[状态库维护](docs/deployment/PostgreSQL状态库迁移.md) |
+| 快照、缓存、焊接性能和刷新 | [报表缓存与快照](docs/project/multi-line-report-data.md)、[焊接接入](docs/project/welding-integration.md) |
+| 业务统计、权限、派发与导出 | [功能与接口参考](docs/project/功能与接口参考.md) |
 
-## 技术栈
-
-- 前端：Vue 3、Vue Router、Vite、Soybean Admin、Naive UI、UnoCSS、ECharts。
-- 后端：Python、FastAPI、Pydantic、Uvicorn、Jinja2。
-- 数据：SQL Server（切割/HR/PDM）、MySQL（焊接）作为外部数据源，PostgreSQL 保存系统元数据、快照和操作记录；旧SQLite迁移栈已退役。
-- 报表：单文件 HTML、ECharts、Playwright/Chromium PDF 转换，可选 OpenAI-Compatible LLM 分析。
-- 测试：后端 Pytest、前端 Vitest 与 Vue Test Utils。
-
-## 核心目录
-
-- `backend/app/api/`：HTTP 路由、请求校验和权限边界。
-- `backend/app/services/`：业务流程、统计、外部集成和报表生成。
-- `backend/app/database/`：SQL Server、MySQL 和 PostgreSQL 客户端、仓储与事务管理。
-- `backend/app/workers/`：报表、告警、缓存刷新和清理后台任务。
-- `backend/tests/`：后端回归测试。
-- `frontend/src/views/`：页面；`components/` 为可复用组件；`layouts/` 为角色/功能布局。
-- `frontend/src/api/`：前端 API、缓存、日期和导出边界。
-- `frontend/tests/`：路由、页面契约、缓存和导出测试。
-- `docs/`：需求、设计、部署、数据库和外部接口资料。
-- `data/`、`reports/`、`logs/`、`tmp/`：运行时数据，不属于源码。
-
-## 主要架构约定
-
-## Coding Style: Fail Fast, No Defensive Bloat
-
-- **Fail fast, never swallow errors**: Do NOT wrap code in broad `try/except` or `try/catch` blocks that silently return fallback values (`null`, `None`, `[]`, `{}`). Let unexpected errors crash loudly.
-- **Validate at boundaries only**: Only validate untrusted inputs at system boundaries (API endpoints, CLI args, external I/O). Inside core/domain logic, trust the type system and upstream invariants.
-- **No redundant guards**: Do NOT add repetitive `if x is not None`, `typeof`, `isinstance`, `getattr(..., default)`, or optional chaining (`?.`) when types already guarantee the shape.
-- **No speculative fallbacks**: Do NOT invent multi-format parsers, fallback key names, or backward-compatibility shims unless explicitly requested.
-- **Clean up instead of patching**: If an old branch or edge case is no longer needed, delete it rather than wrapping it in a conditional check.
-
-- API 层保持精简；业务规则放在 service，持久化放在 repository/database 层。
-- 生产 SQL Server、HR 库、PDM 库和能管平台均按外部系统处理。除非需求和设计明确授权，不对其执行写入。
-- PostgreSQL 是唯一应用自有状态库；多仓储原子操作遵循 `docs/design/PostgreSQL仓储与事务设计.md`。
-- P6生产部署为一个Web（`app.main:app`）、一个Scheduler（`python -m app.scheduler`）、1～N个同机Consumer（`python -m app.worker`，默认1个）及一个Automation（`python -m app.automation_worker`）。Web 同源提供前端和 API，不启动后台消费者；不得用多个 Uvicorn workers 替代独立 Worker。
-- 管理员与工人路由、菜单和后端 API 权限必须一致；不能仅依赖前端隐藏实现授权。
-- 页面查询、HTML/PDF 导出和智能分析应共用同一统计口径、时区和区间定义。
-- 管理页保存的运行参数写入 `data/settings.env`，密码不回显；数据库页连接配置及自动化/SMTP 参数按新操作热加载；SQL/HTTP 容量（含单源 sql_max_concurrent）及其余启动参数修改后重启生效。
-
-## 后端模块边界（P01）
-
-新功能先用 `rg` 查找同类入口、Service、Repository 和测试，优先扩展已有业务模块。当前结构和待处理问题见 [后端架构说明](docs/project/architecture.md#p01-后端边界与后续治理2026-11-02)；以下约束适用于新增和修改代码，不要求顺带搬迁历史实现。
-
-### 职责与依赖
-
-| 位置 | 放什么 | 依赖与限制 |
-| --- | --- | --- |
-| `api/` | HTTP 参数/Pydantic 校验、身份与角色权限、请求容量、响应及异常状态映射 | 调用 Service；不新增业务 SQL、统计计算、跨仓储流程或配置发布流程。现有简单仓储调用可保留，复用仓储异常作 HTTP 映射不算越层业务实现 |
-| `services/` | 业务规则、统计、报表流程、外部 HTTP/文件/SMTP/LLM 协调 | 依赖 `database/`、`models/` 和显式传入的配置/协作服务；业务 Service 不依赖 FastAPI、`api/` 或入口模块，不接收 `Request`/`app.state` 作为业务上下文 |
-| `database/` | 数据库客户端、参数化 SQL、Repository、连接、事务和迁移 | 依赖模型、配置及基础机制；不调用业务 Service、HTTP 路由或后台调度。确认归属、唯一性、并发冲突等必须原子判断的约束留在仓储事务内 |
-| `workers/`、`scheduler.py`、`worker.py`、`automation_worker.py` | 分角色调度/消费/自动化、租约、退避、容量及生命周期 | 调用 Service；队列状态可直接使用协调仓储，不复制报表统计和业务流程，不依赖 HTTP 层 |
-| `models/` | 已有领域数据、请求/响应契约和共享值类型 | 不依赖 API、Service、Worker 或 Repository；不为分层强行复制同一数据结构 |
-| `core/` | 已复用的取消注册表、执行期限和进程锁 | 实现统一位于 `request_cancellation.py`、`report_deadline.py`、`process_lock.py`；不依赖 API、Service 或数据库，不放业务字段注册、统计口径或通用 Service 基类 |
-
-- 默认业务调用方向为 `api/workers → services → database`，模型和配置供各层使用。`main.py`、`worker.py`、`services/application_runtime.py`、`services/device_runtime.py` 是入口/装配边界，允许同时依赖 Service、Repository 和 Worker；不能因这类导入机械判定为反向依赖。
-- 现有 `services/frontend_static.py` 是供 Web 入口使用的 HTTP 静态资源适配，不属于业务 Service；保留位置，不向其中增加业务流程，也不由业务 Service 引用它。
-- 请求取消、执行期限和进程锁以 `app.core.request_cancellation`、`app.core.report_deadline`、`app.core.process_lock` 为唯一正式入口；API、Service、Repository、Worker 及脚本均直接导入，新模块同样遵守。不在 `services/` 创建同名转发模块，不复制已有注册表、ContextVar、文件锁或执行期限实现。PostgreSQL 执行租约和提交围栏统一位于 `database/postgres.py`。
-- 条件查询契约、字段描述和通用值校验在 `models/conditions.py`；数据集字段/排序列映射在 `database/condition_fields.py`，SQL 编译和 Mock 求值在 `database/condition_query.py`。`services/condition_service.py` 仅提供公开 schema，基础函数直接从所属模型/数据库模块导入，Repository 不反向引用该 Service。小型响应封装不必为消除重复而建立公共框架。
-- 告警事件归并、发送认领、状态转换、唯一性和租约判断必须在原事务内完成；扫描窗口、调度日期、模型/文件生成、SMTP 和重试策略由现有 Service 编排。不能为缩短 Repository 把原子校验移出事务。
-
-### Runtime、配置与事务
-
-- `application_runtime.build_runtime(settings, role=...)` 统一装配进程共享资源，`build_device_runtime` 装配切割业务实现，所有实例统一登记在 `DatabaseServices.lines`。Runtime 负责对象连接与生命周期，不承载新增业务规则；业务方法接收所需服务/仓储，不自行查全局 Runtime 或重新构建它。
-- Web 在 `app.state.runtime` 挂载 `ApplicationRuntime`。API 通过 `application_state(request)` 获取进程资源，通过 `runtime_state(request)` 或 `Depends(runtime_state)` 固定 `DatabaseServices` 请求快照，从 `DatabaseServices.lines` 访问当前产线服务。测试装配和可选字段约定见[运行时兼容边界](docs/project/architecture.md#兼容边界)。
-- Web 通过 `api/runtime.runtime_state` 固定单请求数据库服务快照，通过 `device_state` 选择切割设备；Worker 通过 `database_context` 在新操作边界选择快照。在途操作保持原引用，不混用新旧服务或直接改写已发布对象。
-- `config.py` 保留不可变 `Settings`、字段元数据、校验、连接配置及设备配置派生；环境解析复用 `configuration_sources`。业务代码使用传入的 Settings，不能另读环境或另写默认值。请求及进程配置入口见[运行时约定](docs/project/architecture.md#runtime与配置)。
-- 热加载复用 `DatabaseRuntime`、`AutomationRuntime`；保存复用 `runtime_settings_store` 和进程锁，保持“锁内读改写/保留空密码 → 校验并准备候选 → 原子写文件 → 发布快照”。读取或构建失败保留旧快照，诊断用 `inspect()`，不因读取诊断触发热加载。不自行扩大热加载字段范围。
-- 配置来源由 `configuration_sources.load_environment` 统一解析：`data/settings.env > 进程环境变量 > .env > Settings 默认值`；`.env` 保留已有变量插值与 `PYTHON_DOTENV_DISABLED` 兼容，管理页文件按字面值读取，不展开密码中的 `${...}`。产线只取 `PRODUCTION_LINES_JSON`，连接只取 `DATABASE_SOURCES_JSON`；旧设备目录及连接环境键仅由独立 `scripts/migrate_production_lines.py` 升级工具读取，正常运行不回退。
-- 数据库配置请求/字段转换及脱敏响应在 `services/database_configuration.py`，自动化配置契约及脱敏响应在 `automation_configuration.py`；保存分别调用 `DatabaseRuntime.save_configuration`、`AutomationRuntime.save_configuration`。Runtime 持有保存路径和当前配置，API 不再读取启动全局 Settings 保留密码，也不自行加锁、合并或发布。空密码优先保留锁内读取的最新文件值，文件未提供有效值时保留当前快照；不回显密码。
-- 热加载白名单以 `database_runtime.DATABASE_SETTINGS` 和 `automation_runtime.HOT_SETTINGS` 为准：数据库页已有连接/启用字段（含焊接时区）及自动化/SMTP 字段可热加载；产线目录和数据源连接选项（含单源超时/池大小）已获 P1 授权热加载，P3 容量字段 sql_max_concurrent 除外；P2 将 `REPORT_BACKGROUND_REFRESH_SECONDS` 纳入同一快照，保持原最小30秒。LLM_MODEL 已获授权复用该快照按新操作热加载，切割和焊接实例随模型变化更新，在途操作保留旧模型；LLM_BASE_URL、LLM_API_KEY、LLM_ENABLED、报表 TTL 等其他启动参数仍需重启。新字段先在 `Settings` 登记环境键和默认值，只有明确授权热加载才补入白名单及相应管理契约，不能因字段以数据库前缀开头就自动热加载。
-- 诊断继续通过 `ConfigurationDiagnostics` 对比各进程 `inspect()` 已发布值与文件目标，展示实际来源和重启要求；不能调用 `snapshot()` 使诊断变成配置发布。Worker 按独立心跳报告其快照，未加载/不可用不能标为已生效；敏感值及内部比较指纹不出现在诊断 API 中。
-- 状态业务连接统一经 `PostgresDatabase`/`PostgresRepository`；跨仓储原子写入使用 `UnitOfWork` 绑定同一连接并由外层提交。Service 不持有原始连接、不自行提交；单仓储原子校验/写入由仓储完成。PG编号迁移复用 `database/postgres_migrations/`；旧SQLite迁移目录已移除，不在路由或后台任务临时建表。
-- SQL/LLM/SMTP/文件等耗时外部操作不得放进状态库写事务；保留现有任务状态、幂等、未知结果保护和失败补偿。不要用事务回滚假定外部副作用已撤销，详见 [PostgreSQL 事务设计](docs/design/PostgreSQL仓储与事务设计.md)。
-- Web、Scheduler、Automation及同机Consumer实例通过同一 PostgreSQL 状态库与同机共享文件卷协作，各复用一个进程连接池；保留 Web OS 锁、Worker 租约/提交围栏、持久化队列及现有共享容量，不依赖跨进程内存对象或为每台设备新增常驻线程。不扩展为多主机或网络共享卷部署。
-- SQL 资源统一通过 `core/sql_capacity.py` 在 SQL Server/MySQL 驱动入口获取全局、数据源、产线配额；所有同机应用实例共用固定文件锁槽。等待不得持有部分执行配额，不向状态库写配额状态。容量及单源 `sql_max_concurrent` 为冷配置，连接参数仍按新操作热加载；资源计数为各进程本地观测，不能声称实时全局统计。HTTP 执行池与 SQL、LLM、Chromium 容量分别管理。
-- 周期调度沿用 `SchedulerProcess` 的有界 monotonic 提示状态；PostgreSQL `background_schedules/background_tasks` 仍决定真实到期、去重和重试。产线通过 `BackgroundSchedule` 提交周期/每日计划，耗时准备只在到期时执行；失败或未确认持久化不得推进内存进度。新增/停用/来源/间隔/计划变化随原快照处理，移除失效状态；队列保持每秒领取、5秒心跳，延迟接纳常规5秒及容量释放时检查，保留 `next_attempt` 与原容量。
-
-### 多产线与复用
-
-- 唯一实例目录由 `device_config.ProductionLineCatalog` 从 `PRODUCTION_LINES_JSON` 校验，`settings_for_line` 派生业务配置，类型能力复用 `production_lines.py`。新增同类型实例只改配置并验证绑定与隔离，不改公共 Runtime/Worker/API；业务 SQL 仍放对应 `database/queries/` 或仓储。
-- 复用现有 `ProductionReportProvider`、`QueryCache`、`CacheRevision` 和报表快照能力；Provider 只统一访问/刷新契约，不强行统一切割与焊接的指标、日期、单位和持久化结构。焊接保留专属只读 MySQL 仓储及 Service；切割和焊接均由 `lines[line_id]` 管理，不新增全局单例字段。
-- Provider 提供 `report_types/source_identity/fetch_summary/fetch_detail/refresh_summary/refresh_plan`；查询类型和明细结果由产线保留，后台查询参数须能 JSON 序列化。跨服务调用公开方法，不能访问其他 Service 的私有方法。`requested_at` 是 Worker 任务提交时间，沿用现有刷新合并语义。
-- 新增产线类型登记构建函数和能力，业务实例只登记在统一目录，实现专属 Repository、Service/Provider，并在类型注册的构建函数与 `ProductionLineRuntime` 可选能力中接入；按需增加 API/页面和隔离测试。已有 Worker 按统一实例集合消费 `refresh_plan` 和 `report_snapshot_refresh`，不要为每种产线增加调度分支或缓存框架。切割实例仍使用统一目录内的物理映射，切割月报保留原 bootstrap/AI 调度。
-- 普通查询缓存用有界 `QueryCache`，缓存键或服务实例必须隔离产线/设备、来源、规范化条件及必要版本；可变返回值由调用方复制。领导月报直查和焊接短期统计复用该缓存；领导月快照的新鲜度缓存仍保留专属规则，焊接 AI 结果缓存仍按业务版本独立保存。
-- 通用持久化快照复用 `ReportSnapshotService/ReportKey`、`CacheRevision` 和原持久化队列，键包含产线、类型、日期、参与快照计算的筛选及必要分页/排序、来源、schema 及权限范围；完整聚合视图的分页投影例外见 P09。保留焊接页面快照优先、冷页异步准备、过期标识、失败保留与源信息采样；导出/下钻保持现场查询，不用旧快照绕过实时校验，不强制各业务使用相同 TTL。
-- 区分来源、失效修订、存储校验和与业务版本：`source_identity` 标识来源隔离；`CacheRevision` 仅失效进程缓存；快照存储的 `data_version` 校验完整载荷。公开页面/AI 业务版本继续由现有算法生成：焊接页面及导出共用 `WeldingService.version`，切割沿用现有分析版本；不能用存储校验和替换。焊接 API 的 `meta.report_data.data_version` 与公开业务版本一致；AI 校验页面版本，现场导出随源数据变化可产生新版本，不能覆盖页面快照。
-- 设备相关请求、任务、缓存与持久化操作显式保留设备/产线及来源身份，切割请求使用唯一有效的 `device_id`，不回退默认设备。`X-Production-Line` 仅限制能力范围，不能代替角色权限或授予产线权限。
-- 车间账号、会话、日报和确认分别使用 `UserRepository`、`SessionRepository`、`WorkshopReportRepository` 和 `ConfirmationRepository`。
-
-## 编码和验证规范
-
-- 每次任务先检查 `git status`/`git diff`，再读取本次直接相关的文档和代码。
-- 优先最小范围修改；不重构、格式化或修复任务外代码。
-- 只实现用户明确说明的功能；不得基于未经确认的业务假设自行增加页面入口、操作流程或管理功能。未明确说明的新增需求或业务规则，先澄清再实现。
-- 保留现有风格：Python 使用类型标注和 Pydantic 边界校验；Vue 使用 Composition API；JavaScript 不强制分号。
-- 公共 API、数据结构、认证、统计口径或背景工作机制改动前，先用 `rg` 检查调用方和对应测试。
-- 本地后端优先运行受影响的 pytest 用例或模块，修复失败后复验对应范围。
-- PR 由 `Backend Tests` 在隔离 PostgreSQL 18 和 MySQL 8.4 上运行完整 `backend/tests`。保留事务、租约和并发等核心用例及断言。确有耗时的压力测试如需分层，须保留独立的自动化检查。
-- `Backend Tests`、`API contracts` 和 `Frontend CI` 独立执行。合并前须通过全部必需检查。
-- 前端验证：在 `frontend/` 执行 `pnpm run typecheck` 和相关文件的 `pnpm test tests/文件名.spec.ts`。Vitest 自动发现测试，PR 依次运行 Lint、类型检查、完整前端测试和构建。发布入口 `pnpm run build` 保留类型检查和测试门禁。
-- 功能修改应补充相同层级的回归测试；涉及 UI 时同时检查窄屏和空数据/加载/失败状态。
-- 报表改动完成后，用同一组筛选与统计区间核对摘要、KPI、图表和明细的数量、单位及时间边界。报表页面、HTML、PDF 和邮件禁止展示辅助说明，包括图表或表格下的小字段落、脚注以及统计方法、比较规则或颜色规则的解释。必要的统计区间、单位、展示数量及异常状态直接使用标题、字段名、数据或状态标签。验收时发现辅助说明须删除后方可交付。
-- 多个测试文件共用的构造函数、记录和桩放在对应业务的测试辅助模块，调用方直接引用辅助模块，不从其他 `test_*.py` 导入。pytest 公共夹具通过 `conftest.py` 注册；仅供单个用例或文件使用的桩就地保留，不为减少文件数合并不同职责的测试。
-- 前端组件使用 Vue Test Utils 挂载真实组件并验证交互，纯业务函数直接导入，优先验证用户可观察的结果和公开契约。禁止新增通过源码正则或截取执行锁定内部函数、变量、模板顺序或 CSS 写法的测试。类型与静态规范交给 vue-tsc 和 ESLint。
-- 复用已有公共能力，不新增无明确职责的兼容转发模块；少量重复不必建立新抽象。删除兼容入口前检查源码、脚本、测试及嵌入式调用，不因层次多而合并 Runtime、缓存或快照机制。
-
-## API 类型契约（P07）
-
-- FastAPI/Pydantic 是 HTTP 数据契约的来源。新增 JSON 接口优先使用明确的请求模型及 `ApiEnvelope[T]` 响应模型；复用 `models/contracts.py` 的 `Items/Page` 和已有领域/业务契约。分页只描述实际返回的字段：焊接分页位于 `query` 中，不能凭空在外层补 `page/page_size`。动态 SQL 列、能耗诊断细节等保留 JSON 动态字段，不用 `dict/any` 代替整个稳定响应。
-- 旧接口补类型必须保持原返回值，尤其是数字/Decimal、日期、空值、缺失字段、附加字段和状态分支。当前配置、自动化、焊接、领导/设备/能耗、报表任务和 AI 接口用 `responses={状态码: {'model': ApiEnvelope[T]}}` 配合 `response_model=None` 描述契约，保留既有序列化，不增加响应过滤或查询。修改这些契约时用实际 HTTP/Service 载荷做定向兼容验证；新接口使用运行时响应校验前同样核对序列化。下载继续返回原文件响应，按实际 MIME 描述，不包 JSON。
-- `scripts/export_api_contracts.py` 挂载契约范围内的 Router，不启动 Runtime、不连接数据源。前端只通过 `pnpm run api:generate` 调用现有 `@hey-api/openapi-ts` TypeScript 插件更新 `src/api/generated/`，不手改生成文件、不生成第二套 HTTP SDK。新增纳入类型复用的 Router 时同步补入导出范围。
-- 前端业务 API 优先引用生成的请求与响应数据类型，已有共享名称可用类型别名兼容；密码等只写请求字段使用生成器的 `*Writable` 类型。`request<T>()` 已解包 `data`，`T` 应是业务数据，不能再次使用完整 envelope，也不能为生成器修改 Cookie、设备/产线、取消、重试、缓存和下载机制。
-- 页面草稿、URL 字符串筛选、驼峰参数适配、图表补零和任务接受到轮询详情之间的展示状态由前端维护，优先从生成类型派生。API 字段/类型不一致应修正契约或调用方，不用 `any`、无依据的断言或类型抑制掩盖；报表创建的最小接受响应不能当作完整任务详情。
-- 本地修改契约后执行 `pnpm run api:generate`、`pnpm run api:check`、`pnpm run typecheck` 及受影响的定向测试。PR 仍执行完整 `Backend Tests`。`API contracts` 检查响应契约和生成漂移，`Frontend CI` 负责前端检查。认证、设计器和系统诊断等未迁移模块按后续实际修改逐步覆盖，不为全覆盖重写历史业务。
-- API contracts CI 必须启动隔离 PG18、复用原测试角色/迁移夹具并设置 `P5_TEST_POSTGRES=1`；JUnit 检查两个契约模块均有收集且 skipped/failure/error 全为 0，不能以跳过 PostgreSQL 用例取得绿色结果。
-
-## 焊接查询性能（P09）
-
-- 日报与设备报表复用规范化的 `page:daily` 快照：其中已包含有界的完整按日、设备/机器人聚合数组，响应按当前分页/排序投影；查询条件、日期、来源及权限范围继续隔离。投影必须保留原 `data_as_of/refreshed_at/expires_at`、过期与刷新状态，不得把旧聚合标为刚查询。不得将此模式套用于未完整保存明细的任务/工件页。
-- 任务/工件页继续按分页/排序隔离，统计、总数及当前页明细保持同一只读 MySQL 事务；总数复用相同谓词的统计结果，不能为减少查询而混合旧快照统计与实时明细。源信息继续按原间隔采样；导出和下钻保留现场查询，不增加连接池、消费者或第二套缓存。
-- `refresh_plan` 先预热首页，再预热日报公共聚合、任务及工件，共四个任务；设备页复用日报，不另排周期刷新。请求与 Worker 继续共用原队列去重、产线锁和失败恢复；不同分页/排序的聚合视图刷新应合并为同一任务。
-- 已配置快照且有后台刷新协调器的页面读与分析前置读使用独立、有界的 `snapshot_requests`，避免排在慢导出/下钻后；实际 MySQL 操作及缺少快照或协调器的嵌入式回退继续使用 `welding_requests` 的原并发上限。区分准备中、队列满、执行池排队、连接池耗尽和源查询失败，不扩大自动重试范围。
-- 前端继续使用 `reportCache`，缓存键规范化参数顺序和查询默认值；实际参数序列化、取消、代际与已提交筛选保持原规则。首页只监听有效产线/规范化查询变化，无关 URL 参数不应清空数据、重发请求或重启轮询。日志只记录产线、类型、日期、命中与分阶段耗时，不记录凭据、完整筛选或 SQL 参数；现场索引/SQL 扫描结论须有真实表结构、规模和 EXPLAIN 证据。
-
-## 前端设计开发规范
-
-- 界面优先用布局、层级和操作位置表达含义，删减无助于操作的标语、重复提示和次要标签；必要的数据依据放在详情或悬停内容中。每次改动同时考虑用户操作清晰度（UX）、代码维护成本（DX）和状态/数据语义可理解性（AX），保留必要的错误、估算依据及既有功能。
-- 沿用 Soybean Admin + Naive UI + UnoCSS；新增或修改页面前，先检查 `frontend/src/theme/`、`assets/style.css`、`uno.config.ts` 和已有公共组件，不另建独立设计系统。
-- 颜色、背景、文字、边框和阴影使用语义化主题变量；Naive UI 变量由 `theme/reportVariables.ts` 桥接，避免重复硬编码主题色，并检查亮色、暗色及主题色切换。
-- 优先使用现有字号变量及 4/8/12/16/24px 间距：辅助文字和控件 12px、正文 13px、区块标题 16px；首页指标保留 30px 变体。报表筛选控件默认 40px 高，控件圆角跟随 Naive 主题，卡片 8px、报表面板 10px；图表尺寸、紧凑表格和特殊业务布局允许明确的局部例外。
-- 所有页面表格（含弹窗、管理页及图表附属数据表）的表头、数据和汇总单元格必须保持单行；禁止用块级副标题、上下排列、显式换行或自动折行把同一记录撑成多行。状态与阶段、名称与编号等相关信息横向排列，独立字段可拆列，不得为压低行高删除业务信息。
-- 表格文本列沿用 `AppReportTable` 的列边界拖动调宽和省略悬停全文能力；长文件名、说明及多实例信息不能因内层固定宽度或重复截断导致调宽无效、悬停仍看不到全文。操作按钮与选择控件保留完整可用宽度；窄屏通过表格内部横向滚动容纳列，不通过折行挤入屏幕。表格改动须验证长文本、多状态、失败提示和窄屏，确保仍为单行且完整内容可查看。
-- 表格默认按当前页表头、数据及汇总的最长实际显示内容计算列宽，表格整体必须铺满容器，剩余空间按内容宽度比例分配，不得只在左侧显示半张表。文本自动显示区域连同单元格留白最多360px，超过后省略并悬停查看全文；操作/选择控件不按文本上限裁切。分页、数据和可见性变化后重新测量；用户拖动过的列在当前组件内保留手动宽度，不被后台刷新覆盖，并允许继续调宽查看内容。窄屏保留表格内部横向滚动。
-- 表格、筛选栏、指标卡和图表面板优先复用 `AppReportTable`、`StandardReportQuery`、`ReportPeriodPicker`、`HomeKpiCard`、`ReportTrendPanel`，先完善现有组件，避免重复实现。
-- 焊接首页与报表的指标带统一通过 `WeldingKpiCards` 组合 `HomeKpiCard`；首页数值沿用 30px，报表使用现有 24px 指标变量，指标颜色按业务含义保持一致。复杂焊接筛选保留专属表单，与标题组成同一查询区域；布局、筛选展开和主题切换不得改写已提交条件或额外触发查询。
-- 报表草稿与成功查询条件分开；分页、导出和分析沿用已应用条件。待查询提示按有效条件规范化比较，忽略分页；后台刷新不提交草稿、不静默消除过期标识。文件派发全选跨所有分页，保留范围说明及已选数量；能耗实测、插值、估算、缺失和异常状态分别展示，依据支持键盘与触屏查看，缺失不作零。
-- 页面专属样式放在对应组件的 scoped 样式中；全局 CSS 只维护主题别名、基础规则和跨页面公共规范，不持续追加业务选择器。
-- 优先通过组件 props、`theme-overrides` 和局部 CSS 变量调整 Naive 控件；不随意添加 `!important`，确需覆盖库内联变量或已有兼容规则时说明原因并限定范围。
-- 切割线、焊接线沿用统一视觉语言，保留业务布局差异；设计整理不顺带改动查询、分页、导出、权限或统计口径，按受影响组件检查实际显示并执行必要的局部验证。
-
-## 不应随意修改
-
-- 不要提交 `.env`、`data/`、`reports/`、`logs/`、`tmp/`、Excel/PDF 原始资料或任何生产密钥、Token、Cookie。
-- 不要手工编辑 `frontend/dist/` 或运行时生成数据。`vendor/echarts.min.js` 由前端构建脚本同步。
-- 不要在未核对业务和设备映射时改变报表统计范围、单位、日期归属、能耗仪表组或告警设备范围。
-- 不要让浏览器获得数据库密码、LLM 密钥、邮箱密码或外部系统授权信息。
-- 工作区中已有的未提交修改默认属于用户或其他会话；不要覆盖、回退或夹带提交。
-
-## 文档维护
-
-- 开始任务时只读取 `docs/` 中与任务直接相关的文档。新增共享文档确认未被 `.gitignore` 排除，链接目标应随源码可获取；内部原始资料继续保持忽略。
-- 只记录对后续开发有用的结果：架构、UI 约定、性能优化、技术决策和当前进度分别写入 `docs/project/` 中的对应文档。
-- `docs/project/progress.md` 保持简洁，只保留“当前状态、最近完成、当前问题、下一步”；不记录聊天过程。
-- 文档统一从 `docs/README.md` 进入；同一规则只维护一处，其他文档引用。普通更新复用现行部署说明，不逐次新建日期更新文档；删除已被替代的流水账与无用历史，保留仍有效的迁移、备份、回退和业务约束，历史源码通过 Git 查阅。
-
-## 通用外部数据源（P13）
-
-- P5 正式 Runtime、Repository、UnitOfWork、队列与租约统一使用 PostgreSQL；连接在 `database/postgres.py`，独立迁移在 `postgres_migrations/`，PG结构维护工具为 `scripts/manage_postgres.py`。四个应用角色只用 cutting_app，维护工具显式用 cutting_migrator；不把状态 PG 注册到生产数据源，不双写/自动回退，不在普通启动/请求安装 Schema。PG历史迁移只追加；旧SQLite升级/导入栈已移除，不恢复兼容入口，不删除现场历史数据库文件。
-
-- 新增 SQL Server/MySQL 数据库优先通过 `DatabaseSourceRegistry` 注册；管理页“其他数据源”仅登记连接，不自动创建产线、菜单、报表或授予业务权限。新产线仍沿用现有多产线注册与 Provider 机制。
-- 新增连接统一使用 `models/database_sources.py` 的配置模型，SQL Server 使用 `SqlServerClient(config)`，MySQL 使用 `MySqlClient(config)`；不在业务 Service 中散落连接字段，不为每个新库复制连接池。专属 SQL、参数及字段映射归业务 Repository，不统一 SQL 方言。
-- Registry 从 `DatabaseServices.database_sources` 请求/操作快照获取；Repository 固定本次操作的客户端，Service 通过装配显式接收 Repository。产线引用从统一目录合并；共享用途在 `database_runtime.source_bindings` 明确登记，不扫描源码推断引用。
-- 动态连接仅保存于 `data/settings.env` 的 `DATABASE_SOURCES_JSON`，复用原保存锁、0600 原子写入、空密码保留和失败保留旧快照；新数据源的全部连接选项随快照热加载。所有生产连接及其选项统一随 Registry 快照加载；旧 SQLSERVER/WELD 配置通过一次性工具迁移，不保留正式运行兼容路径。
-- 新操作使用最新 Registry，旧操作和旧 Repository 保留原配置/客户端。不能在配置发布时关闭仍被引用的旧池；MySQL 客户端最后释放或进程退出时关闭资源，在途会话返回后才清理池。
-- 连接测试仅执行固定只读 `SELECT 1`；新增数据源不自动获得任意 SQL 查询能力，现有 Workbench 的生产库范围、管理员鉴权及令牌要求保持不变。响应/日志/诊断禁止回显密码或完整 `DATABASE_SOURCES_JSON`，前端类型从 OpenAPI 生成。
-
-- BM 船名关联固定使用可选的 `bm` SQL Server 数据源；启用后由 `BmProjectRepository → ShipNameService → QueryService` 批量精确映射完整工程号，使用共享有界缓存。停用/未登记不影响启动和现有生产查询，启用时缺失或冲突映射保留任务、船名为空。禁止模糊匹配、截前缀、重复任务或以船名替换工程统计键。
-- 切割报表的 `ship_no` 保留接口字段名、显示 BM `ProjectName`；PDM/派发船号保持原语义。日报船名由编号迁移单独保存，补名称不得改变任务修订号与确认记录。页面、导出和分析共用映射，确认/撤销不依赖 BM 可用性；连接切换须同步重建受影响设备服务并保留在途引用。
-
-## P6/P7 后台角色边界
-
-- Scheduler只调度生产周期任务，保留P2内存到期提示和持久化去重；Consumer只领取后台/报表任务及恢复执行状态；Automation独占计划扫描、补偿和SMTP消费/恢复。ReportWorker不得启动自动化或邮件线程。
-- 复用PostgreSQL scheduler/worker:实例ID/automation租约与execution_scope提交围栏，Consumer实例ID与每次获取的owner token分开，恢复检查实际角色，不伪装worker。快照期限以持久化完成时间为准，不跨进程依赖内存。能耗pending finish只由Consumer刷新，热重建不回收同owner在途claim。
-- 四角色使用相同配置/本地文件卷和各自有界PG池；保留P3 SQL/模型/PDF容量及邮件unknown保护。健康和配置诊断须分别报告三个角色，公开状态递归去除内部配置指纹。默认单Consumer，按需同机扩容；每个实例只恢复失效owner，不重置正常实例。报表写入校验owner，后台完成校验owner、claim_token及attempts，能耗保留claim_token。
-- 旧PG全局Worker协议切换先停机备份，再运行prepare-consumers并启动各角色。尚未迁移的SQLite部署须使用保留的历史版本先完成迁移，当前版本不提供导入能力。禁止新旧混合Worker并跑；生产切换需单独授权。
-
-- P7 Consumer原生实例必须显式配置CONSUMER_INSTANCE_ID，Docker使用各自容器身份；同ID互斥、不同ID并发，健康探针必须定位本实例。Scheduler/Automation仍各单实例；不恢复全局worker运行协议。
-- 状态Schema只追加003_consumer_scaling及指纹，不修改001/002。prepare-consumers由维护账号在所有Consumer停止且租约失效后显式执行；旧无指纹任务标blocked，不猜测数据源、不丢记录。告警/能耗等新增任务必须携带来源指纹。
-- Consumer本地执行容量与全局SQL/模型/PDF配额分开；所有实例共用本机锁目录，PG池预算按N+3个应用实例及探针计算，不支持跨主机。实例状态逐一报告并保留聚合字段；失联记录仅在无恢复引用且超过30天时由现有清理任务移除。
-
-- Consumer汇总健康按CONSUMER_REPLICAS的最小期望容量判断（默认1、冷生效），历史lost/stopped记录保留但不降低健康容量；有效实例的停滞仍报告异常。--scale只改实际数量，永久调整目标时同步修改共享配置并重建应用容器。
+持久细节更新到对应技术文档，一处维护，多处引用。新共享文档同步检查文档索引、Git 跟踪和打包范围。

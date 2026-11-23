@@ -18,7 +18,7 @@ settings = Settings()
 
 
 def test_worker_and_file_use_explicitly_bound_registry_clients(postgres_state, tmp_path):
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     cfg = configuration(tmp_path)
     sources = DatabaseSourceRegistry.from_json(cfg.database_sources_json).configs()
     for key in ('hr', 'pdm'):

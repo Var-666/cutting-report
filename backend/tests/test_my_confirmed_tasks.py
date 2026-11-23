@@ -9,14 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_user
-from app.api.workshop import router
+from app.modules.cutting.workshop_routes import router
 from tests.line_fixtures import cutting_settings
-from app.database.confirmations import ConfirmationRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.sessions import SessionRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
-from app.services.workshop_service import WorkshopService
+from app.modules.cutting.workshop import WorkshopService
 
 
 @pytest.fixture

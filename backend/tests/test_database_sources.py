@@ -19,7 +19,7 @@ from app.database.mysql import MySqlClient, MySqlUnavailable
 from app.database.sqlserver import SqlServerClient
 from app.database.source_registry import DatabaseSourceRegistry, SourceConflict, source_configs_json
 from app.models.database_sources import DatabaseSourceConfig, DatabaseSourceRequest
-from app.services.application_runtime import build_runtime
+from app.runtime.application import build_runtime
 from app.services.database_configuration import test_source_connection as probe, SourceConnectionError
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, RuntimeSettingsSaveError
 
@@ -117,7 +117,7 @@ def test_atomic_save_failure_bad_file_and_diagnostics_keep_published_snapshot(ru
     current = manager.snapshot()
     before = manager._base.runtime_settings_env_path.read_bytes()
     with monkeypatch.context() as patch:
-        patch.setattr('app.services.database_runtime.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError('secret')))
+        patch.setattr('app.runtime.database.write_runtime_env', lambda *_: (_ for _ in ()).throw(OSError('secret')))
         with pytest.raises(RuntimeSettingsSaveError):
             manager.save_source(update(source(), host='other-host'))
     assert manager.current_context is current

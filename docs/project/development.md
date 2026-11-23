@@ -64,12 +64,28 @@ pnpm run dev
 
 生成 PDF 需要 Playwright Chromium 和中文字体，安装步骤见 [PDF 运行环境](../deployment/配置参考.md#pdf-运行环境)。
 
-## 前端页面布局
+## 前端开发
+
+修改页面前查阅 `frontend/src/theme/`、`assets/style.css`、`uno.config.ts` 和现有组件。沿用 Soybean Admin、Naive UI 与 UnoCSS。颜色、背景、边框、文字和阴影用语义变量，Naive UI 变量由 `theme/reportVariables.ts` 桥接。验收覆盖亮色、暗色及主题色切换。页面专属样式放在 scoped CSS，全局样式只维护基础规则和跨页面规范。控件优先用 props、`theme-overrides` 或局部变量，确需 `!important` 时限定范围并说明覆盖原因。
+
+### 布局与组件
+
+- 用布局、层级和操作位置表达含义，保留必要的错误状态和数据依据。必要依据可在详情或悬停内容中查看，涉及操作的内容支持键盘和触屏。通用反馈及表单行为见[前端交互规范](frontend-interactions.md)。
+- 沿用 4/8/12/16/24px 间距。辅助文字与控件默认 12px，正文 13px，区块标题 16px。报表筛选控件默认高 40px，控件圆角跟随 Naive 主题，卡片圆角 8px，报表面板圆角 10px。图表、紧凑表格及特殊业务布局可以局部调整。
+- 表格、查询、日期、指标和趋势分别优先复用 `AppReportTable`、`StandardReportQuery`、`ReportPeriodPicker`、`HomeKpiCard` 和 `ReportTrendPanel`。
 
 - 普通页面复用 `page-heading`、`page-heading__title` 和 `page-heading__actions`；报表头图标题复用 `report-hero-copy`。两者均沿用桌面 28px、窄屏 22px 的字号变量，允许标题换行，保留门户插画和报表头图。切割报表的紧凑 KPI 复用 `report-kpi-card` 的卡片与图标样式，业务指标布局和数据由页面维护。
 - `StandardReportQuery` 按查询容器宽度排列 40px 控件；`ReportTrendPanel` 在窄屏保留时间范围和更新提示。`HomeKpiCard` 区分真实零值、加载骨架和无数据，失败和快照状态由页面反馈说明。`AppReportTable` 允许分页换行，表头、数据和汇总仍保持单行。
 
 - 首页保持现有布局。门户按产线独立读取月累计，统计截止与统计生成时间分开显示，不跨工艺合计；切割概览按模块保留成功结果并重试失败项；焊接当日 KPI 与区间统计各自说明，报表快捷入口沿用已应用的区间和设备。
+
+焊接首页与报表通过 `WeldingKpiCards` 组合 `HomeKpiCard`。首页数值 30px，报表使用 24px 指标变量，同一指标颜色保持一致。复杂筛选与标题组成同一查询区域。筛选展开、布局和主题切换不得重新提交已应用条件或触发额外请求。
+
+### 表格
+
+- 所有页面表格，包括管理页、弹窗与图表附属表格，表头、数据与汇总单元格均保留单行。名称与编号、状态与阶段等信息横向展示，需要时拆列。操作按钮、选择控件保留完整可用宽度，窄屏由表内横向滚动承载。
+- 默认按当前页表头、数据、汇总的最长实际显示内容测量列宽。表格铺满容器，剩余宽度按内容宽度比例分配。文本自动宽度连同单元格留白最多 360px，超出后省略并在悬停时展示全文。操作和选择列按实际控件宽度计算。
+- 使用 `AppReportTable` 的列边界拖动调宽。分页、数据或可见性变化后重新测量，用户拖动过的列保留手动宽度。避免内层固定宽度和重复截断影响拖动与全文悬停。改表格时覆盖长文本、多状态、错误提示及窄屏。
 
 ## 测试与构建
 
@@ -93,9 +109,9 @@ pnpm run typecheck
 pnpm run build
 ```
 
-`pnpm run build` 依次执行类型检查、前端测试、ECharts 资源同步和 Vite 打包，失败即停止。Frontend CI 分步执行 ESLint、类型检查、Vitest 和打包。API contracts CI 另检查隔离 PostgreSQL 响应契约和生成类型漂移。
+`pnpm run build` 依次执行类型检查、前端测试、ECharts 资源同步和 Vite 打包，失败即停止。Frontend CI 分步执行 ESLint、类型检查、Vitest 和打包。Backend Tests 在隔离 PostgreSQL 18 和 MySQL 8.4 上运行完整后端测试。事务、租约、并发等用例及断言应保留。若将耗时压力测试分层，须保留独立的自动化检查。API contracts CI 另检查隔离 PostgreSQL 响应契约和生成类型漂移，执行要求见[契约检查](../design/API契约与迁移约定.md#契约检查)。
 
-修改接口模型后，在 `frontend/` 执行 `pnpm run api:generate` 与 `pnpm run api:check`。生成脚本优先使用显式 `PYTHON`，否则探测根目录 `.venv`、`backend/.venv` 中可用的契约依赖，最后使用系统 Python；不启动应用或连接数据源。契约范围与维护规则见 [API 契约说明](../design/API契约与迁移约定.md)。
+修改接口模型后按 [API 契约说明](../design/API契约与迁移约定.md#生成类型) 更新生成类型并验证受影响的响应及调用。
 
 ## 依赖维护
 

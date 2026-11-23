@@ -24,10 +24,10 @@ from app.database.coordination import CoordinationRepository
 from app.database.unit_of_work import UnitOfWork
 from app.database.users import UserRepository
 from app.database.sessions import SessionRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.downloads import DownloadRepository
-from app.database.energy import EnergyReportRepository
-from app.database.report_snapshots import ReportSnapshotRepository, ReportKey, ReportSnapshot, fingerprint
+from app.modules.energy.repository import EnergyReportRepository
+from app.modules.reports.snapshot_repository import ReportSnapshotRepository, ReportKey, ReportSnapshot, fingerprint
 from app.database.llm_usage import LlmUsageRepository
 from app.models.conditions import ConditionGroup, ConditionRule
 from tests.line_fixtures import configuration
@@ -183,10 +183,10 @@ def test_download_conditions_snapshots_energy_and_llm(state):
 
 def test_workshop_confirmation_serializes_and_audits(state):
     from decimal import Decimal
-    from app.database.confirmations import ConfirmationRepository
+    from app.modules.cutting.confirmations import ConfirmationRepository
     from app.database.users import UserRepository
-    from app.database.workshop_errors import ConfirmationConflictError
-    from app.database.workshop_reports import WorkshopReportRepository
+    from app.modules.cutting.workshop_errors import ConfirmationConflictError
+    from app.modules.cutting.workshop_repository import WorkshopReportRepository
     from app.models.domain import WorkshopRecord
     database, _, _ = state
     repo = WorkshopReportRepository(database, scope_machine_no='Cutter01')
@@ -218,10 +218,10 @@ def test_workshop_confirmation_serializes_and_audits(state):
 
 
 def test_automation_email_alarm_dispatch_and_retention(state):
-    from app.database.automation import AutomationRepository
-    from app.database.alarms import AlarmRepository
+    from app.modules.automation.repository import AutomationRepository
+    from app.modules.alarms.repository import AlarmRepository
     from app.database.definitions import DefinitionRepository
-    from app.database.dispatch import DispatchRepository
+    from app.modules.cutting.dispatch_repository import DispatchRepository
     from app.database.retention import RetentionRepository
     database, _, _ = state
     now = datetime.now(timezone.utc)
@@ -242,16 +242,16 @@ def test_automation_email_alarm_dispatch_and_retention(state):
     metadata.create_job(report_id='report-1',report_date='2026-11-04',project_code=None,ship_no=None,request_id='request-1',created_at=stamp)
     metadata.save_report(report_id='report-1',filename='1.html',relative_path='1.html',file_size=10,sha256='abc',task_count=1,generated_at=stamp,system_version='test')
     auto.attach_report(run['run_id'],'report-1',now=stamp)
-    delivery = auto.enqueue_delivery('report-1',subject='日报',now=stamp)
+    delivery = auto.deliveries.enqueue_delivery('report-1',subject='日报',now=stamp)
     assert delivery
     queue = CoordinationRepository(database)
     owner = queue.acquire('worker:test-consumer',ttl=10)
     with execution_scope(database,'worker:test-consumer',owner):
-        claimed = auto.claim_delivery(stamp)
+        claimed = auto.deliveries.claim_delivery(stamp)
         assert claimed['delivery_id'] == delivery['delivery_id']
-        assert auto.claim_delivery(stamp) is None
-        auto.mark_delivery_sent(claimed,message_id='test-message',now=stamp)
-    assert auto.delivery_state(delivery['delivery_id']) == 'sent'
+        assert auto.deliveries.claim_delivery(stamp) is None
+        auto.deliveries.mark_delivery_sent(claimed,message_id='test-message',now=stamp)
+    assert auto.deliveries.delivery_state(delivery['delivery_id']) == 'sent'
     alarms = AlarmRepository(database,machine_no='Cutter01',source_name='test-source')
     alarms.initialize()
     assert alarms.try_acquire_lease('alarm-owner',now)
@@ -259,10 +259,10 @@ def test_automation_email_alarm_dispatch_and_retention(state):
         start_time=stamp,remove_time=None)],now=now,cursor=1,debounce_minutes=10,lease_owner='alarm-owner')
     incidents = alarms.list_incidents("open")
     assert len(incidents) == 1
-    report_id = alarms.reserve_report(proposed_report_id='alarm-1',emission_key='emission-1',machine_no='Cutter01',
+    report_id = alarms.reports.reserve_report(proposed_report_id='alarm-1',emission_key='emission-1',machine_no='Cutter01',
         incident_ids=[incidents[0]['incident_id']],now=stamp,lease_owner='alarm-owner',lease_now=now)
-    assert alarms.get_report(report_id)['status'] == 'generating'
-    assert alarms.page_reports(monitor_start_at=None,page=1,page_size=20)['total'] == 1
+    assert alarms.reports.get_report(report_id)['status'] == 'generating'
+    assert alarms.reports.page_reports(monitor_start_at=None,page=1,page_size=20)['total'] == 1
     dispatches = DispatchRepository(database)
     item = dict(document_id='doc',project_id='project',document_no='test.TXT',relative_path='test.TXT',
         machine_ip='127.0.0.1',quantity=1,status='ready',source_mode='mock')
@@ -313,7 +313,7 @@ def test_web_and_worker_process_share_state_without_sqlite(state, monkeypatch):
     from fastapi.testclient import TestClient
     import app.main as web
     import app.api.auth as auth
-    import app.api.reports as reports
+    import app.modules.reports.routes as reports
     database, cfg, _ = state
     (cfg.project_root/'vendor').mkdir()
     shutil.copyfile('vendor/echarts.min.js', cfg.echarts_vendor_path)
@@ -438,8 +438,8 @@ def test_expired_snapshot_cleanup_does_not_wait_on_another_line_publication(stat
 def test_alarm_renewal_thread_inherits_worker_execution_fence(state, monkeypatch):
     from threading import Event
     from types import SimpleNamespace
-    from app.database.alarms import AlarmRepository
-    from app.services.alarm_monitor_service import AlarmMonitorService
+    from app.modules.alarms.repository import AlarmRepository
+    from app.modules.alarms.monitoring import AlarmMonitorService
     database, _, _ = state
     alarms = AlarmRepository(database,machine_no='Cutter01',source_name='renewal-fence')
     alarms.initialize()

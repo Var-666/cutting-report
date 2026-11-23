@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.api.auth import require_admin
-from app.api.welding import router
+from app.modules.welding.routes import router
 from app.api.production_lines import router as lines_router
 from app.core.operations_logging import safe_record
 from tests.line_fixtures import welding_settings, runtime_line
@@ -19,12 +19,13 @@ from app.device_config import load_line_catalog
 from app.database.source_registry import DatabaseSourceRegistry
 from app.core.sql_capacity import SqlCapacity
 from app.database.mysql import MySqlClient, MySqlSession
-from app.database.welding import WeldingRepository, WeldingUnavailable, job_conditions, job_aggregate
-from app.models.welding import WeldingQuery
-from app.services.database_runtime import parse_database_settings
-from app.services.llm_service import analysis_system_prompt
-from app.services.welding_export import WeldingExport, csv_bytes
-from app.services.welding_service import WeldingService, mapped_row, summary_values
+from app.database.mysql import MySqlUnavailable
+from app.modules.welding.repository import WeldingRepository, job_conditions, job_aggregate
+from app.modules.welding.models import WeldingQuery
+from app.runtime.database import parse_database_settings
+from app.modules.reports.analysis.llm import analysis_system_prompt
+from app.modules.welding.export import WeldingExport, csv_bytes
+from app.modules.welding.service import WeldingService, mapped_row, summary_values
 
 
 def mysql_client(cfg=None):
@@ -48,7 +49,7 @@ def test_closing_job_aggregation_keeps_midnight_and_17_buckets_separate(monkeypa
         connection.create_function('CONCAT', 2, lambda left, right: left + right)
         connection.execute('CREATE TABLE jobs (end_time TEXT, valid_end_time INT, weld_lenght INT, used_time INT)')
         connection.executemany('INSERT INTO jobs VALUES (?,1,1000,3600)', [(stamp,) for stamp in stamps])
-        monkeypatch.setattr('app.database.welding.job_rows', lambda query, *, device_nos, bounds: (
+        monkeypatch.setattr('app.modules.welding.repository.job_rows', lambda query, *, device_nos, bounds: (
             'SELECT * FROM jobs WHERE end_time >= ? AND end_time < ?', bounds))
 
         def fetch(sql, params, *, limit):
@@ -108,7 +109,7 @@ def test_units_types_unknown_state_and_anomalies(code, label):
 def test_connection_is_lazy_and_disabled_does_not_import_or_connect():
     client = mysql_client(welding_settings(weld_enabled=False))
     assert client._pool is None
-    with pytest.raises(WeldingUnavailable, match='尚未启用'):
+    with pytest.raises(MySqlUnavailable, match='尚未启用'):
         with client.snapshot():
             pytest.fail('disabled client must not yield')
 
@@ -118,7 +119,7 @@ def test_outer_query_budget_exhaustion_does_not_start_another_sql():
     from app.core.report_deadline import operation_deadline
     session = MySqlSession(SimpleNamespace())
     with operation_deadline(-1):
-        with pytest.raises(WeldingUnavailable, match='超时'):
+        with pytest.raises(MySqlUnavailable, match='超时'):
             session.fetch('SELECT 1')
 
 
@@ -129,7 +130,7 @@ def test_mysql_query_timeout_defaults_and_explicit_source_override():
 
 
 def test_each_welding_query_gets_full_timeout_unless_outer_budget_is_shorter(monkeypatch):
-    from app.database import welding
+    from app.modules.welding import repository as welding
     clock = [0]
     timeouts = []
     class Cursor:
@@ -197,14 +198,14 @@ def test_failed_pool_checkout_does_not_poison_later_requests():
     client = mysql_client(welding_settings())
     client._pool = SimpleNamespace(get_connection=broken)
     client._get_pool = lambda: client._pool
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         with client.snapshot():
             pytest.fail('broken pool must not yield')
     assert client._pool is None
 
 
 def test_aggregate_validates_time_once_per_source_row():
-    from app.database.welding import job_source
+    from app.modules.welding.repository import job_source
     source, values = job_source(query(device_no=0))
     assert 'j.device_no = %s' in source and values[-1] == 0
     assert 'AS valid_end_time' in source and 'LIMIT 18446744073709551615' in source
@@ -223,7 +224,7 @@ def test_readonly_repeatable_snapshot_rollback_and_secret_redaction(caplog):
             calls.append('close')
     client = mysql_client(welding_settings())
     client._get_pool = lambda: SimpleNamespace(get_connection=Connection)
-    with pytest.raises(WeldingUnavailable):
+    with pytest.raises(MySqlUnavailable):
         with client.snapshot():
             raise RuntimeError('password=secret@10.0.0.1')
     assert calls == [{'isolation_level': 'REPEATABLE READ', 'consistent_snapshot': True, 'readonly': True}, 'rollback', 'close']
@@ -240,7 +241,7 @@ def test_source_failures_explain_safe_error_category(code, message):
         raise DriverError('private-password@private-host')
     client = mysql_client(welding_settings())
     client._get_pool = unavailable
-    with pytest.raises(WeldingUnavailable, match=message) as error:
+    with pytest.raises(MySqlUnavailable, match=message) as error:
         with client.snapshot():
             pass
     assert 'private' not in str(error.value)
@@ -291,12 +292,12 @@ def test_analysis_version_ignores_paging_but_tracks_filters_and_association():
 
 
 def test_export_reuses_matching_persisted_success_after_restart(state_database, tmp_path, monkeypatch):
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     from app.models.domain import AnalysisResult, to_primitive
     cfg = welding_settings(project_root=tmp_path, llm_enabled=True)
     def build():
         return WeldingService(cfg, None, analyses=MetadataRepository(state_database, device_id=cfg.device_id, analysis_scope='welding:export'))
-    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', lambda *_: AnalysisResult(
+    monkeypatch.setattr('app.modules.welding.service.LlmService.analyze_context', lambda *_: AnalysisResult(
         status='success', overview='原有焊接分析', features='原有特征', alerts='原有关注', suggestions='核对记录',
         facts=[{'label': '原有作业次数', 'value': 3}]))
     original = {**report_data(), 'equipment': [], 'data_version': 'a' * 64}
@@ -304,7 +305,7 @@ def test_export_reuses_matching_persisted_success_after_restart(state_database, 
     restarted = build()
     current = {**report_data(), 'equipment': [], 'data_version': 'b' * 64}
     current['summary']['job_count'] = 987654321
-    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context',
+    monkeypatch.setattr('app.modules.welding.service.LlmService.analyze_context',
                         lambda *_: (_ for _ in ()).throw(TimeoutError('fixture model outage')))
     exporter = WeldingExport(cfg, restarted, None)
     restarted.report = lambda *_args, **_kwargs: original
@@ -371,7 +372,7 @@ def api(state_database):
     app.include_router(router)
     app.include_router(lines_router)
     app.dependency_overrides[require_admin] = lambda: {'role': 'admin'}
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     instance = WeldingService(welding_settings(llm_enabled=False), None,
         analyses=MetadataRepository(state_database, device_id='welding', analysis_scope='welding:test'))
     replace_database_services(app, lines={'welding': runtime_line(instance, 'welding')})
@@ -416,7 +417,7 @@ def test_ai_input_version_and_unavailable_model(api):
 
 def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeypatch):
     from app.models.domain import AnalysisResult
-    from app.database.metadata import MetadataRepository
+    from app.modules.reports.repository import MetadataRepository
     instance = WeldingService(welding_settings(weld_enabled=True, llm_enabled=True), None,
         analyses=MetadataRepository(api.app.state.runtime.database, device_id='welding', analysis_scope='welding:test'))
     data = report_data()
@@ -428,7 +429,7 @@ def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeyp
         calls.append(context)
         assert kind == 'welding' and '<script>' not in str(context)
         return AnalysisResult(status='success', overview='概况', features='特点', alerts='数据问题', suggestions='核查')
-    monkeypatch.setattr('app.services.llm_service.LlmService.analyze_context', analyze)
+    monkeypatch.setattr('app.modules.reports.analysis.llm.LlmService.analyze_context', analyze)
     body = {'query': query().model_dump(mode='json'), 'data_version': 'a' * 64}
     assert api.post('/api/v1/welding/analysis', json=body).status_code == 200
     assert api.post('/api/v1/welding/analysis', json=body).json()['data']['cached'] is True
@@ -437,7 +438,7 @@ def test_ai_uses_only_aggregate_context_and_reuses_verified_version(api, monkeyp
 
 def test_http_context_blocks_cutting_operations_and_validation_never_echoes_password(postgres_state, tmp_path, monkeypatch):
     from app.main import app
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     from tests.line_fixtures import configuration
     monkeypatch.setattr(app.state, 'runtime', build_runtime(state_settings(configuration(tmp_path, welding=True),postgres_state), role='web'), raising=False)
     previous = app.dependency_overrides.get(require_admin)
@@ -534,7 +535,7 @@ def test_source_capacity_timeout_sql_and_connection_errors_remain_distinct(name,
     pool = SimpleNamespace(get_connection=broken)
     client._pool = pool
     client._get_pool = lambda: pool
-    with pytest.raises(WeldingUnavailable) as caught:
+    with pytest.raises(MySqlUnavailable) as caught:
         with client.snapshot():
             pytest.fail('broken source must not yield')
     assert caught.value.category == category
@@ -624,7 +625,7 @@ def test_oversized_welding_groups_preserve_daily_totals_and_limit_equipment_expo
 
 def test_http_source_error_keeps_safe_category_without_retry_header(api):
     def failed(*args, **kwargs):
-        raise WeldingUnavailable('焊接SQL执行失败', category='sql_error')
+        raise MySqlUnavailable('焊接SQL执行失败', category='sql_error')
     database_services(api.app).lines['welding'].service.page = failed
     result = api.get('/api/v1/welding/jobs?start=2026-10-01&end=2026-10-02')
     assert result.status_code == 503
@@ -633,7 +634,7 @@ def test_http_source_error_keeps_safe_category_without_retry_header(api):
 
 
 def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failures(api):
-    from app.services.report_snapshots import SnapshotRefreshBusy
+    from app.modules.reports.snapshots import SnapshotRefreshBusy
     def preparing(*args, **kwargs):
         raise SnapshotRefreshBusy('统计正在生成，请稍后重试')
     database_services(api.app).lines['welding'].service.page = preparing
@@ -644,7 +645,7 @@ def test_snapshot_preparation_has_a_distinct_reason_from_queue_or_database_failu
 
 
 def test_snapshot_queue_rejection_is_not_reported_as_preparation(api):
-    from app.services.report_snapshots import SnapshotRefreshRejected
+    from app.modules.reports.snapshots import SnapshotRefreshRejected
     def rejected(*args, **kwargs):
         raise SnapshotRefreshRejected('后台刷新队列已满')
     database_services(api.app).lines['welding'].service.page = rejected
@@ -660,7 +661,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     import anyio
     import httpx
     from threading import BoundedSemaphore, Event
-    from app.api import welding
+    from app.modules.welding import routes as welding
     from app.api.workloads import RequestWorkload
     from app.models.domain import AnalysisResult
     from app.core.sql_capacity import SqlCapacity
@@ -709,7 +710,7 @@ def test_pdf_and_ai_release_welding_capacity_before_slow_processing(api, monkeyp
     def model(*args):
         slow()
         return AnalysisResult(status='success', overview='ok', features='ok', alerts='ok', suggestions='ok')
-    monkeypatch.setattr('app.services.welding_service.LlmService.analyze_context', model)
+    monkeypatch.setattr('app.modules.welding.service.LlmService.analyze_context', model)
 
     async def exercise():
         async with httpx.AsyncClient(headers={'X-Production-Line': 'welding'}, transport=httpx.ASGITransport(app=api.app), base_url='http://test') as client:
@@ -749,7 +750,7 @@ def test_four_http_queries_execute_and_fifth_waits_for_a_slot(api, monkeypatch, 
     import anyio
     import httpx
     from threading import BoundedSemaphore, Event, Lock
-    from app.api import welding
+    from app.modules.welding import routes as welding
     pool = api.app.state.workloads['query']
     monkeypatch.setattr(pool, '_slots', BoundedSemaphore(4))
     monkeypatch.setattr(pool, '_threads', anyio.CapacityLimiter(4))

@@ -11,6 +11,7 @@ node_modules/
 frontend/dist/
 data/
 reports/
+!/backend/app/modules/reports/
 logs/
 tmp/
 *.tmp

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.services.report_service import format_number
+from app.modules.reports.service import format_number
 
 
 def test_report_numbers_are_rendered_with_one_decimal_place() -> None:

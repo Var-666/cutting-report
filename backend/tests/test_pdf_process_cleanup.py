@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.pdf_service import PdfRenderError, PdfService
+from app.modules.reports.pdf import PdfRenderError, PdfService
 from app.core.request_cancellation import SqlRequestCancelled, bind_request_id, reset_request_id, sql_request_cancellations
 
 
@@ -59,7 +59,7 @@ def use_real_process(monkeypatch, target):
         processes.append(process)
         return process
 
-    monkeypatch.setattr("app.services.pdf_service.mp.get_context", lambda _: SimpleNamespace(Process=create))
+    monkeypatch.setattr("app.modules.reports.pdf.mp.get_context", lambda _: SimpleNamespace(Process=create))
     return processes
 
 

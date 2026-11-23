@@ -14,10 +14,10 @@ from psycopg_pool import PoolTimeout
 
 from app.core.sql_capacity import sql_identity
 from app.database.coordination import CoordinationRepository
-from app.database.metadata import MetadataRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.postgres import PostgresDatabase, ExecutionLeaseLost, execution_scope
-from app.services.llm_service import llm_capacity
-from app.services.pdf_service import PdfService
+from app.modules.reports.analysis.llm import llm_capacity
+from app.modules.reports.pdf import PdfService
 from app.worker import WorkerProcess
 from tests.line_fixtures import configuration
 from tests.postgres_fixtures import state_settings

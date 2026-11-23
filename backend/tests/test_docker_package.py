@@ -60,7 +60,7 @@ def test_excludes_sensitive_or_generated_files(name):
     assert not packager.is_allowed(Path(name))
 
 
-@pytest.mark.parametrize("name", [".env.example", "backend/app/api/energy.py", "frontend/dist/assets/app.js"])
+@pytest.mark.parametrize("name", [".env.example", "backend/app/modules/energy/routes.py", "frontend/dist/assets/app.js"])
 def test_allows_required_files(name):
     assert packager.is_allowed(Path(name))
 
@@ -71,14 +71,14 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
         "backend/app/scheduler.py", "backend/app/automation_worker.py",
         "frontend/dist/index.html", "vendor/echarts.min.js",
         "frontend/dist/licenses/soybean-admin/LICENSE",
-        "backend/app/api/energy.py", "backend/app/database/energy.py",
-        "backend/app/services/energy_period_service.py",
+        "backend/app/modules/energy/routes.py", "backend/app/modules/energy/repository.py",
+        "backend/app/modules/energy/periods.py",
         "frontend/src/views/EnergyPeriodReportView.vue",
         "backend/app/api/downloads.py", "backend/app/database/downloads.py",
         "backend/app/services/file_download_service.py",
         "frontend/src/views/CuttingDispatchView.vue",
-        "backend/app/api/welding.py", "backend/app/database/welding.py",
-        "backend/app/services/welding_service.py", "frontend/src/views/WeldingReportView.vue",
+        "backend/app/modules/welding/routes.py", "backend/app/modules/welding/repository.py",
+        "backend/app/modules/welding/service.py", "frontend/src/views/WeldingReportView.vue",
         "frontend/src/vendor/soybean-admin/LICENSE",
     )
     removed = (
@@ -120,7 +120,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
     assert payload['scripts/manage_postgres.py'] == b'fixture'
     assert payload['docs/project/welding-integration.md'] == b'fixture'
     assert payload['docs/project/multi-line-report-data.md'] == b'fixture'
-    assert payload['backend/app/api/welding.py'] == b'fixture'
+    assert payload['backend/app/modules/welding/routes.py'] == b'fixture'
     for name in (
         "docs/deployment/配置参考.md", "docs/project/功能与接口参考.md", "docs/README.md",
         "AGENTS.md", "docs/project/architecture.md", "docs/project/progress.md",
@@ -131,7 +131,7 @@ def test_source_package_keeps_soybean_build_configuration_and_license(tmp_path):
 
 
 def test_archive_has_manifest_and_does_not_replace_existing_release(tmp_path, monkeypatch):
-    payload = {"backend/app/api/energy.py": b"# feature\n", ".env.example": b"PASSWORD=\n"}
+    payload = {"backend/app/modules/energy/routes.py": b"# feature\n", ".env.example": b"PASSWORD=\n"}
     monkeypatch.setattr(packager, "collect_files", lambda root: payload.copy())
     result = packager.build_package(tmp_path, "test-release")
     original = result.read_bytes()

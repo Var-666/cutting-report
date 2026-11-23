@@ -6,7 +6,7 @@ from tests.web_fixtures import embedded_app
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
-from app.api.automation import router
+from app.modules.automation.routes import router
 from tests.automation_fixtures import complete_report, NOW, STAMP
 
 
@@ -22,8 +22,8 @@ def unknown_delivery(workflow):
     with repository.connect() as connection:
         connection.execute('UPDATE email_deliveries SET recipients_json=%s WHERE report_id=%s',
                            ('["a@example.com","b@example.com"]', report_id))
-    delivery = repository.claim_delivery(STAMP)
-    repository.mark_delivery_unknown(delivery, now=STAMP)
+    delivery = repository.deliveries.claim_delivery(STAMP)
+    repository.deliveries.mark_delivery_unknown(delivery, now=STAMP)
     return delivery
 
 
@@ -32,7 +32,7 @@ def resolve(repository, delivery, outcomes=None, **changes):
                    outcomes=outcomes or [{"recipient": recipient, "outcome": "accepted"}
                                         for recipient in delivery["recipients"]],
                    user=ACTOR, now=STAMP)
-    return repository.resolve_unknown_delivery(delivery["delivery_id"], **{**payload, **changes})
+    return repository.deliveries.resolve_unknown_delivery(delivery["delivery_id"], **{**payload, **changes})
 
 
 def test_partial_resolution_requires_manual_retry_and_excludes_accepted_recipient(workflow):
@@ -42,18 +42,18 @@ def test_partial_resolution_requires_manual_retry_and_excludes_accepted_recipien
         {"recipient": "a@example.com", "outcome": "accepted"},
         {"recipient": "b@example.com", "outcome": "not_accepted"},
     ])
-    assert repository.delivery_state(delivery["delivery_id"]) == "failed"
-    assert repository.claim_delivery(STAMP) is None
-    audit = repository.delivery_resolutions(delivery["delivery_id"])
-    from app.models.automation_contracts import EmailDelivery, EmailResolution
-    saved_delivery = repository.list_deliveries(page=1, page_size=20)[0][0]
+    assert repository.deliveries.delivery_state(delivery["delivery_id"]) == "failed"
+    assert repository.deliveries.claim_delivery(STAMP) is None
+    audit = repository.deliveries.delivery_resolutions(delivery["delivery_id"])
+    from app.modules.automation.contracts import EmailDelivery, EmailResolution
+    saved_delivery = repository.deliveries.list_deliveries(page=1, page_size=20)[0][0]
     for raw, model in [(saved_delivery, EmailDelivery), (audit[0], EmailResolution)]:
         assert model.model_validate(raw).model_dump(mode='json', exclude_unset=True) == raw
     assert audit[0]["actor_id"] == ACTOR["user_id"]
     assert audit[0]["before_results"]["a@example.com"]["status"] == "unknown"
     assert audit[0]["after_results"]["a@example.com"]["status"] == "accepted"
-    assert repository.retry_delivery(delivery["delivery_id"], now=STAMP)
-    retry = repository.claim_delivery(STAMP)
+    assert repository.deliveries.retry_delivery(delivery["delivery_id"], now=STAMP)
+    retry = repository.deliveries.claim_delivery(STAMP)
     assert retry["recipients"] == ["b@example.com"]
     assert retry["message_id"] == delivery["message_id"]
 
@@ -63,10 +63,10 @@ def test_all_accepted_resolution_closes_run_and_never_requeues(workflow):
     delivery = unknown_delivery(workflow)
     assert resolve(repository, delivery)
     assert repository.get_run(delivery["run_id"])["status"] == "sent"
-    assert not repository.retry_delivery(delivery["delivery_id"], now=STAMP)
-    assert repository.claim_delivery(STAMP) is None
+    assert not repository.deliveries.retry_delivery(delivery["delivery_id"], now=STAMP)
+    assert repository.deliveries.claim_delivery(STAMP) is None
     assert not resolve(repository, delivery)
-    assert len(repository.delivery_resolutions(delivery["delivery_id"])) == 1
+    assert len(repository.deliveries.delivery_resolutions(delivery["delivery_id"])) == 1
 
 
 @pytest.mark.parametrize("changes", [
@@ -81,8 +81,8 @@ def test_invalid_or_incomplete_server_verification_cannot_change_unknown_deliver
     delivery = unknown_delivery(workflow)
     with pytest.raises(ValueError):
         resolve(repository, delivery, **changes)
-    assert repository.delivery_state(delivery["delivery_id"]) == "unknown"
-    assert repository.delivery_resolutions(delivery["delivery_id"]) == []
+    assert repository.deliveries.delivery_state(delivery["delivery_id"]) == "unknown"
+    assert repository.deliveries.delivery_resolutions(delivery["delivery_id"]) == []
 
 
 def test_concurrent_verifiers_only_one_can_commit(workflow):
@@ -91,11 +91,11 @@ def test_concurrent_verifiers_only_one_can_commit(workflow):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: resolve(repository, delivery), range(2)))
     assert sorted(results) == [False, True]
-    assert len(repository.delivery_resolutions(delivery["delivery_id"])) == 1
+    assert len(repository.deliveries.delivery_resolutions(delivery["delivery_id"])) == 1
 
 
 def test_audit_and_run_update_failure_roll_back_delivery_resolution(workflow, monkeypatch):
-    from app.database.automation import AutomationRepository
+    from app.modules.automation import delivery_repository
 
     repository, _, _, _ = workflow
     delivery = unknown_delivery(workflow)
@@ -103,12 +103,12 @@ def test_audit_and_run_update_failure_roll_back_delivery_resolution(workflow, mo
     def fail(*args, **kwargs):
         raise RuntimeError("run update unavailable")
 
-    monkeypatch.setattr(AutomationRepository, "mark_run", fail)
+    monkeypatch.setattr(delivery_repository, "update_run", fail)
     with pytest.raises(RuntimeError):
         resolve(repository, delivery)
-    assert repository.delivery_state(delivery["delivery_id"]) == "unknown"
+    assert repository.deliveries.delivery_state(delivery["delivery_id"]) == "unknown"
     assert repository.get_run(delivery["run_id"])["status"] == "unknown"
-    assert repository.delivery_resolutions(delivery["delivery_id"]) == []
+    assert repository.deliveries.delivery_resolutions(delivery["delivery_id"]) == []
 
 
 def test_api_requires_admin_and_rejects_stale_verification(workflow):
@@ -151,6 +151,6 @@ def test_prior_accepted_recipient_is_immutable_during_later_unknown_resolution(w
             {"recipient": "b@example.com", "outcome": "accepted"},
         ])
     assert resolve(repository, delivery, [{"recipient": "b@example.com", "outcome": "accepted"}])
-    result = repository.delivery_resolutions(delivery["delivery_id"])[0]
+    result = repository.deliveries.delivery_resolutions(delivery["delivery_id"])[0]
     assert result["before_results"]["a@example.com"]["status"] == "accepted"
     assert result["after_results"]["a@example.com"]["status"] == "accepted"

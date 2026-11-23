@@ -5,7 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.api.auth import require_admin
-from app.api.automation import router
+from app.modules.automation.routes import router
 from tests.automation_fixtures import NOW, STAMP
 
 
@@ -32,13 +32,13 @@ def test_delivery_search_covers_all_pages_and_matches_snapshot_names_subjects_an
             with repository.connect() as connection:
                 connection.execute('UPDATE email_deliveries SET recipients_json=%s WHERE report_id=%s',
                                    (json.dumps(['retry@example.com']), report_id))
-    items, total = repository.list_deliveries(page=2, page_size=20, search='普通任务')
+    items, total = repository.deliveries.list_deliveries(page=2, page_size=20, search='普通任务')
     assert total == 24 and len(items) == 4
     for term in ['车间', '%', ' ACCEPTED@EXAMPLE.COM ', '特殊主题']:
-        items, total = repository.list_deliveries(page=1, page_size=20, search=term)
+        items, total = repository.deliveries.list_deliveries(page=1, page_size=20, search=term)
         assert total == 1 and len(items) == 1, term
     for term in ['不存在', "' OR 1=1 --", '_']:
-        assert repository.list_deliveries(page=1, page_size=20, search=term) == ([], 0)
+        assert repository.deliveries.list_deliveries(page=1, page_size=20, search=term) == ([], 0)
 
     app = embedded_app()
     app.include_router(router)

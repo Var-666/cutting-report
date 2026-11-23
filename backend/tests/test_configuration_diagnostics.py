@@ -16,7 +16,7 @@ from app.config import Settings, _environment
 from app.database.source_registry import DatabaseSourceRegistry
 from tests.line_fixtures import configuration
 from app.configuration_sources import load_environment
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.runtime import AutomationRuntime
 from app.services.configuration_diagnostics import ConfigurationDiagnostics
 from app.services.runtime_settings_store import write_runtime_env
 
@@ -294,7 +294,7 @@ def test_invalid_hot_boolean_never_silently_disables_automation(configured):
 
 
 def test_empty_numeric_values_use_default_source_including_inherited_connections(configured, monkeypatch):
-    from app.services import automation_runtime
+    from app.modules.automation import runtime as automation_runtime
     process = {'SQLSERVER_PORT': '', 'SMTP_PORT': ''}
     web = configured(process)
     monkeypatch.setattr(automation_runtime, 'LOADED_ENVIRONMENT', process)

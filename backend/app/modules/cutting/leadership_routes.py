@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import replace
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
+
+from app.core.report_deadline import ReportOperationTimeout
+from app.core.sql_capacity import SqlCapacityError
+from app.api.workloads import query_requests
+from app.api.devices import device_state
+from app.api.runtime import request_settings
+from app.api.auth import require_admin
+from app.database.sqlserver import SqlServerConfigurationError
+from app.models.domain import to_primitive
+from app.models.contracts import ApiEnvelope
+from app.models.report_contracts import LeadershipReport
+from app.modules.reports.analysis.service import (
+    analysis_table_source_version,
+    leadership_analysis_source_version,
+)
+from app.core.request_cancellation import SqlRequestCancelled
+from app.modules.cutting.runtime import DeviceRuntime
+from app.modules.cutting.report_reads import statistics_page
+
+
+# Persisted operations incident fingerprints include the logger name.
+logger = logging.getLogger('app.api.leadership')
+router = APIRouter(
+    prefix="/api/v1/leadership-report",
+    tags=["leadership-report"],
+    dependencies=[Depends(require_admin)],
+)
+
+
+class LeadershipRefreshRequest(BaseModel):
+    report_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _parse_month(value: str | None, timezone: str) -> date:
+    if value is None:
+        now = datetime.now(ZoneInfo(timezone))
+        return date(now.year, now.month, 1)
+    try:
+        return date.fromisoformat(f"{value}-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="月份格式必须为 YYYY-MM") from exc
+
+
+def _result_with_refresh_state(device: DeviceRuntime, report_month: date, result):
+    refreshing = device.leadership_refresh_worker.is_refreshing(report_month)
+    return replace(
+        result,
+        snapshot=replace(result.snapshot, refreshing=refreshing),
+    )
+
+
+def _with_analysis_source_version(data: dict) -> dict:
+    data["analysis_source_version"] = leadership_analysis_source_version(data)
+    data["analysis_summary_source_version"] = analysis_table_source_version(
+        data.get("monthly_records") or []
+    )
+    return data
+
+
+router.dependencies.append(Depends(device_state))
+
+
+@query_requests.route(router.get("", response_model=None, responses={200: {"model": ApiEnvelope[LeadershipReport]}}),
+    local_when=lambda request: not any(key in request.query_params for key in ('start_date', 'end_date')))
+def get_leadership_report(
+    request: Request,
+    report_month: str | None = Query(
+        default=None,
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        description="报表月份，格式 YYYY-MM",
+    ),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    refresh: bool = Query(default=False, description="提交后台刷新并返回现有快照"),
+) -> dict:
+    selected_start = start_date or end_date
+    selected_end = end_date or start_date
+    query = {'start': selected_start, 'end': selected_end} if selected_start else {'report_month': _parse_month(report_month, request_settings(request).timezone)}
+    data = statistics_page(request, 'leadership-range' if selected_start else 'leadership', query, refresh=refresh)
+    if data is not None:
+        if selected_start:
+            data.update(period_start=selected_start.isoformat(), period_end=selected_end.isoformat(),
+                        aggregation='day' if (selected_end - selected_start).days < 90 else 'month')
+        data['snapshot'].update(stale=data['meta']['report_data']['stale'], refreshing=data['meta']['report_data']['refreshing'])
+        return {'success': True, 'data': _with_analysis_source_version(data), 'request_id': request.state.request_id}
+    try:
+        if start_date is not None or end_date is not None:
+            selected_start = start_date or end_date
+            selected_end = end_date or start_date
+            assert selected_start is not None and selected_end is not None
+            result = device_state(request).range_report_service.leadership(
+                selected_start, selected_end
+            )
+            data = _with_analysis_source_version(to_primitive(result))
+            data.update(
+                {
+                    "period_start": selected_start.isoformat(),
+                    "period_end": selected_end.isoformat(),
+                    "aggregation": (
+                        "day"
+                        if (selected_end - selected_start).days < 90
+                        else "month"
+                    ),
+                }
+            )
+            return {
+                "success": True,
+                "data": data,
+                "request_id": request.state.request_id,
+            }
+        month_start = _parse_month(report_month, request_settings(request).timezone)
+        device = device_state(request)
+        service = device.leadership_report_service
+        result = device.report_provider.fetch_summary('leadership', {'report_month': month_start}).payload
+        if refresh or result.snapshot.stale:
+            device.leadership_refresh_worker.schedule(
+                month_start,
+                bootstrap=service.needs_bootstrap(month_start),
+            )
+        result = _result_with_refresh_state(device, month_start, result)
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
+        raise
+    except (SqlServerConfigurationError, ValueError) as exc:
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("leadership report query failed")
+        raise HTTPException(status_code=500, detail="领导报表查询失败。") from exc
+    return {
+        "success": True,
+        "data": _with_analysis_source_version(to_primitive(result)),
+        "request_id": request.state.request_id,
+    }
+
+
+@query_requests.route(router.post("/refresh", status_code=status.HTTP_202_ACCEPTED, response_model=None, responses={202: {"model": ApiEnvelope[LeadershipReport]}}))
+def refresh_leadership_report(
+    payload: LeadershipRefreshRequest,
+    request: Request,
+) -> dict:
+    data = statistics_page(request, 'leadership', {'report_month': _parse_month(payload.report_month, request_settings(request).timezone)}, refresh=True)
+    if data is not None:
+        data['snapshot'].update(stale=data['meta']['report_data']['stale'], refreshing=data['meta']['report_data']['refreshing'])
+        return {'success': True, 'data': _with_analysis_source_version(data), 'request_id': request.state.request_id}
+    try:
+        month_start = _parse_month(payload.report_month, request_settings(request).timezone)
+        device = device_state(request)
+        service = device.leadership_report_service
+        device.leadership_refresh_worker.schedule(
+            month_start,
+            bootstrap=service.needs_bootstrap(month_start),
+        )
+        result = service.fetch(month_start)
+        result = _result_with_refresh_state(device, month_start, result)
+    except (SqlRequestCancelled, SqlCapacityError, ReportOperationTimeout):
+        raise
+    except SqlServerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("leadership report refresh failed")
+        raise HTTPException(status_code=500, detail="领导报表刷新失败。") from exc
+    return {
+        "success": True,
+        "data": _with_analysis_source_version(to_primitive(result)),
+        "request_id": request.state.request_id,
+    }

@@ -17,11 +17,11 @@ from app.database.postgres import ExecutionLeaseLost, execution_scope
 from psycopg import Error as PostgresError
 
 from app.core.operations_logging import configured_logging, event, operation_context
-from app.services.application_runtime import ApplicationRuntime, build_runtime
-from app.services.database_runtime import database_context
-from app.services.llm_service import background_llm_work, generation_priority
+from app.runtime.application import ApplicationRuntime, build_runtime
+from app.runtime.database import database_context
+from app.modules.reports.analysis.llm import background_llm_work, generation_priority
 from app.services.worker_status import role_health
-from app.services.production_reports import report_provider
+from app.modules.reports.provider import report_provider
 from app.workers.bounded_executor import BoundedExecutor
 from app.workers.report_worker import ReportWorker
 

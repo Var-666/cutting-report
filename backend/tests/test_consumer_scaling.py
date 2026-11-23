@@ -7,8 +7,8 @@ from time import monotonic, sleep
 import pytest
 
 from app.database.coordination import CoordinationRepository
-from app.database.energy import EnergyReportRepository
-from app.database.metadata import MetadataRepository
+from app.modules.energy.repository import EnergyReportRepository
+from app.modules.reports.repository import MetadataRepository
 from app.database.postgres import ExecutionLeaseLost, execution_scope
 from app.database.postgres_migrations import MigrationError, prepare_consumers
 from app.services.worker_status import WorkerStatusReader, background_ready, public_status
@@ -202,7 +202,7 @@ def test_unverified_source_task_never_uses_current_connection(postgres_state, mo
 
 def test_diagnostics_identify_each_consumer_and_do_not_treat_identity_as_shared_config(postgres_state):
     from app.models.configuration_contracts import ConfigurationDiagnostics
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     database, cfg, _ = postgres_state
     queue = CoordinationRepository(database)
     runtime = build_runtime(cfg, role='web')
@@ -287,7 +287,7 @@ def test_consumer_start_waits_for_the_same_maintenance_gate(postgres_state):
 def test_failed_report_file_replacement_cleans_own_temporary_file_and_keeps_other_owner(postgres_state, tmp_path, monkeypatch):
     from datetime import datetime
     from types import SimpleNamespace
-    from app.services.report_service import ReportService
+    from app.modules.reports.service import ReportService
     database, cfg, _ = postgres_state
     first, second, _ = consumers(database)
     cfg.echarts_vendor_path.parent.mkdir(parents=True)
@@ -299,7 +299,7 @@ def test_failed_report_file_replacement_cleans_own_temporary_file_and_keeps_othe
         saved = service.render(**arguments)
     path = cfg.reports_dir / saved['relative_path']
     with monkeypatch.context() as patch:
-        patch.setattr('app.services.report_service.os.replace', lambda *args: (_ for _ in ()).throw(OSError('interrupted replacement')))
+        patch.setattr('app.modules.reports.service.os.replace', lambda *args: (_ for _ in ()).throw(OSError('interrupted replacement')))
         with scope(database, second), pytest.raises(OSError):
             service.render(**arguments)
     assert path.read_text() == '报告结束'
@@ -596,7 +596,7 @@ def test_replaced_consumer_history_does_not_reduce_current_capacity(postgres_sta
     assert {item['instance_id']: item['state'] for item in status['consumer_instances']} == {
         'old': 'lost', 'current-1': 'running', 'current-2': 'running',
     }
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     runtime = build_runtime(replace(postgres_state[1], consumer_replicas=3), role='web')
     try:
         limited = runtime.worker_status_reader.status()

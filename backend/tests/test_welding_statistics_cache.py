@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from tests.line_fixtures import welding_settings
-from app.database.welding import WeldingRepository
-from app.models.welding import WeldingQuery
-from app.services.welding_service import WeldingService
+from app.modules.welding.repository import WeldingRepository
+from app.modules.welding.models import WeldingQuery
+from app.modules.welding.service import WeldingService
 
 
 class Repository(WeldingRepository):
@@ -148,7 +148,7 @@ def test_common_statistics_are_shared_across_report_types_without_part_fields_le
 
 def test_filters_source_changes_expiry_exports_and_service_replacement_recompute(monkeypatch):
     clock = [0]
-    monkeypatch.setattr('app.services.query_cache.monotonic', lambda: clock[0])
+    monkeypatch.setattr('app.modules.reports.query_cache.monotonic', lambda: clock[0])
     repo = Repository()
     service = WeldingService(welding_settings(), repo)
     service.report('jobs', query())

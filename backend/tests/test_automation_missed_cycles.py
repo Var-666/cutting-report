@@ -17,7 +17,7 @@ def test_reservation_insert_failure_rolls_back_schedule_clock(workflow, monkeypa
     from types import SimpleNamespace
     repository, _, _, existing = workflow
     schedule = backlog_schedule(workflow)
-    monkeypatch.setattr('app.database.automation.uuid4', lambda: SimpleNamespace(hex=existing['run_id'][4:]))
+    monkeypatch.setattr('app.modules.automation.repository.uuid4', lambda: SimpleNamespace(hex=existing['run_id'][4:]))
     assert repository.reserve_run(
         schedule, scheduled_for=schedule["next_run_at"], report_date="2026-09-26",
         trigger_type="scheduled", now=STAMP, next_run_at="2026-09-28T09:00:00+08:00",
@@ -87,7 +87,7 @@ def test_missed_cycles_are_caught_up_one_per_scan_with_original_report_dates(
 def test_duplicate_snapshot_cannot_create_same_cycle_twice(workflow):
     from concurrent.futures import ThreadPoolExecutor
     from datetime import datetime
-    from app.services.automation_service import next_run_at
+    from app.modules.automation.schedules import next_run_at
 
     repository, _, _, _ = workflow
     schedule = backlog_schedule(workflow)

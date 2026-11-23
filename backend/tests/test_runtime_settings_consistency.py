@@ -9,15 +9,16 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api import automation, database
+from app.modules.automation import routes as automation
+from app.api import database
 from app.config import Settings
-from app.services.automation_runtime import AutomationRuntime
+from app.modules.automation.runtime import AutomationRuntime
 from app.services.runtime_settings_store import read_runtime_env, write_runtime_env, runtime_settings_lock
 from app.database.source_registry import DatabaseSourceRegistry, source_configs_json
 from tests.line_fixtures import configuration, line_settings, source_client
 from app.database.sqlserver import SqlServerConfigurationError
 from app.models.domain import ReportFilter
-from app.services.query_service import QueryService
+from app.modules.cutting.service import QueryService
 
 
 settings = Settings()
@@ -67,7 +68,7 @@ def test_database_and_automation_save_share_read_modify_publish_lock(tmp_path, m
 
 
 def test_blank_database_password_preserves_latest_saved_value_before_restart(postgres_state, tmp_path, monkeypatch):
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
     from app.models.database_sources import DatabaseSourceRequest
     configured = configuration(tmp_path)
     state = build_runtime(state_settings(configured,postgres_state), role='web')
@@ -120,7 +121,7 @@ def test_sqlserver_query_failure_does_not_fall_back_to_local_or_demo_data(monkey
     def unavailable(*args):
         raise SqlServerConfigurationError("生产数据库未配置")
 
-    monkeypatch.setattr(service.client, "fetch_all", unavailable)
+    monkeypatch.setattr(service.repository.client, "fetch_all", unavailable)
     with pytest.raises(SqlServerConfigurationError, match="生产数据库未配置"):
         service.fetch_report_data(ReportFilter(report_date=date(2026, 10, 13)))
 

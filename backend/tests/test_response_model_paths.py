@@ -11,15 +11,16 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import alarms, cutting, workshop
+from app.modules.alarms import routes as alarms
+from app.modules.cutting import routes as cutting, workshop_routes as workshop
 from app.api.auth import require_admin, require_user, require_worker
-from app.database.alarms import AlarmRepository
-from app.database.confirmations import ConfirmationRepository
+from app.modules.alarms.repository import AlarmRepository
+from app.modules.cutting.confirmations import ConfirmationRepository
 from app.database.users import UserRepository
-from app.database.workshop_reports import WorkshopReportRepository
+from app.modules.cutting.workshop_repository import WorkshopReportRepository
 from app.models.domain import WorkshopRecord
-from app.services.alarm_analysis_service import AlarmAnalysisService
-from app.services.llm_service import AnalysisOutputValidationError
+from app.modules.alarms.analysis import AlarmAnalysisService
+from app.modules.reports.analysis.llm import AnalysisOutputValidationError
 from tests.test_alarm_monitor import alarm, incident
 from tests.dispatch_fixtures import RecordingMagicClient, push_service as _push_service
 
@@ -213,10 +214,10 @@ def test_alarm_response_models_cover_closed_incidents_and_incomplete_reports(api
     page = data(client.get('/api/v1/alarms/incidents/page' + query))
     assert page['dominant_alarm']['count'] >= 1 and page['severity_counts']
     for index, report_id in enumerate(('generating', 'failed')):
-        repository.reserve_report(proposed_report_id=report_id, emission_key=report_id,
+        repository.reports.reserve_report(proposed_report_id=report_id, emission_key=report_id,
                                   machine_no='Cutter01', incident_ids=[incidents[index]['incident_id']],
                                   now=now.isoformat())
-    repository.fail_report('failed', '模型暂不可用')
+    repository.reports.fail_report('failed', '模型暂不可用')
     for suffix in ('reports', 'reports/page'):
         result = data(client.get('/api/v1/alarms/' + suffix + query))
         items = result if isinstance(result, list) else result['items']

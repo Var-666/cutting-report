@@ -2,11 +2,11 @@
 from pathlib import Path
 
 from tests.line_fixtures import cutting_settings
-from app.database.dispatch import DispatchRepository
+from app.modules.cutting.dispatch_repository import DispatchRepository
 from app.database.downloads import DownloadRepository
 from app.database.pdm import MockPdmRepository
 from app.database.users import UserRepository
-from app.services.cutting_dispatch_service import CuttingDispatchService
+from app.modules.cutting.dispatch import CuttingDispatchService
 from app.services.file_download_service import FileDownloadService
 from app.services.file_source import DisabledFileSource, MockFileSource
 from app.services.magic_box_service import MagicBoxConfig, MagicBoxError

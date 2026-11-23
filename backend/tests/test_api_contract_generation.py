@@ -9,7 +9,7 @@ import importlib.util
 from pydantic import ValidationError
 import pytest
 
-from app.models.cutting_contracts import CuttingFile, CuttingDispatch
+from app.modules.cutting.contracts import CuttingFile, CuttingDispatch
 from tests.dispatch_fixtures import dispatch_service as _service
 
 
@@ -62,10 +62,15 @@ def test_alarm_contract_export_has_typed_json_responses_and_no_database_side_eff
 def contract_http(tmp_path, postgres_state):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import automation, configuration, database, leadership, equipment, energy, reports, analysis
+    from app.modules.automation import routes as automation
+    from app.api import configuration, database
+    from app.modules.reports import routes as reports
+    from app.modules.cutting import analysis_routes as analysis
+    from app.modules.cutting import leadership_routes as leadership, equipment_routes as equipment
+    from app.modules.energy import routes as energy
     from app.api.auth import require_admin
     from tests.line_fixtures import configuration as line_configuration
-    from app.services.application_runtime import build_runtime
+    from app.runtime.application import build_runtime
 
     from tests.postgres_fixtures import state_settings
     runtime = build_runtime(state_settings(line_configuration(tmp_path), postgres_state), role='web')
@@ -98,7 +103,7 @@ def check_contract(response, model):
 def test_configuration_and_automation_documented_responses_match_http_payloads(contract_http):
     from app.models.contracts import Items, Page
     from app.models.configuration_contracts import DatabaseConfiguration, DatabaseStatus, ConfigurationSaved, ConfigurationDiagnostics, LlmConfiguration
-    from app.models.automation_contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
+    from app.modules.automation.contracts import AutomationConfiguration, AutomationStatus, AutomationSchedule, EmailDelivery, ScheduledRun
     client = contract_http
     check_contract(client.get('/api/v1/database/status'), DatabaseStatus)
     check_contract(client.get('/api/v1/database/configuration'), DatabaseConfiguration)
@@ -130,7 +135,7 @@ def test_configuration_and_automation_documented_responses_match_http_payloads(c
 def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contract_http):
     from app.models.contracts import Page
     from app.models.report_contracts import LeadershipReport, ReportAccepted, ReportJob
-    from app.models.energy_contracts import EquipmentReport, TaskEnergyReport, EnergyRangeReport, EnergyPeriodReport, EnergyDayReport, EnergyMonthReport
+    from app.modules.energy.contracts import EquipmentReport, TaskEnergyReport, EnergyRangeReport, EnergyPeriodReport, EnergyDayReport, EnergyMonthReport
     client = contract_http
     params = {'device_id': 'Cutter01'}
     for path, query, model in [
@@ -145,8 +150,8 @@ def test_cutting_reports_and_state_dependent_job_responses_match_contracts(contr
     ]:
         response = client.get(f'/api/v1/{path}', params={**params, **query})
         assert response.status_code == 503 and response.headers['X-Report-Error'] == 'snapshot_refresh_busy'
-        from app.services.database_runtime import database_context
-        from app.services.production_reports import report_provider
+        from app.runtime.database import database_context
+        from app.modules.reports.provider import report_provider
         runtime = client.app.state.runtime
         owner = runtime.coordination.acquire('worker:contract', ttl=30)
         task = runtime.coordination.claim_task(owner, analysis=False)
@@ -178,7 +183,7 @@ def test_required_dispatch_fields_cannot_silently_disappear():
 def test_file_list_and_search_preserve_pdm_file_type(state_database, tmp_path, file_type):
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import cutting
+    from app.modules.cutting import routes as cutting
     from app.api.auth import require_user
 
     service, _, admin = _service(state_database, tmp_path)
@@ -214,14 +219,14 @@ def test_http_response_validation_matches_workshop_and_dispatch_records(state_da
     from types import SimpleNamespace
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import cutting, workshop
+    from app.modules.cutting import routes as cutting, workshop_routes as workshop
     from app.api.auth import require_admin, require_user, require_worker
     from app.models.domain import WorkshopRecord
 
     service, dispatches, admin = _service(state_database, tmp_path)
-    from app.database.confirmations import ConfirmationRepository
+    from app.modules.cutting.confirmations import ConfirmationRepository
     from app.database.users import UserRepository
-    from app.database.workshop_reports import WorkshopReportRepository
+    from app.modules.cutting.workshop_repository import WorkshopReportRepository
     repository = WorkshopReportRepository(dispatches.database, scope_machine_no='Cutter01')
     confirmations = ConfirmationRepository(dispatches.database, scope_machine_no='Cutter01')
     worker = UserRepository(dispatches.database).create_user(username='worker', display_name='工人', password='worker-password', role='worker', now='2026-10-01T08:00:00')
@@ -265,11 +270,11 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
     from zoneinfo import ZoneInfo
     from tests.web_fixtures import embedded_app
     from fastapi.testclient import TestClient
-    from app.api import alarms
+    from app.modules.alarms import routes as alarms
     from app.api.auth import require_admin
     from app.config import Settings
-    from app.database.alarms import AlarmRepository
-    from app.services.alarm_analysis_service import AlarmAnalysisService
+    from app.modules.alarms.repository import AlarmRepository
+    from app.modules.alarms.analysis import AlarmAnalysisService
     from tests.test_alarm_monitor import alarm
 
     repository = AlarmRepository(state_database, source_name='production')
@@ -305,8 +310,8 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
             'limitations': ['仅依据告警记录'],
         }
         AlarmAnalysisService._validate(analysis, facts)
-        repository.reserve_report(proposed_report_id='report', emission_key='report', machine_no='Cutter01', incident_ids=[incident['incident_id']], now='2026-10-28T09:00:00+08:00')
-        repository.complete_report('report', analysis=analysis, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
+        repository.reports.reserve_report(proposed_report_id='report', emission_key='report', machine_no='Cutter01', incident_ids=[incident['incident_id']], now='2026-10-28T09:00:00+08:00')
+        repository.reports.complete_report('report', analysis=analysis, html_relative_path='alarms/a.html', pdf_relative_path='alarms/a.pdf', pdf_filename='a.pdf', file_size=10, sha256='sha', model_status='model', completed_at='2026-10-28T09:01:00+08:00')
         response = client.get('/api/v1/alarms/incidents/page?device_id=Cutter01')
         assert response.status_code == 200, response.text
         assert response.json()['data']['total'] == 1
@@ -316,7 +321,7 @@ def test_alarm_http_contracts_cover_empty_and_populated_reports(state_database, 
             assert response.status_code == 200, response.text
             data = response.json()['data']
             item = data[0] if isinstance(data, list) else data['items'][0]
-            original = repository.get_report('report')
+            original = repository.reports.get_report('report')
             assert original.keys() <= item.keys()
             assert item['analysis'] == analysis
             assert type(item['analysis']['actions'][0]['priority']) is type(priority)
