@@ -61,6 +61,8 @@ function pdmPanelResults(report: PdmStatisticsReport, filters: PdmFilters, optio
   })
 }
 
+export const pdmInitialProjectCount = 5
+
 export function pdmChartRows(table: PdmSummaryTable, detail = false) {
   return table.rows.filter(row => table.group_label && !detail ? row.subtotal : !row.subtotal)
 }
@@ -72,32 +74,31 @@ export function pdmDetailCharts(table: PdmSummaryTable): PdmSummaryTable[] {
   }))
 }
 
-export function pdmVisibleProjects(table: PdmSummaryTable, expandedCategories: readonly string[]): PdmSummaryTable {
-  if (table.group_label !== '项目') return table
-  const counts = new Map<string, number>()
-  return { ...table, rows: table.rows.filter(row => {
-    if (row.subtotal || expandedCategories.includes(row.category)) return true
-    const count = (counts.get(row.category) || 0) + 1
-    counts.set(row.category, count)
-    return count <= 10
-  }) }
+export function formatPdmRate(value: number | null) {
+  return value === null ? '—' : `${value.toFixed(2)}%`
+}
+
+export function pdmCompletionChartWidth(rowCount: number) {
+  return Math.max(320, rowCount * 72 + 60)
 }
 
 export function pdmCompletionChartOption(table: PdmSummaryTable, colors: { onTime: string; total: string; text: string; border: string; divider: string }, detail = false): EChartsOption {
   const rows = pdmChartRows(table, detail)
+  const label = { show: true, position: 'top' as const, color: colors.text, fontSize: 11,
+    formatter: ({ value }: { value: unknown }) => typeof value === 'number' ? formatPdmRate(value) : '' }
   return {
-    grid: { left: 16, right: 24, top: 56, bottom: 56, containLabel: true },
+    grid: { left: 16, right: 24, top: 68, bottom: 56, containLabel: true },
     legend: { top: 8, left: 'center', data: ['按时完成率', '总完成率'], textStyle: { color: colors.text } },
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: value => value == null ? '—' : `${value}%` },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: value => typeof value === 'number' ? formatPdmRate(value) : '—' },
     xAxis: { type: 'category', name: detail ? table.group_label || '' : '类型', nameLocation: 'middle', nameGap: 48, nameTextStyle: { color: colors.text }, data: rows.map(row => detail ? row.group_name ?? '' : row.category),
-      axisLabel: { interval: detail && table.group_label === '项目' ? 'auto' : 0, color: colors.text, formatter: value => detail ? value.length > 6 ? `${value.slice(0, 6)}…` : value : value.includes('-') ? value.replace('-', '\n') : value.length > 4 ? `${value.slice(0, 3)}\n${value.slice(3)}` : value },
+      axisLabel: { interval: 0, color: colors.text, formatter: value => detail ? value.length > 8 ? `${value.slice(0, 8)}…` : value : value.includes('-') ? value.replace('-', '\n') : value.length > 4 ? `${value.slice(0, 3)}\n${value.slice(3)}` : value },
       axisLine: { lineStyle: { color: colors.border } } },
     yAxis: { type: 'value', name: '完成率（%）', min: 0, max: 100,
       nameTextStyle: { color: colors.text }, axisLabel: { formatter: '{value}%', color: colors.text },
       splitLine: { lineStyle: { color: colors.divider } } },
     series: [
-      { name: '按时完成率', type: 'bar', barMaxWidth: 36, itemStyle: { color: colors.onTime }, data: rows.map(row => row.on_time_rate) },
-      { name: '总完成率', type: 'bar', barMaxWidth: 36, itemStyle: { color: colors.total }, data: rows.map(row => row.total_rate) },
+      { name: '按时完成率', type: 'bar', barMaxWidth: 36, barGap: '55%', label, itemStyle: { color: colors.onTime }, data: rows.map(row => row.on_time_rate) },
+      { name: '总完成率', type: 'bar', barMaxWidth: 36, barGap: '55%', label, itemStyle: { color: colors.total }, data: rows.map(row => row.total_rate) },
     ],
   }
 }

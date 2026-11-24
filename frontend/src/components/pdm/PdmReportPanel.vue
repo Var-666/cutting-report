@@ -85,6 +85,5 @@ onBeforeUnmount(() => { reportController?.abort(); reportController = undefined 
 .pdm-report-panel{display:grid;gap:var(--space-4);min-width:0}
 .pdm-report-panel__heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4)}
 .pdm-report-panel__heading h3{margin:0;color:var(--text-color-1);font-size:var(--font-section-title);font-weight:600}
-.pdm-report-panel :deep(.report-trend-panel){margin-bottom:0}
 .pdm-report-panel__basis{margin:var(--space-3) 0 0;color:var(--text-color-3);font-size:var(--font-auxiliary)}
 </style>

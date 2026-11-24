@@ -10,7 +10,7 @@ import { SVGRenderer } from 'echarts/renderers'
 import { renderComponent } from './vue-component-helpers.mjs'
 import { clonePdmFilters, createPdmFilters, pdmCurrentMonth, pdmDocumentKinds, pdmPreferences, validatePdmFilters } from '../src/utils/pdmFilters.ts'
 import { getPdmOverview, pdmQuery } from '../src/api/pdmStatistics.ts'
-import { pdmCompletionChartOption, pdmDetailCharts, pdmReportRegion, pdmReportSections, pdmVisibleProjects, unassignedPdmGroups } from '../src/utils/pdmReport.ts'
+import { pdmCompletionChartOption, pdmDetailCharts, pdmReportRegion, pdmReportSections, unassignedPdmGroups } from '../src/utils/pdmReport.ts'
 import { usePdmFilterOptions } from '../src/composables/usePdmFilterOptions.ts'
 import { reportCache } from '../src/api/reportCache.ts'
 
@@ -83,7 +83,7 @@ test('professional and project reports preserve vertical category spans and per-
     const value = table(true); value.group_label = group
     const html = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-10', queried: true })
     assert.match(html, /colspan="4"[^>]*>设备资料计划完成汇总表/)
-    assert.match(html, /rowspan="2" scope="rowgroup"[^>]*>技术协议-按设备计/)
+    assert.match(html, /rowspan="2" scope="rowgroup"[^>]*><span[^>]*>技术协议-按设备计<\/span>/)
     assert.ok(html.includes('船体'))
     assert.doesNotMatch(html, /<tfoot\b/)
   }
@@ -121,45 +121,6 @@ test('zero denominator stays unavailable and initial empty table explains query 
   value.rows = []
   const empty = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '', endDate: '', queried: false })
   assert.ok(empty.includes('选择时间段及筛选条件后查询'))
-})
-
-test('each project category defaults to ten rows, expands independently and retains full totals and missing-data notes', async () => {
-  const value = table(true); value.group_label = '项目'
-  const categories = ['技术协议-按设备计', '技术协议-按协议计', '设备认可图', '设备工作资料', '设备完工资料']
-  value.rows = categories.flatMap(category => [
-    ...Array.from({ length: 12 }, (_, index) => ({ category, group_id: `p${index}`, group_name: `项目${index + 1}`, subtotal: false, ...totals })),
-    { category, group_id: '', group_name: '总计', subtotal: true, total: 48, completed: 24, on_time: 12, total_rate: 50, on_time_rate: 25 },
-  ])
-  value.totals = { total: 240, completed: 120, on_time: 60, total_rate: 50, on_time_rate: 25 }
-  const original = structuredClone(value)
-  for (const expandedCategories of [[], [categories[0]], categories, []]) {
-    const visible = pdmVisibleProjects(value, expandedCategories)
-    const html = await renderComponent('components/pdm/PdmSummaryTable', { table: value, startDate: '2026-11-01', endDate: '2026-11-30', queried: true, expandedCategories })
-    assert.equal((html.match(/aria-expanded=/g) || []).length, 5)
-    assert.equal((html.match(/aria-expanded="true"/g) || []).length, expandedCategories.length)
-    assert.equal((html.match(/>总计</g) || []).length, expandedCategories.length)
-    assert.equal((html.match(/aria-label="还有2个项目未显示"/g) || []).length, 5 - expandedCategories.length)
-    assert.equal((html.match(/colspan="6" class="pdm-summary__ellipsis"/g) || []).length, 5 - expandedCategories.length)
-    assert.doesNotMatch(html, /未分配到项目行/)
-    for (const category of categories) {
-      const count = expandedCategories.includes(category) ? 12 : 10
-      const rows = visible.rows.filter(row => row.category === category)
-      assert.equal(rows.length, count + 1)
-      assert.equal(rows.at(-1).subtotal, true)
-      assert.equal(rows.at(-1).total, 48)
-      const chart = pdmDetailCharts(visible).find(chart => chart.title === category)
-      assert.equal(chart.rows.length, count)
-      assert.equal(chart.totals.total, 48)
-    }
-    assert.deepEqual(value, original)
-  }
-  const small = { ...value, rows: value.rows.filter(row => row.subtotal || row.group_id === 'p0') }
-  const html = await renderComponent('components/pdm/PdmSummaryTable', { table: small, startDate: '', endDate: '', queried: true })
-  assert.doesNotMatch(html, /展开全部/)
-  assert.equal((html.match(/>总计</g) || []).length, 5)
-  const profession = table(true)
-  assert.equal(pdmVisibleProjects(profession, []), profession)
-  assert.equal(pdmVisibleProjects(value, []).rows.length, 55)
 })
 
 test('documents outside the fixed profession rows remain explained outside the template', async () => {
@@ -227,7 +188,7 @@ test('table filters default to the complete current month in Shanghai, including
   ]) assert.deepEqual(pdmCurrentMonth(new Date(now)), { startDate, endDate })
 })
 
-test('each table has an independent filter button and chart without an inline common filter form', async () => {
+test('each report has its own filter and charts with details deferred to a dialog', async () => {
   setActivePinia(createPinia())
   defineStore('theme-store', { state: () => ({ darkMode: false }) })()
   const filters = createPdmFilters(); filters.documentKinds = ['equipment']
@@ -236,8 +197,9 @@ test('each table has an independent filter button and chart without an inline co
   const html = await renderComponent('components/pdm/PdmReportPanel', { region })
   assert.ok(html.includes('筛选设备资料 · 所有项目'))
   assert.ok(html.includes('按时完成率与总完成率柱状图'))
-  assert.ok(html.includes('<table'))
-  assert.doesNotMatch(html, /<form\b/)
+  assert.ok(html.includes('按时完成率 25.00%，按资料类型分布'))
+  assert.ok(html.includes('总完成率 50.00%，按资料类型分布'))
+  assert.doesNotMatch(html, /<(table|form)\b/)
 })
 
 test('both partition templates have their own visible query entry before any results exist', async () => {
@@ -509,6 +471,12 @@ test('type charts use category subtotal rates, omit the grand total and keep mis
   assert.equal(option.yAxis.min, 0); assert.equal(option.yAxis.max, 100)
   assert.deepEqual(option.series.map(series => series.name), ['按时完成率', '总完成率'])
   assert.deepEqual(option.series.map(series => series.data), [[10, null], [10, null]])
+  for (const { label } of option.series) {
+    assert.equal(label.position, 'top')
+    assert.equal(label.formatter({ value: 12.345 }), '12.35%')
+    assert.equal(label.formatter({ value: 0 }), '0.00%')
+    assert.equal(label.formatter({ value: null }), '')
+  }
   assert.equal(option.xAxis.axisLabel.formatter('技术协议-按设备计'), '技术协议\n按设备计')
   assert.equal(option.xAxis.axisLabel.formatter('船东退审图'), '船东退\n审图')
   assert.deepEqual(pdmCompletionChartOption(table(), { onTime: '', total: '', text: '', border: '', divider: '' }).xAxis.data, ['技术协议-按设备计'])
@@ -532,12 +500,12 @@ test('detail charts use each category profession or project rates without subtot
     assert.equal(option.xAxis.name, group)
     assert.deepEqual(option.xAxis.data, value.rows.slice(0, 2).map(row => row.group_name))
     assert.deepEqual(option.series.map(series => series.data), [[0, null], [25, null]])
-    assert.equal(option.xAxis.axisLabel.formatter('很长的模拟项目名称'), '很长的模拟项…')
+    assert.equal(option.xAxis.axisLabel.formatter('很长的模拟项目名称'), '很长的模拟项目名…')
     const html = await renderComponent('components/pdm/PdmChartTable', { panel: { table: value, filters: createPdmFilters() }, loading: false })
-    assert.equal((html.match(/class="pdm-detail-chart"/g) || []).length, 2)
-    assert.equal((html.match(/<table\b/g) || []).length, 1)
+    assert.equal((html.match(/class="pdm-chart-table__chart pdm-chart-table__group"/g) || []).length, 2)
+    assert.doesNotMatch(html, /<table\b/)
+    assert.equal((html.match(new RegExp(`，按${group}分布"`, 'g')) || []).length, 4)
     assert.ok(html.includes('当前条件下暂无可统计文档'))
-    assert.match(html, /rowspan="3" scope="rowgroup"/)
   }
 })
 
